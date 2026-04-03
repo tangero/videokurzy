@@ -61,14 +61,14 @@ export const progress = sqliteTable(
 
 export const purchase = sqliteTable("purchase", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  userId: text("userId")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  userId: text("userId"),
   courseId: integer("courseId")
     .notNull()
     .references(() => course.id, { onDelete: "cascade" }),
   type: text("type", { enum: ["individual", "organization"] }).notNull(),
   stripePaymentId: text("stripePaymentId").notNull().unique(),
+  stripeSubscriptionId: text("stripeSubscriptionId"),
   status: text("status", { enum: ["active", "expired", "refunded"] })
     .notNull()
     .default("active"),

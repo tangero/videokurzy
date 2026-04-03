@@ -1,4 +1,4 @@
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, or } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { purchase, organization } from "../db/schema";
 
@@ -8,16 +8,18 @@ export async function hasAccess(
   courseId: number,
   db: DrizzleD1Database
 ): Promise<boolean> {
-  // Check individual purchase
+  const email = userEmail.toLowerCase();
+
+  // Check individual purchase (by userId or email)
   const activePurchase = await db
     .select({ id: purchase.id })
     .from(purchase)
     .where(
       and(
-        eq(purchase.userId, userId),
         eq(purchase.courseId, courseId),
         eq(purchase.status, "active"),
-        gt(purchase.expiresAt, new Date())
+        gt(purchase.expiresAt, new Date()),
+        or(eq(purchase.userId, userId), eq(purchase.email, email))
       )
     )
     .limit(1);
@@ -25,7 +27,7 @@ export async function hasAccess(
   if (activePurchase.length > 0) return true;
 
   // Check organization domain license
-  const domain = userEmail.split("@")[1];
+  const domain = email.split("@")[1];
   if (domain) {
     const activeOrg = await db
       .select({ id: organization.id })
@@ -42,4 +44,19 @@ export async function hasAccess(
   }
 
   return false;
+}
+
+/**
+ * Link unlinked purchases to a user after first login.
+ * Called after successful magic link auth.
+ */
+export async function linkPurchasesToUser(
+  userId: string,
+  email: string,
+  db: DrizzleD1Database
+): Promise<void> {
+  await db
+    .update(purchase)
+    .set({ userId })
+    .where(and(eq(purchase.email, email.toLowerCase()), eq(purchase.userId, "")));
 }

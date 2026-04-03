@@ -67,6 +67,10 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
           <a href="https://vibecoding.cz" class="hover:underline">
             vibecoding.cz
           </a>
+          {" · "}
+          <a href="/privacy" class="hover:underline">
+            Ochrana osobních údajů
+          </a>
         </p>
       </footer>
     </body>

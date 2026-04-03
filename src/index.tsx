@@ -9,6 +9,7 @@ import { progressRoutes } from "./routes/progress";
 import { stripeRoutes } from "./routes/stripe";
 import { adminRoutes } from "./routes/admin";
 import { handleQueue } from "./queue";
+import { PrivacyPage } from "./views/privacy";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -23,6 +24,9 @@ app.route("/", watchRoutes);
 app.route("/", progressRoutes);
 app.route("/", stripeRoutes);
 app.route("/", adminRoutes);
+
+// Static pages
+app.get("/privacy", (c) => c.html(<PrivacyPage />));
 
 // Health check
 app.get("/health", (c) => c.json({ status: "ok", version: "0.1.0" }));

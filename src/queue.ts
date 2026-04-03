@@ -45,14 +45,13 @@ async function handleCheckoutCompleted(
   data: Record<string, unknown>
 ) {
   const metadata = data.metadata as Record<string, string> | undefined;
-  const customerEmail = data.customer_email as string | undefined;
+  const customerEmail = (data.customer_email as string) ?? (data.customer_details as Record<string, unknown>)?.email as string ?? "";
   const subscriptionId = data.subscription as string | undefined;
-  const paymentId = (data.id as string) ?? "";
+  const sessionId = (data.id as string) ?? "";
 
-  if (!metadata?.type) return;
+  if (!metadata?.type || !customerEmail) return;
 
   if (metadata.type === "individual") {
-    // Get the first published course
     const [firstCourse] = await db
       .select({ id: course.id })
       .from(course)
@@ -61,14 +60,16 @@ async function handleCheckoutCompleted(
 
     if (!firstCourse) return;
 
-    // Idempotent insert — UNIQUE constraint on stripePaymentId
+    // Idempotent insert — UNIQUE on stripePaymentId
     await db
       .insert(purchase)
       .values({
-        userId: "", // Will be linked when user signs in with magic link
+        email: customerEmail.toLowerCase(),
+        userId: null,
         courseId: firstCourse.id,
         type: "individual",
-        stripePaymentId: paymentId,
+        stripePaymentId: sessionId,
+        stripeSubscriptionId: subscriptionId ?? null,
         status: "active",
         expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         createdAt: new Date(),
@@ -83,14 +84,13 @@ async function handleCheckoutCompleted(
 
     if (!domain) return;
 
-    // Idempotent insert
     await db
       .insert(organization)
       .values({
         publicId: nanoid(),
         domain,
         stripeSubscriptionId: subscriptionId ?? "",
-        status: "pending", // admin must approve
+        status: "pending",
         createdAt: new Date(),
       })
       .onConflictDoNothing();
@@ -104,17 +104,15 @@ async function handleSubscriptionDeleted(
   const subscriptionId = data.id as string;
   if (!subscriptionId) return;
 
-  // Expire organization
   await db
     .update(organization)
     .set({ status: "expired" })
     .where(eq(organization.stripeSubscriptionId, subscriptionId));
 
-  // Expire individual purchase
   await db
     .update(purchase)
     .set({ status: "expired" })
-    .where(eq(purchase.stripePaymentId, subscriptionId));
+    .where(eq(purchase.stripeSubscriptionId, subscriptionId));
 }
 
 async function handleInvoicePaid(
@@ -126,9 +124,8 @@ async function handleInvoicePaid(
 
   const newExpiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
 
-  // Extend purchase expiry
   await db
     .update(purchase)
     .set({ expiresAt: newExpiry, status: "active" })
-    .where(eq(purchase.stripePaymentId, subscriptionId));
+    .where(eq(purchase.stripeSubscriptionId, subscriptionId));
 }

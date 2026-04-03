@@ -1,6 +1,8 @@
 import { createMiddleware } from "hono/factory";
+import { drizzle } from "drizzle-orm/d1";
 import type { Env, Variables } from "../types";
 import { createAuth } from "../lib/auth";
+import { linkPurchasesToUser } from "../lib/access";
 
 export const authMiddleware = createMiddleware<{
   Bindings: Env;
@@ -13,17 +15,23 @@ export const authMiddleware = createMiddleware<{
     headers: c.req.raw.headers,
   });
 
-  c.set(
-    "user",
-    session?.user
-      ? {
-          id: session.user.id,
-          email: session.user.email,
-          name: session.user.name ?? null,
-          role: (session.user as Record<string, unknown>).role as string ?? "user",
-        }
-      : null
-  );
+  if (session?.user) {
+    const userObj = {
+      id: session.user.id,
+      email: session.user.email,
+      name: session.user.name ?? null,
+      role: (session.user as Record<string, unknown>).role as string ?? "user",
+    };
+    c.set("user", userObj);
+
+    // Link any unlinked purchases to this user (fire-and-forget)
+    const db = drizzle(c.env.DB);
+    c.executionCtx.waitUntil(
+      linkPurchasesToUser(userObj.id, userObj.email, db).catch(() => {})
+    );
+  } else {
+    c.set("user", null);
+  }
 
   await next();
 });

@@ -1,18 +1,18 @@
 name = "videokurzy"
-main = "src/index.ts"
+main = "src/index.tsx"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "videokurzy-db"
-database_id = "TBD"
+database_id = "c4e3cf23-d6c8-4c63-94ca-d6c64809ca9f"
 migrations_dir = "drizzle/migrations"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "TBD"
-preview_id = "TBD"
+id = "afc09797ca644747b2c159f705334fb0"
+preview_id = "0781f693950c4ed4998f7ba022a473fc"
 
 [[queues.producers]]
 queue = "videokurzy-webhooks"
