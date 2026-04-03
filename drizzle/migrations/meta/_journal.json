@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1775196754721,
+      "tag": "0000_burly_microchip",
+      "breakpoints": true
+    }
+  ]
+}

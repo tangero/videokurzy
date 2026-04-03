@@ -1,0 +1,60 @@
+import { createMiddleware } from "hono/factory";
+import type { Env, Variables } from "../types";
+import { createAuth } from "../lib/auth";
+
+export const authMiddleware = createMiddleware<{
+  Bindings: Env;
+  Variables: Variables;
+}>(async (c, next) => {
+  const auth = createAuth(c.env, c.executionCtx);
+  c.set("auth", auth);
+
+  const session = await auth.api.getSession({
+    headers: c.req.raw.headers,
+  });
+
+  c.set(
+    "user",
+    session?.user
+      ? {
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.name ?? null,
+          role: (session.user as Record<string, unknown>).role as string ?? "user",
+        }
+      : null
+  );
+
+  await next();
+});
+
+export const requireAuth = createMiddleware<{
+  Bindings: Env;
+  Variables: Variables;
+}>(async (c, next) => {
+  const user = c.get("user");
+
+  if (!user) {
+    const isHtmx = c.req.header("HX-Request") === "true";
+    if (isHtmx) {
+      c.header("HX-Redirect", "/login");
+      return c.body(null, 200);
+    }
+    return c.redirect("/login");
+  }
+
+  await next();
+});
+
+export const requireAdmin = createMiddleware<{
+  Bindings: Env;
+  Variables: Variables;
+}>(async (c, next) => {
+  const user = c.get("user");
+
+  if (!user || user.role !== "admin") {
+    return c.text("Forbidden", 403);
+  }
+
+  await next();
+});
