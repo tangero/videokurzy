@@ -1,0 +1,8 @@
+BETTER_AUTH_SECRET=your-random-secret-min-32-chars
+BETTER_AUTH_URL=http://localhost:8787
+RESEND_API_KEY=re_xxxxxxxxxxxx
+STRIPE_SECRET_KEY=sk_test_xxxxxxxxxxxx
+STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
+BUNNY_API_KEY=xxxxxxxxxxxx
+BUNNY_LIBRARY_ID=xxxxxxxxxxxx
+BUNNY_TOKEN_KEY=xxxxxxxxxxxx
