@@ -9,26 +9,26 @@ const MODULES = [
   {
     title: "Modul 1: Začínáme",
     lessons: [
-      { title: "Ep. 1: Nápad a zadání", free: true },
-      { title: "Ep. 2: Kostra aplikace za 20 minut", free: true },
-      { title: "Ep. 3: První feature a iterace", free: false },
+      { title: "Od nápadu k profi zadání (PRD s Cowork)", free: true },
+      { title: 'Postav appku za 20 minut (ten „wow" moment)', free: true },
+      { title: "První funkce, která opravdu funguje", free: true },
     ],
   },
   {
     title: "Modul 2: Stavíme aplikaci",
     lessons: [
-      { title: "Ep. 4: Databáze a data", free: false },
-      { title: "Ep. 5: Když se to rozbije", free: false },
-      { title: "Ep. 6: API a integrace", free: false },
-      { title: "Ep. 7: Autentizace a bezpečnost", free: false },
+      { title: "Krásný design na prvním místě", free: false },
+      { title: "Data a paměť tvé appky", free: false },
+      { title: "Když se to rozbije – jak to opravit rychle", free: false },
+      { title: "Připojení k světu (API a integrace)", free: false },
     ],
   },
   {
     title: "Modul 3: Produkce a polish",
     lessons: [
-      { title: "Ep. 8: Deployment", free: false },
-      { title: "Ep. 9: Design — moodboard a vizuální identita", free: false },
-      { title: "Ep. 10: Co dál — údržba, vylepšení, limity", free: false },
+      { title: "Bezpečnost a přihlášení bez bolesti", free: false },
+      { title: "Nahraj to na internet (deployment)", free: false },
+      { title: "Finální lesk a co dál", free: false },
     ],
   },
 ];

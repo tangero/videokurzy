@@ -2,10 +2,13 @@ import { eq, and, gt, or } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { purchase, organization } from "../db/schema";
 
+/**
+ * Check if user has platform-wide access (any active purchase or org domain).
+ * One subscription = access to all courses.
+ */
 export async function hasAccess(
   userId: string,
   userEmail: string,
-  courseId: number,
   db: DrizzleD1Database
 ): Promise<boolean> {
   const email = userEmail.toLowerCase();
@@ -16,7 +19,6 @@ export async function hasAccess(
     .from(purchase)
     .where(
       and(
-        eq(purchase.courseId, courseId),
         eq(purchase.status, "active"),
         gt(purchase.expiresAt, new Date()),
         or(eq(purchase.userId, userId), eq(purchase.email, email))
@@ -48,7 +50,6 @@ export async function hasAccess(
 
 /**
  * Link unlinked purchases to a user after first login.
- * Called after successful magic link auth.
  */
 export async function linkPurchasesToUser(
   userId: string,

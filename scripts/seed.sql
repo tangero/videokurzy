@@ -1,37 +1,37 @@
--- Seed data: Claude Code s Patrickem videokurz
+-- Seed data: kurz.vibecoding.cz
 -- Run with: wrangler d1 execute videokurzy-db --local --file=scripts/seed.sql
 
--- Course
-INSERT OR IGNORE INTO course (id, title, slug, description, published) VALUES
-  (1, 'Claude Code s Patrickem', 'claude-code-s-patrickem', 'Videokurz vibe codingu. Od nápadu po hotovou aplikaci v 10 epizodách.', 1);
+-- Course: Claude Code s Patrickem
+INSERT OR REPLACE INTO course (id, title, slug, description, published) VALUES
+  (1, 'Claude Code s Patrickem', 'claude-code-s-patrickem', 'Videokurz vibe codingu. Od nápadu po hotovou aplikaci v 10 epizodách. Naučte se stavět aplikace s AI, i když nejste programátor.', 1);
 
--- Module 1: Začínáme
-INSERT OR IGNORE INTO module (id, courseId, title, slug, sortOrder) VALUES
+-- Module 1: Začínáme (free preview)
+INSERT OR REPLACE INTO module (id, courseId, title, slug, sortOrder) VALUES
   (1, 1, 'Začínáme', 'zaciname', 1);
 
 -- Module 2: Stavíme aplikaci
-INSERT OR IGNORE INTO module (id, courseId, title, slug, sortOrder) VALUES
+INSERT OR REPLACE INTO module (id, courseId, title, slug, sortOrder) VALUES
   (2, 1, 'Stavíme aplikaci', 'stavime-aplikaci', 2);
 
 -- Module 3: Produkce a polish
-INSERT OR IGNORE INTO module (id, courseId, title, slug, sortOrder) VALUES
+INSERT OR REPLACE INTO module (id, courseId, title, slug, sortOrder) VALUES
   (3, 1, 'Produkce a polish', 'produkce-a-polish', 3);
 
--- Lessons - Module 1
-INSERT OR IGNORE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder) VALUES
-  (1, 1, 'ep01_napad_zadani', 'Ep. 1: Nápad a zadání', 'napad-a-zadani', NULL, 0, 1, 1),
-  (2, 1, 'ep02_kostra_appky', 'Ep. 2: Kostra aplikace za 20 minut', 'kostra-aplikace', NULL, 0, 1, 2),
-  (3, 1, 'ep03_prvni_feature', 'Ep. 3: První feature a iterace', 'prvni-feature', NULL, 0, 0, 3);
+-- Lessons - Module 1: Začínáme (free preview)
+INSERT OR REPLACE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder) VALUES
+  (1, 1, 'ep01_napad_prd', 'Od nápadu k profi zadání (PRD s Cowork)', 'od-napadu-k-profi-zadani', NULL, 0, 1, 1),
+  (2, 1, 'ep02_appka_20min', 'Postav appku za 20 minut (ten „wow" moment)', 'postav-appku-za-20-minut', NULL, 0, 1, 2),
+  (3, 1, 'ep03_prvni_funkce', 'První funkce, která opravdu funguje', 'prvni-funkce-ktera-funguje', NULL, 0, 1, 3);
 
--- Lessons - Module 2
-INSERT OR IGNORE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder) VALUES
-  (4, 2, 'ep04_databaze', 'Ep. 4: Databáze a data', 'databaze-a-data', NULL, 0, 0, 1),
-  (5, 2, 'ep05_rozbije_se', 'Ep. 5: Když se to rozbije', 'kdyz-se-to-rozbije', NULL, 0, 0, 2),
-  (6, 2, 'ep06_api', 'Ep. 6: API a integrace', 'api-a-integrace', NULL, 0, 0, 3),
-  (7, 2, 'ep07_auth', 'Ep. 7: Autentizace a bezpečnost', 'autentizace-a-bezpecnost', NULL, 0, 0, 4);
+-- Lessons - Module 2: Stavíme aplikaci
+INSERT OR REPLACE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder) VALUES
+  (4, 2, 'ep04_design', 'Krásný design na prvním místě (moodboard + vizuální magie)', 'krasny-design', NULL, 0, 0, 1),
+  (5, 2, 'ep05_data', 'Data a paměť tvé appky', 'data-a-pamet', NULL, 0, 0, 2),
+  (6, 2, 'ep06_debugging', 'Když se to rozbije – jak to opravit rychle', 'kdyz-se-to-rozbije', NULL, 0, 0, 3),
+  (7, 2, 'ep07_api', 'Připojení k světu (API a integrace)', 'pripojeni-k-svetu', NULL, 0, 0, 4);
 
--- Lessons - Module 3
-INSERT OR IGNORE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder) VALUES
-  (8, 3, 'ep08_deployment', 'Ep. 8: Deployment', 'deployment', NULL, 0, 0, 1),
-  (9, 3, 'ep09_design', 'Ep. 9: Design — moodboard a vizuální identita', 'design', NULL, 0, 0, 2),
-  (10, 3, 'ep10_co_dal', 'Ep. 10: Co dál — údržba, vylepšení, limity', 'co-dal', NULL, 0, 0, 3);
+-- Lessons - Module 3: Produkce a polish
+INSERT OR REPLACE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder) VALUES
+  (8, 3, 'ep08_auth', 'Bezpečnost a přihlášení bez bolesti', 'bezpecnost-a-prihlaseni', NULL, 0, 0, 1),
+  (9, 3, 'ep09_deploy', 'Nahraj to na internet (deployment)', 'nahraj-to-na-internet', NULL, 0, 0, 2),
+  (10, 3, 'ep10_final', 'Finální lesk a co dál (údržba, vylepšení, limity)', 'finalni-lesk-a-co-dal', NULL, 0, 0, 3);

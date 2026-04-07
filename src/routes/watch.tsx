@@ -41,17 +41,8 @@ watch.get("/watch/:slug", async (c) => {
       return c.redirect("/login");
     }
 
-    // Check purchase / org access
-    // We need the courseId — get it via module
-    const [mod] = await db
-      .select({ courseId: module.courseId })
-      .from(module)
-      .where(eq(module.id, found.moduleId))
-      .limit(1);
-
-    if (!mod) return c.text("Modul nenalezen", 404);
-
-    const canAccess = await hasAccess(user.id, user.email, mod.courseId, db);
+    // Platform-wide access check (no courseId needed)
+    const canAccess = await hasAccess(user.id, user.email, db);
     if (!canAccess) {
       return c.redirect("/#cenik");
     }

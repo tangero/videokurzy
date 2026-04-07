@@ -1,6 +1,6 @@
 # PRD v2: Videokurz platforma — kurz.vibecoding.cz
 
-> Verze 2.0 | 7. dubna 2026
+> Verze 2.1 | 7. dubna 2026
 > Tento dokument je kanonický zdroj pravdy pro AI coding agenty pracující na projektu.
 
 ---
@@ -9,6 +9,20 @@
 
 ### Co to je
 Distribuční platforma pro placené videokurzy o vibe codingu. Subdoména kurz.vibecoding.cz, součást ekosystému vibecoding.cz. Zároveň technologické demo schopností vibe codingu — edge-first architektura bez JS frameworku.
+
+### Pricing model
+Jedno roční předplatné = přístup ke všem kurzům na platformě. Žádné per-course platby.
+- **Jednotlivec:** 2 000 Kč/rok
+- **Firma (doménová licence):** 15 000 Kč/rok — všichni s emailem na dané doméně
+
+### Content hierarchy
+```
+Platforma (kurz.vibecoding.cz)
+  └── Kurz (např. "Claude Code s Patrickem", "Zavádíme AI do firem")
+        └── Modul (např. "Začínáme", "Stavíme aplikaci")
+              └── Epizoda (konkrétní téma, krátké video)
+```
+Platforma může mít více kurzů. Každý kurz má moduly, každý modul má epizody. Navigace předchozí/další funguje pouze v rámci jednoho modulu (moduly jsou tematicky nezávislé).
 
 ### Proč to stavíme
 Patrick Zandl je uznávaný autor a lektor v české tech komunitě. Má 6 000 odběratelů newsletteru a aktivní komunitu Vibe Coding CZ. Potřebuje platformu pro monetizaci videokurzů o Claude Code a vibe codingu, která:
@@ -36,7 +50,7 @@ Patrick Zandl je uznávaný autor a lektor v české tech komunitě. Má 6 000 o
 - **Jak se dozví:** Newsletter Patricka Zandla, Vibe Coding CZ komunita
 - **Nákupní rozhodnutí:** Důvěřuje Patrickovi osobně. Chce český obsah, strukturovaného průvodce, nechce hledat roztříštěné anglické YouTube tutoriály.
 - **Obava:** "Dám 2 000 Kč a nebude to pro mě srozumitelné."
-- **Co ho přesvědčí:** Free preview (2 epizody), reference od lidí z kurzu, Patrickův životopis a reputace.
+- **Co ho přesvědčí:** Free preview (celý modul 1 = 3 epizody zdarma), reference od lidí z kurzu, Patrickův životopis a reputace.
 
 ### Persona 2: Jana — HR / L&D manažerka (B2B)
 - **Pozice:** Zodpovídá za vzdělávání zaměstnanců ve firmě (50–500 lidí)
@@ -83,9 +97,9 @@ Feature: Landing page
     And nemusím se přihlašovat ani platit
 
   Scenario: Konverzní moment po free preview
-    Given sleduji poslední free epizodu (ep. 2)
+    Given sleduji poslední free epizodu (ep. 3 — poslední v modulu 1)
     When video skončí
-    Then vidím výrazný CTA "Odemknout zbývajících 8 epizod za 2 000 Kč/rok"
+    Then vidím výrazný CTA "Odemknout zbývajících 7 epizod za 2 000 Kč/rok"
     And dostanu email s nabídkou upgradu a instrukcemi k předplacení
 ```
 
@@ -157,8 +171,9 @@ Feature: Dashboard
   Scenario: Uživatel vidí přehled kurzů
     Given jsem přihlášený platící uživatel
     When otevřu /dashboard
-    Then vidím seznam všech kurzů (modulů)
-    And u každého kurzu vidím počet dokončených / celkových epizod
+    Then vidím seznam všech kurzů na platformě
+    And u každého kurzu vidím jeho moduly a počet dokončených / celkových epizod
+    And kliknutím na kurz se rozbalí seznam epizod s progress
 
   Scenario: Uživatel rozklikne kurz
     Given jsem na dashboardu
@@ -415,12 +430,13 @@ Better Auth spravuje: `user`, `session`, `account`, `verification`.
 | completedAt | integer (timestamp) | nullable | |
 
 ### purchase
+Platba odemyká přístup k celé platformě (všechny kurzy). Žádný courseId — jedno předplatné = vše.
+
 | Sloupec | Typ | Constraints | Popis |
 |---------|-----|-------------|-------|
 | id | integer | PK autoincrement | |
 | email | text | not null | email z Stripe Checkout |
 | userId | text | nullable | propojeno po prvním přihlášení |
-| courseId | integer | FK → course, cascade | |
 | type | text | not null | individual / organization |
 | stripePaymentId | text | unique, not null | idempotence |
 | stripeSubscriptionId | text | nullable | pro lifecycle management |
@@ -480,7 +496,7 @@ Better Auth spravuje: `user`, `session`, `account`, `verification`.
 ## 10. Non-Negotiables (launch blocker)
 
 - [ ] Landing page s obsahem, ceníkem, referencemi a bio
-- [ ] Free preview (ep. 1 + 2) bez přihlášení
+- [ ] Free preview (modul 1 = 3 epizody) bez přihlášení
 - [ ] Magic link auth (Better Auth) s resend fallbackem
 - [ ] Stripe Checkout B2C (2 000 Kč/rok)
 - [ ] Stripe Checkout B2B (15 000 Kč/rok + doména)

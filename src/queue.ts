@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { purchase, organization, course } from "./db/schema";
+import { purchase, organization } from "./db/schema";
 import type { Env } from "./types";
 
 interface WebhookMessage {
@@ -52,21 +52,13 @@ async function handleCheckoutCompleted(
   if (!metadata?.type || !customerEmail) return;
 
   if (metadata.type === "individual") {
-    const [firstCourse] = await db
-      .select({ id: course.id })
-      .from(course)
-      .where(eq(course.published, true))
-      .limit(1);
-
-    if (!firstCourse) return;
-
     // Idempotent insert — UNIQUE on stripePaymentId
+    // Platform-wide access, no courseId needed
     await db
       .insert(purchase)
       .values({
         email: customerEmail.toLowerCase(),
         userId: null,
-        courseId: firstCourse.id,
         type: "individual",
         stripePaymentId: sessionId,
         stripeSubscriptionId: subscriptionId ?? null,

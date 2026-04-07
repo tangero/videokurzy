@@ -63,9 +63,6 @@ export const purchase = sqliteTable("purchase", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   email: text("email").notNull(),
   userId: text("userId"),
-  courseId: integer("courseId")
-    .notNull()
-    .references(() => course.id, { onDelete: "cascade" }),
   type: text("type", { enum: ["individual", "organization"] }).notNull(),
   stripePaymentId: text("stripePaymentId").notNull().unique(),
   stripeSubscriptionId: text("stripeSubscriptionId"),

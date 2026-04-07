@@ -15,6 +15,13 @@
       "when": 1775197297082,
       "tag": "0001_shocking_cargill",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1775573282940,
+      "tag": "0002_simple_darkhawk",
+      "breakpoints": true
     }
   ]
 }
