@@ -135,5 +135,38 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
         </div>
       </div>
     </section>
+
+    {/* Newsletter */}
+    <section class="py-16">
+      <div class="max-w-xl mx-auto px-4 text-center">
+        <h2 class="text-2xl font-bold mb-2">Tipy k vibe codingu zdarma</h2>
+        <p class="text-gray-600 mb-6">
+          Jednou týdně posíláme praktické tipy, jak stavět aplikace s AI.
+          Žádný spam, odhlášení jedním klikem.
+        </p>
+        <div id="newsletter-form">
+          <form
+            hx-post="/api/leads/newsletter"
+            hx-target="#newsletter-form"
+            hx-swap="innerHTML"
+            class="flex gap-2 max-w-md mx-auto"
+          >
+            <input
+              type="email"
+              name="email"
+              required
+              placeholder="vas@email.cz"
+              class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              type="submit"
+              class="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 font-medium whitespace-nowrap"
+            >
+              Odebírat
+            </button>
+          </form>
+        </div>
+      </div>
+    </section>
   </Layout>
 );
