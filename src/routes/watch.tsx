@@ -36,16 +36,20 @@ watch.get("/watch/:slug", async (c) => {
   }
 
   // Free lessons are accessible to everyone
+  let userHasAccess = false;
   if (!found.isFree) {
     if (!user) {
       return c.redirect("/login");
     }
 
     // Platform-wide access check (no courseId needed)
-    const canAccess = await hasAccess(user.id, user.email, db);
-    if (!canAccess) {
+    userHasAccess = await hasAccess(user.id, user.email, db);
+    if (!userHasAccess) {
       return c.redirect("/#cenik");
     }
+  } else if (user) {
+    // For free lessons, check access to decide whether to show upgrade CTA
+    userHasAccess = await hasAccess(user.id, user.email, db);
   }
 
   // Generate signed Bunny embed URL
@@ -84,14 +88,19 @@ watch.get("/watch/:slug", async (c) => {
       ? moduleLessons[currentIdx + 1].slug
       : null;
 
+  // Last free lesson = free lesson with no next lesson in the module
+  const isLastFreeLesson = found.isFree && !nextSlug;
+
   return c.html(
     <WatchPage
-      user={user ?? { name: null, email: "" }}
+      user={user}
       lesson={found}
       embedUrl={embedUrl}
       completed={completed}
       prevSlug={prevSlug}
       nextSlug={nextSlug}
+      isLastFreeLesson={isLastFreeLesson}
+      userHasAccess={userHasAccess}
     />
   );
 });
