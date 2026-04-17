@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization } from "./db/schema";
+import { sendResendEvent } from "./lib/resend";
 import type { Env } from "./types";
 
 interface WebhookMessage {
@@ -21,7 +22,7 @@ export async function handleQueue(
     try {
       switch (type) {
         case "checkout.session.completed":
-          await handleCheckoutCompleted(db, data);
+          await handleCheckoutCompleted(db, data, env);
           break;
 
         case "customer.subscription.deleted":
@@ -42,7 +43,8 @@ export async function handleQueue(
 
 async function handleCheckoutCompleted(
   db: ReturnType<typeof drizzle>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  env: Env
 ) {
   const metadata = data.metadata as Record<string, string> | undefined;
   const customerEmail = (data.customer_email as string) ?? (data.customer_details as Record<string, unknown>)?.email as string ?? "";
@@ -67,6 +69,14 @@ async function handleCheckoutCompleted(
         createdAt: new Date(),
       })
       .onConflictDoNothing();
+
+    // Fire Resend automation event for purchase onboarding sequence
+    await sendResendEvent(
+      env.RESEND_API_KEY,
+      "purchase.completed",
+      customerEmail.toLowerCase(),
+      { type: "individual" }
+    );
   } else if (metadata.type === "organization") {
     const customFields = data.custom_fields as
       | Array<{ key: string; text?: { value: string } }>
@@ -86,6 +96,14 @@ async function handleCheckoutCompleted(
         createdAt: new Date(),
       })
       .onConflictDoNothing();
+
+    // Fire Resend automation event for B2B onboarding sequence
+    await sendResendEvent(
+      env.RESEND_API_KEY,
+      "purchase.completed",
+      customerEmail.toLowerCase(),
+      { type: "organization", domain }
+    );
   }
 }
 

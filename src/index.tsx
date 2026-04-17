@@ -8,6 +8,7 @@ import { watchRoutes } from "./routes/watch";
 import { progressRoutes } from "./routes/progress";
 import { stripeRoutes } from "./routes/stripe";
 import { adminRoutes } from "./routes/admin";
+import { leadRoutes } from "./routes/leads";
 import { handleQueue } from "./queue";
 import { PrivacyPage } from "./views/privacy";
 
@@ -23,6 +24,7 @@ app.route("/", dashboardRoutes);
 app.route("/", watchRoutes);
 app.route("/", progressRoutes);
 app.route("/", stripeRoutes);
+app.route("/", leadRoutes);
 app.route("/", adminRoutes);
 
 // Static pages
