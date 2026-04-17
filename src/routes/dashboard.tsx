@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/d1";
 import type { Env, Variables } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { course, module, lesson, progress } from "../db/schema";
+import { hasAccess } from "../lib/access";
 import { DashboardPage } from "../views/dashboard";
 
 const dashboard = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -78,6 +79,7 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
 
   const totalCount = modules.length;
   const completedCount = completedSet.size;
+  const hasPaidAccess = await hasAccess(user.id, user.email, db);
 
   return c.html(
     <DashboardPage
@@ -85,6 +87,7 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
       modules={moduleList}
       completedCount={completedCount}
       totalCount={totalCount}
+      hasPaidAccess={hasPaidAccess}
     />
   );
 });

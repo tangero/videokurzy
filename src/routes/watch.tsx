@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Env, Variables } from "../types";
 import { authMiddleware, requireAuth } from "../middleware/auth";
@@ -36,23 +36,21 @@ watch.get("/watch/:slug", async (c) => {
   }
 
   // Free lessons are accessible to everyone
-  let userHasAccess = false;
+  let hasPaidAccess = false;
   if (!found.isFree) {
     if (!user) {
       return c.redirect("/login");
     }
 
     // Platform-wide access check (no courseId needed)
-    userHasAccess = await hasAccess(user.id, user.email, db);
-    if (!userHasAccess) {
+    hasPaidAccess = await hasAccess(user.id, user.email, db);
+    if (!hasPaidAccess) {
       return c.redirect("/#cenik");
     }
   } else if (user) {
-    // For free lessons, check access to decide whether to show upgrade CTA
-    userHasAccess = await hasAccess(user.id, user.email, db);
+    hasPaidAccess = await hasAccess(user.id, user.email, db);
   }
 
-  // Generate signed Bunny embed URL
   const embedUrl = found.bunnyVideoId
     ? generateSignedEmbedUrl(
         c.env.BUNNY_LIBRARY_ID,
@@ -61,46 +59,64 @@ watch.get("/watch/:slug", async (c) => {
       )
     : "";
 
-  // Get completion status
-  let completed = false;
-  if (user) {
-    const [prog] = await db
-      .select({ completed: progress.completed })
-      .from(progress)
-      .where(
-        and(eq(progress.userId, user.id), eq(progress.lessonId, found.id))
-      )
-      .limit(1);
-    completed = prog?.completed ?? false;
-  }
+  const [allLessons, allProgressRaw, moduleRow] = await Promise.all([
+    db
+      .select({
+        id: lesson.id,
+        slug: lesson.slug,
+        title: lesson.title,
+        durationSeconds: lesson.durationSeconds,
+        isFree: lesson.isFree,
+        moduleId: lesson.moduleId,
+        sortOrder: lesson.sortOrder,
+      })
+      .from(lesson)
+      .innerJoin(module, eq(lesson.moduleId, module.id))
+      .orderBy(asc(module.sortOrder), asc(lesson.sortOrder)),
+    user
+      ? db
+          .select({ lessonId: progress.lessonId, completed: progress.completed })
+          .from(progress)
+          .where(eq(progress.userId, user.id))
+      : Promise.resolve([] as { lessonId: number; completed: boolean }[]),
+    db
+      .select({ title: module.title })
+      .from(module)
+      .where(eq(module.id, found.moduleId))
+      .limit(1),
+  ]);
 
-  // Get prev/next lessons (all lessons in the same module, ordered)
-  const moduleLessons = await db
-    .select({ slug: lesson.slug, sortOrder: lesson.sortOrder })
-    .from(lesson)
-    .where(eq(lesson.moduleId, found.moduleId))
-    .orderBy(asc(lesson.sortOrder));
+  const allProgressIds = new Set(
+    allProgressRaw.filter((p) => p.completed).map((p) => p.lessonId)
+  );
+  const completed = allProgressIds.has(found.id);
 
-  const currentIdx = moduleLessons.findIndex((l) => l.slug === found.slug);
-  const prevSlug = currentIdx > 0 ? moduleLessons[currentIdx - 1].slug : null;
-  const nextSlug =
-    currentIdx < moduleLessons.length - 1
-      ? moduleLessons[currentIdx + 1].slug
-      : null;
+  const globalIdx = allLessons.findIndex((l) => l.id === found.id);
+  const prevSlug = globalIdx > 0 ? allLessons[globalIdx - 1].slug : null;
+  const nextSlug = globalIdx < allLessons.length - 1 ? allLessons[globalIdx + 1].slug : null;
 
-  // Last free lesson = free lesson with no next lesson in the module
-  const isLastFreeLesson = found.isFree && !nextSlug;
+  const nearbyRaw = allLessons.slice(Math.max(0, globalIdx - 1), globalIdx + 6);
+  const nearbyLessons = nearbyRaw.map((l) => ({
+    ...l,
+    completed: allProgressIds.has(l.id),
+    globalIndex: allLessons.findIndex((al) => al.id === l.id),
+  }));
+
+  const nextLesson = globalIdx < allLessons.length - 1 ? allLessons[globalIdx + 1] : null;
+  const isLastFreeLesson = found.isFree && (!nextLesson || !nextLesson.isFree);
 
   return c.html(
     <WatchPage
-      user={user}
-      lesson={found}
+      user={user ?? { name: null, email: "" }}
+      lesson={{ ...found, moduleTitle: moduleRow[0]?.title }}
       embedUrl={embedUrl}
       completed={completed}
       prevSlug={prevSlug}
       nextSlug={nextSlug}
+      hasPaidAccess={hasPaidAccess}
       isLastFreeLesson={isLastFreeLesson}
-      userHasAccess={userHasAccess}
+      nearbyLessons={nearbyLessons}
+      lessonGlobalIndex={globalIdx}
     />
   );
 });
