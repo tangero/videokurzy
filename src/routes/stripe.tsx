@@ -111,8 +111,11 @@ stripeRoutes.post("/api/webhooks/stripe", async (c) => {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(body, sig, c.env.STRIPE_WEBHOOK_SECRET);
-  } catch {
+    // constructEventAsync (ne sync) je nutné v Cloudflare Workers —
+    // Stripe SDK v11+ používá Web Crypto (SubtleCrypto), která je async-only.
+    event = await stripe.webhooks.constructEventAsync(body, sig, c.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error("Stripe webhook signature verification failed:", err);
     return c.text("Invalid signature", 400);
   }
 
