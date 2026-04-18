@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, primaryKey } from "drizzle-orm/sqlite-core";
+import { relations } from "drizzle-orm";
 import { user } from "./auth-schema";
 
 export const organization = sqliteTable("organization", {
@@ -64,13 +65,47 @@ export const purchase = sqliteTable("purchase", {
   email: text("email").notNull(),
   userId: text("userId"),
   type: text("type", { enum: ["individual", "organization"] }).notNull(),
-  stripePaymentId: text("stripePaymentId").notNull().unique(),
+  paymentMethod: text("paymentMethod", { enum: ["stripe", "fio"] })
+    .notNull()
+    .default("stripe"),
+  variableSymbol: text("variableSymbol").unique(),
+  fioTransactionId: text("fioTransactionId"),
+  stripePaymentId: text("stripePaymentId").unique(),
   stripeSubscriptionId: text("stripeSubscriptionId"),
-  status: text("status", { enum: ["active", "expired", "refunded"] })
+  status: text("status", { enum: ["pending", "active", "expired", "refunded"] })
     .notNull()
     .default("active"),
   expiresAt: integer("expiresAt", { mode: "timestamp" }).notNull(),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
+
+// ─── Relations ────────────────────────────────────────────────────
+
+export const courseRelations = relations(course, ({ many }) => ({
+  modules: many(module),
+}));
+
+export const moduleRelations = relations(module, ({ one, many }) => ({
+  course: one(course, { fields: [module.courseId], references: [course.id] }),
+  lessons: many(lesson),
+}));
+
+export const lessonRelations = relations(lesson, ({ one }) => ({
+  module: one(module, { fields: [lesson.moduleId], references: [module.id] }),
+}));
+
+export const userRelations = relations(user, ({ many }) => ({
+  progress: many(progress),
+  purchases: many(purchase),
+}));
+
+export const progressRelations = relations(progress, ({ one }) => ({
+  user: one(user, { fields: [progress.userId], references: [user.id] }),
+  lesson: one(lesson, { fields: [progress.lessonId], references: [lesson.id] }),
+}));
+
+export const purchaseRelations = relations(purchase, ({ one }) => ({
+  user: one(user, { fields: [purchase.userId], references: [user.id] }),
+}));
 
 export { user, session, account, verification } from "./auth-schema";

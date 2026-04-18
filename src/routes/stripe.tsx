@@ -5,7 +5,7 @@ import type { Env, Variables } from "../types";
 const stripeRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 function getStripe(secretKey: string) {
-  return new Stripe(secretKey, { apiVersion: "2025-03-31.basil" });
+  return new Stripe(secretKey, { apiVersion: "2026-03-25.dahlia" });
 }
 
 // B2C checkout

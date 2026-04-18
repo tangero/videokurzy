@@ -35,3 +35,11 @@ INSERT OR REPLACE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId
   (8, 3, 'ep08_auth', 'Bezpečnost a přihlášení bez bolesti', 'bezpecnost-a-prihlaseni', NULL, 0, 0, 1),
   (9, 3, 'ep09_deploy', 'Nahraj to na internet (deployment)', 'nahraj-to-na-internet', NULL, 0, 0, 2),
   (10, 3, 'ep10_final', 'Finální lesk a co dál (údržba, vylepšení, limity)', 'finalni-lesk-a-co-dal', NULL, 0, 0, 3);
+
+-- ─── Admin uživatelé ────────────────────────────────────────────────
+-- Admini (patrick@vibecoding.cz, andrea@vibecoding.cz) jsou spravováni
+-- automaticky v src/middleware/auth.ts přes ADMIN_EMAILS whitelist.
+-- Po prvním přihlášení magic linkem Better Auth vytvoří user record
+-- a middleware mu nastaví role = 'admin'.
+-- Seed zde proto nevytváří žádné user záznamy (bránilo by to signupu
+-- přes Better Auth kvůli UNIQUE(email) kolizi s pre-seed ID).

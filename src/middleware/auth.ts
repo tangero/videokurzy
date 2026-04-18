@@ -1,8 +1,13 @@
 import { createMiddleware } from "hono/factory";
 import { drizzle } from "drizzle-orm/d1";
+import { eq } from "drizzle-orm";
 import type { Env, Variables } from "../types";
 import { createAuth } from "../lib/auth";
 import { linkPurchasesToUser } from "../lib/access";
+import { user } from "../db/schema";
+import { ADMIN_EMAILS } from "../config/admin";
+
+const ADMIN_EMAIL_SET = new Set<string>(ADMIN_EMAILS);
 
 export const authMiddleware = createMiddleware<{
   Bindings: Env;
@@ -16,16 +21,27 @@ export const authMiddleware = createMiddleware<{
   });
 
   if (session?.user) {
+    const email = session.user.email;
+    const currentRole = (session.user as Record<string, unknown>).role as string ?? "user";
+    const shouldPromote = ADMIN_EMAIL_SET.has(email) && currentRole !== "admin";
+    const effectiveRole = shouldPromote ? "admin" : currentRole;
+
     const userObj = {
       id: session.user.id,
-      email: session.user.email,
+      email,
       name: session.user.name ?? null,
-      role: (session.user as Record<string, unknown>).role as string ?? "user",
+      role: effectiveRole,
     };
     c.set("user", userObj);
 
-    // Link any unlinked purchases to this user (fire-and-forget)
     const db = drizzle(c.env.DB);
+
+    if (shouldPromote) {
+      c.executionCtx.waitUntil(
+        db.update(user).set({ role: "admin" }).where(eq(user.id, userObj.id)).catch(() => {})
+      );
+    }
+
     c.executionCtx.waitUntil(
       linkPurchasesToUser(userObj.id, userObj.email, db).catch(() => {})
     );

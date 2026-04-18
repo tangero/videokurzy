@@ -1,10 +1,11 @@
-import { eq, and, gt, or } from "drizzle-orm";
+import { eq, and, gt, or, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { purchase, organization } from "../db/schema";
 
 /**
  * Check if user has platform-wide access (any active purchase or org domain).
  * One subscription = access to all courses.
+ * Pending purchases (FIO před potvrzením platby) NEDOSTÁVAJÍ access.
  */
 export async function hasAccess(
   userId: string,
@@ -13,7 +14,6 @@ export async function hasAccess(
 ): Promise<boolean> {
   const email = userEmail.toLowerCase();
 
-  // Check individual purchase (by userId or email)
   const activePurchase = await db
     .select({ id: purchase.id })
     .from(purchase)
@@ -28,7 +28,6 @@ export async function hasAccess(
 
   if (activePurchase.length > 0) return true;
 
-  // Check organization domain license
   const domain = email.split("@")[1];
   if (domain) {
     const activeOrg = await db
@@ -50,6 +49,7 @@ export async function hasAccess(
 
 /**
  * Link unlinked purchases to a user after first login.
+ * Pending purchases se taky linkují — až se potvrdí platba, uživatel bude mít userId navázaný.
  */
 export async function linkPurchasesToUser(
   userId: string,
@@ -59,5 +59,5 @@ export async function linkPurchasesToUser(
   await db
     .update(purchase)
     .set({ userId })
-    .where(and(eq(purchase.email, email.toLowerCase()), eq(purchase.userId, "")));
+    .where(and(eq(purchase.email, email.toLowerCase()), isNull(purchase.userId)));
 }
