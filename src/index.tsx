@@ -10,6 +10,7 @@ import { stripeRoutes } from "./routes/stripe";
 import { adminRoutes } from "./routes/admin";
 import { leadRoutes } from "./routes/leads";
 import { handleQueue } from "./queue";
+import { handleScheduled } from "./scheduled";
 import { PrivacyPage } from "./views/privacy";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -52,4 +53,5 @@ app.get("/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
 export default {
   fetch: app.fetch,
   queue: handleQueue,
+  scheduled: handleScheduled,
 };
