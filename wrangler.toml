@@ -3,6 +3,9 @@ main = "src/index.tsx"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+[assets]
+directory = "./public"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "videokurzy-db"
@@ -22,3 +25,6 @@ binding = "WEBHOOK_QUEUE"
 queue = "videokurzy-webhooks"
 max_batch_size = 5
 max_retries = 3
+
+[triggers]
+crons = ["0 3 * * *"]
