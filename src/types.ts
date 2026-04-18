@@ -12,6 +12,7 @@ export interface Env {
   BUNNY_API_KEY: string;
   BUNNY_LIBRARY_ID: string;
   BUNNY_TOKEN_KEY: string;
+  FIO_API_TOKEN: string;
 }
 
 export type Variables = {

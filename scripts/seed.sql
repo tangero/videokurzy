@@ -37,11 +37,9 @@ INSERT OR REPLACE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId
   (10, 3, 'ep10_final', 'Finální lesk a co dál (údržba, vylepšení, limity)', 'finalni-lesk-a-co-dal', NULL, 0, 0, 3);
 
 -- ─── Admin uživatelé ────────────────────────────────────────────────
--- Patrick a Andrea mají role = 'admin'. Pokud uživatelé už existují
--- (z předchozího přihlášení), jen jim nastavíme role.
-
-INSERT INTO user (id, name, email, emailVerified, role, createdAt, updatedAt)
-VALUES
-  ('admin-patrick-seed', 'Patrick Zandl', 'patrick@vibecoding.cz', 1, 'admin', (strftime('%s', 'now') * 1000), (strftime('%s', 'now') * 1000)),
-  ('admin-andrea-seed', 'Andrea Maloveczká', 'andrea@vibecoding.cz', 1, 'admin', (strftime('%s', 'now') * 1000), (strftime('%s', 'now') * 1000))
-ON CONFLICT(email) DO UPDATE SET role = 'admin';
+-- Admini (patrick@vibecoding.cz, andrea@vibecoding.cz) jsou spravováni
+-- automaticky v src/middleware/auth.ts přes ADMIN_EMAILS whitelist.
+-- Po prvním přihlášení magic linkem Better Auth vytvoří user record
+-- a middleware mu nastaví role = 'admin'.
+-- Seed zde proto nevytváří žádné user záznamy (bránilo by to signupu
+-- přes Better Auth kvůli UNIQUE(email) kolizi s pre-seed ID).

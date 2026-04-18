@@ -21,8 +21,12 @@ export async function handleScheduled(
   const now = new Date();
 
   // ─── 1) Expirace pending FIO objednávek ──────────────────────────
-  const expiredCount = await expirePendingFioOrders(db, now);
-  console.log(`[cron] Expirated ${expiredCount} pending FIO orders`);
+  try {
+    const expiredCount = await expirePendingFioOrders(db, now);
+    console.log(`[cron] expired ${expiredCount} pending FIO orders at ${event.scheduledTime}`);
+  } catch (err) {
+    console.error("[cron] expirePendingFioOrders failed:", err);
+  }
 
   // ─── 2) Renewal reminders (implementace v Etapě 2) ───────────────
   // TODO(etapa-2): sendRenewalReminders(db, env, now);
