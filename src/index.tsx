@@ -14,6 +14,22 @@ import { PrivacyPage } from "./views/privacy";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+// Prepend DOCTYPE to all HTML responses (Hono JSX doesn't add it automatically)
+app.use("*", async (c, next) => {
+  await next();
+  const ct = c.res.headers.get("content-type") ?? "";
+  if (ct.includes("text/html")) {
+    const body = await c.res.text();
+    if (!body.startsWith("<!DOCTYPE")) {
+      c.res = new Response("<!DOCTYPE html>" + body, {
+        status: c.res.status,
+        statusText: c.res.statusText,
+        headers: c.res.headers,
+      });
+    }
+  }
+});
+
 // Auth middleware on all routes (sets user if logged in)
 app.use("*", authMiddleware);
 

@@ -60,6 +60,14 @@ body {
   overflow-x: hidden;
   min-height: 100vh;
 }
+h1, h2, h3, h4 {
+  font-family: var(--font-head);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin: 0;
+}
+h1 { font-weight: 700; letter-spacing: -0.02em; }
 a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 a:hover { color: var(--accent-2); }
 button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
@@ -242,7 +250,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
   background: linear-gradient(180deg, var(--bg-2), transparent);
 }
 .module-index { font-family: var(--font-mono); font-size: 0.72rem; color: var(--accent-2); letter-spacing: 0.1em; }
-.module-title { font-family: var(--font-head); font-weight: 600; font-size: 1.1rem; margin: 0; }
+.module-title { font-family: var(--font-head); font-weight: 600; font-size: 1.1rem; letter-spacing: -0.01em; margin: 0; }
 .module-meta { margin-left: auto; font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); }
 .lesson {
   display: flex; align-items: center; gap: 14px;
@@ -270,7 +278,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 }
 .price-card.featured { border-color: var(--accent-border); background: linear-gradient(180deg, var(--accent-subtle), var(--surface)); }
 .price-card h3 { font-family: var(--font-head); font-size: 1.2rem; font-weight: 600; margin: 0; }
-.price-number { font-family: var(--font-head); font-size: 2.6rem; font-weight: 700; letter-spacing: -0.02em; }
+.price-number { font-family: var(--font-head); font-size: 2.6rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .price-number small { font-family: var(--font-mono); font-size: 0.9rem; font-weight: 400; color: var(--muted); margin-left: 4px; }
 .price-features { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 0.92rem; color: var(--ink-soft); }
 .price-features li { display: flex; gap: 10px; align-items: flex-start; }
@@ -283,7 +291,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
   background: var(--surface); padding: 22px;
   display: flex; flex-direction: column; gap: 14px;
 }
-.quote-body { font-family: var(--font-head); font-size: 1.02rem; line-height: 1.5; color: var(--ink); }
+.quote-body { font-family: var(--font-head); font-weight: 600; font-size: 1.02rem; line-height: 1.5; letter-spacing: -0.01em; color: var(--ink); }
 .quote-person { display: flex; align-items: center; gap: 10px; margin-top: auto; }
 .quote-avatar {
   width: 36px; height: 36px; border-radius: 50%;
@@ -355,12 +363,13 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 .admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 28px; }
 .stat-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 16px 18px; }
 .stat-label { font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.stat-value { font-family: var(--font-head); font-size: 1.9rem; font-weight: 700; letter-spacing: -0.01em; margin-top: 6px; }
+.stat-value { font-family: var(--font-head); font-size: 1.9rem; font-weight: 700; letter-spacing: -0.01em; margin-top: 6px; font-variant-numeric: tabular-nums; }
 .stat-delta { font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent-2); margin-top: 4px; }
 .table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .table th, .table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
 .table th { background: var(--bg-2); font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .table td { font-size: 0.92rem; }
+.table td.num { font-family: var(--font-mono); font-size: 0.88rem; font-variant-numeric: tabular-nums; }
 .table tr:last-child td { border-bottom: 0; }
 .table tr:hover td { background: var(--accent-subtle); }
 .table .mono { font-family: var(--font-mono); font-size: 0.85rem; }
@@ -490,7 +499,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
         href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
         rel="stylesheet"
       />
-      <style>{CSS}</style>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <script
         src="https://unpkg.com/htmx.org@2.0.4"
         integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
