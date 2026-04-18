@@ -35,3 +35,13 @@ INSERT OR REPLACE INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId
   (8, 3, 'ep08_auth', 'Bezpečnost a přihlášení bez bolesti', 'bezpecnost-a-prihlaseni', NULL, 0, 0, 1),
   (9, 3, 'ep09_deploy', 'Nahraj to na internet (deployment)', 'nahraj-to-na-internet', NULL, 0, 0, 2),
   (10, 3, 'ep10_final', 'Finální lesk a co dál (údržba, vylepšení, limity)', 'finalni-lesk-a-co-dal', NULL, 0, 0, 3);
+
+-- ─── Admin uživatelé ────────────────────────────────────────────────
+-- Patrick a Andrea mají role = 'admin'. Pokud uživatelé už existují
+-- (z předchozího přihlášení), jen jim nastavíme role.
+
+INSERT INTO user (id, name, email, emailVerified, role, createdAt, updatedAt)
+VALUES
+  ('admin-patrick-seed', 'Patrick Zandl', 'patrick@vibecoding.cz', 1, 'admin', (strftime('%s', 'now') * 1000), (strftime('%s', 'now') * 1000)),
+  ('admin-andrea-seed', 'Andrea Maloveczká', 'andrea@vibecoding.cz', 1, 'admin', (strftime('%s', 'now') * 1000), (strftime('%s', 'now') * 1000))
+ON CONFLICT(email) DO UPDATE SET role = 'admin';
