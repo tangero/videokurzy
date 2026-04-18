@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Vlastní custom CSS (pokud potřeba) */
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
