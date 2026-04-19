@@ -28,7 +28,7 @@ export const LoginPage: FC = () => (
           — stačí email na&nbsp;firemní doméně.
         </p>
         <form
-          hx-post="/api/auth/magic-link/send"
+          hx-post="/api/auth/sign-in/magic-link"
           hx-target="#login-result"
           hx-swap="innerHTML"
           hx-indicator="#login-spinner"
