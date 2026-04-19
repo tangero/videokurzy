@@ -10,7 +10,7 @@ CREATE TABLE `oidc_client` (
 CREATE TABLE `user_emails` (
 	`id` text PRIMARY KEY NOT NULL,
 	`userId` text NOT NULL,
-	`email` text NOT NULL,
+	`email` text NOT NULL COLLATE NOCASE,
 	`verifiedAt` integer NOT NULL,
 	`isPrimary` integer DEFAULT false NOT NULL,
 	`addedAt` integer NOT NULL,
