@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
+import { eq } from "drizzle-orm";
 import { authMiddleware, requireAuth } from "../middleware/auth";
 import {
   listUserEmails,
@@ -10,6 +11,7 @@ import {
 import { logIdentityEvent } from "../lib/audit";
 import { createAuth } from "../lib/auth";
 import { isAllowedCallback } from "../lib/callback-allowlist";
+import { user as userTable } from "../db/auth-schema";
 import type { Env, Variables } from "../types";
 
 /**
@@ -117,6 +119,23 @@ profile.delete("/api/profile/emails", async (c) => {
     return c.json({ error: (err as Error).message }, 400);
   }
   return c.json({ ok: true });
+});
+
+profile.post("/api/profile/recovery-banner/dismiss", async (c) => {
+  const u = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const until = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await db
+    .update(userTable)
+    .set({ recoveryBannerDismissedUntil: until })
+    .where(eq(userTable.id, u.id));
+  await logIdentityEvent(db, {
+    userId: u.id,
+    action: "recovery_banner_dismissed",
+    actor: "self",
+    details: { until: until.toISOString() },
+  });
+  return c.json({ ok: true, until });
 });
 
 export default profile;
