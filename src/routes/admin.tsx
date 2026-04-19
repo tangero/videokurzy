@@ -1,11 +1,12 @@
 import { Hono } from "hono";
-import { eq, asc, sql } from "drizzle-orm";
+import { and, desc, eq, asc, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user } from "../db/schema";
 import { Layout } from "../views/layout";
+import { sendEmail, organizationApprovedHtml } from "../lib/email";
 
 const admin = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -127,6 +128,36 @@ admin.post("/admin/api/organizations/:id/approve", async (c) => {
     .limit(1);
 
   if (!org) return c.text("Not found", 404);
+
+  // Notify the most recent buyer on this domain that the license is active.
+  const recentPurchases = await db
+    .select({ email: purchase.email })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.type, "organization"),
+        or(eq(purchase.status, "pending"), eq(purchase.status, "active"))
+      )
+    )
+    .orderBy(desc(purchase.createdAt))
+    .limit(20);
+
+  const buyerEmail = recentPurchases.find((r) =>
+    r.email.toLowerCase().endsWith(`@${org.domain.toLowerCase()}`)
+  )?.email;
+
+  if (buyerEmail) {
+    c.executionCtx.waitUntil(
+      sendEmail(c.env, {
+        to: buyerEmail,
+        subject: `Firemní licence pro ${org.domain} aktivována`,
+        html: organizationApprovedHtml(
+          org.domain,
+          `${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(buyerEmail)}`
+        ),
+      })
+    );
+  }
 
   return c.html(
     <tr class="border-t" id={`org-${org.id}`}>
