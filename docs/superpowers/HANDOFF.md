@@ -14,7 +14,7 @@
 
 ---
 
-## Stav projektu (commit `27a7dbe`, branch `main`)
+## Stav projektu (commit `f6427ae`, branch `main`)
 
 ### Hotovo
 
@@ -58,6 +58,13 @@
 - HTML response menší (žádné `<style>`), cachable `/styles.css`
 - **Zastaveno na tomto kroku** — views používají semantické class names (`.btn`, `.card`), přepisování na čistě Tailwind utility by degrovalo čitelnost
 
+**Etapa 3 — Admin CRUD** (commity `5f14ec0`, `f6427ae`)
+- `src/views/admin-courses.tsx` — view komponenty: `AdminCoursesList`, `AdminCourseForm`, `AdminCourseDetail`, `AdminModuleForm`, `AdminLessonForm`
+- `src/routes/admin.tsx` — plný CRUD pro kurzy/moduly/lekce (20 route handlerů)
+- KV cache invalidace `cache:catalog` po každé mutaci
+- Smazat kurz/modul/lekci smaže cascade přes DB FK
+- Lekce generují `publicId` přes `nanoid(8)` při vytvoření
+
 ---
 
 ## Co zbývá (priority sorted)
@@ -79,18 +86,9 @@
    - `wrangler logpush create` nebo přes Cloudflare Dashboard
    - Minimálně `workers-trace-events` → R2 bucket
 
-### Prio 2: Etapa 3 — Admin CRUD
+### ~~Prio 2: Etapa 3 — Admin CRUD~~ ✅ HOTOVO
 
-Správa kurzů/modulů/lekcí z admin GUI. Alternativa: zůstat u seed SQL + ruční DB edits.
-
-Pokud se rozhodne postavit:
-- Port `AdminCoursePage`, `AdminCourseForm`, `AdminModuleForm`, `AdminLessonForm` z `videokurz-demo/src/components/AdminPage.tsx`
-- Nové routes: `/admin/courses`, `/admin/courses/new`, `/admin/courses/:id/edit`, `/admin/courses/:id`, moduly + lekce
-- KV cache invalidace při změně (`env.KV.delete("cache:catalog")`)
-- Tailwind utility od začátku (jako `checkout.tsx`)
-- Plán: napsat do `docs/superpowers/plans/YYYY-MM-DD-unification-etapa3-admin-crud.md`
-
-### Prio 3: Technický dluh z review Etapy 2
+### Prio 2: Technický dluh z review Etapy 2
 
 - **I3** Admin UI domain mismatch warning — když B2B buyer z `@gmail.com` žádá licenci pro `microsoft.com`, admin UI to vizuálně zvýrazní
 - **I5** Renewal reminder idempotence — nahradit time-window ±12h za KV marker `reminder:{purchaseId}:{daysLeft}` s TTL 2 dny
