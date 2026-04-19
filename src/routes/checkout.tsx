@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import Stripe from "stripe";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
@@ -209,54 +209,77 @@ async function startFioCheckout(
   const expiresAt = new Date(Date.now() + dueDays * 86400 * 1000);
   const createdAt = new Date();
 
+  // Dedup: pokud už existuje pending FIO objednávka pro stejný email+type se stále platnou splatností,
+  // přesměruj na ni místo vytváření nové.
+  const existingPending = await db
+    .select({ vs: purchase.variableSymbol })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.email, email),
+        eq(purchase.type, type),
+        eq(purchase.paymentMethod, "fio"),
+        eq(purchase.status, "pending"),
+        gt(purchase.expiresAt, new Date())
+      )
+    )
+    .limit(1);
+  if (existingPending.length > 0 && existingPending[0].vs) {
+    return c.redirect(`/checkout/pay/${existingPending[0].vs}`, 303);
+  }
+
+  // Generování VS s odolností proti TOCTOU: při UNIQUE violation opakuj s novým VS (max 5 pokusů).
   let vs: string | null = null;
+  let insertOrgDone = false;
   for (let attempt = 0; attempt < 5; attempt++) {
     const candidate = generateVariableSymbol();
-    const existing = await db
-      .select({ id: purchase.id })
-      .from(purchase)
-      .where(eq(purchase.variableSymbol, candidate))
-      .limit(1);
-    if (existing.length === 0) {
+    try {
+      if (type === "organization" && domain && !insertOrgDone) {
+        const existingOrg = await db
+          .select({ id: organization.id })
+          .from(organization)
+          .where(eq(organization.domain, domain))
+          .limit(1);
+        if (existingOrg.length === 0) {
+          await db.insert(organization).values({
+            publicId: nanoid(),
+            domain,
+            stripeSubscriptionId: null,
+            status: "pending",
+            createdAt,
+          });
+        }
+        insertOrgDone = true;
+      }
+
+      await db.insert(purchase).values({
+        email,
+        userId: null,
+        type,
+        paymentMethod: "fio",
+        variableSymbol: candidate,
+        fioTransactionId: null,
+        stripePaymentId: null,
+        stripeSubscriptionId: null,
+        status: "pending",
+        expiresAt,
+        createdAt,
+      });
       vs = candidate;
       break;
+    } catch (err) {
+      // UNIQUE(variableSymbol) kolize — zkusit znovu s jiným VS
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("UNIQUE") || msg.includes("unique")) {
+        continue;
+      }
+      throw err;
     }
   }
   if (!vs) {
     console.error("[fio] Failed to generate unique VS after 5 attempts");
     return c.text("Chyba při vytváření objednávky. Zkuste to prosím znovu.", 500);
   }
-
-  if (type === "organization" && domain) {
-    const existing = await db
-      .select({ id: organization.id })
-      .from(organization)
-      .where(eq(organization.domain, domain))
-      .limit(1);
-    if (existing.length === 0) {
-      await db.insert(organization).values({
-        publicId: nanoid(),
-        domain,
-        stripeSubscriptionId: null,
-        status: "pending",
-        createdAt,
-      });
-    }
-  }
-
-  await db.insert(purchase).values({
-    email,
-    userId: null,
-    type,
-    paymentMethod: "fio",
-    variableSymbol: vs,
-    fioTransactionId: null,
-    stripePaymentId: null,
-    stripeSubscriptionId: null,
-    status: "pending",
-    expiresAt,
-    createdAt,
-  });
 
   const payUrl = `${c.env.BETTER_AUTH_URL}/checkout/pay/${vs}`;
   c.executionCtx.waitUntil(

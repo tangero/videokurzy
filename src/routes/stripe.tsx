@@ -8,72 +8,12 @@ function getStripe(secretKey: string) {
   return new Stripe(secretKey, { apiVersion: "2026-03-25.dahlia" });
 }
 
-// B2C checkout
-stripeRoutes.post("/api/checkout/individual", async (c) => {
-  const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
-
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    payment_method_types: ["card"],
-    line_items: [
-      {
-        price_data: {
-          currency: "czk",
-          product_data: {
-            name: "Videokurz Claude Code s Patrickem — Jednotlivec",
-          },
-          unit_amount: 200000, // 2000 CZK in hellers
-          recurring: { interval: "year" },
-        },
-        quantity: 1,
-      },
-    ],
-    success_url: `${c.env.BETTER_AUTH_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${c.env.BETTER_AUTH_URL}/#cenik`,
-    metadata: {
-      type: "individual",
-    },
-  });
-
-  return c.redirect(session.url!, 303);
-});
-
-// B2B checkout
-stripeRoutes.post("/api/checkout/organization", async (c) => {
-  const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
-
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    payment_method_types: ["card"],
-    line_items: [
-      {
-        price_data: {
-          currency: "czk",
-          product_data: {
-            name: "Videokurz Claude Code s Patrickem — Firemní licence",
-          },
-          unit_amount: 1500000, // 15000 CZK in hellers
-          recurring: { interval: "year" },
-        },
-        quantity: 1,
-      },
-    ],
-    custom_fields: [
-      {
-        key: "domain",
-        label: { type: "custom", custom: "Emailová doména firmy (např. firma.cz)" },
-        type: "text",
-      },
-    ],
-    success_url: `${c.env.BETTER_AUTH_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${c.env.BETTER_AUTH_URL}/#cenik`,
-    metadata: {
-      type: "organization",
-    },
-  });
-
-  return c.redirect(session.url!, 303);
-});
+// Legacy endpointy — přesměrovat na novou mezistránku (/checkout/*) s výběrem platební metody.
+// Ponecháno pro případ cached linků z emailů nebo externích integrací.
+stripeRoutes.post("/api/checkout/individual", (c) => c.redirect("/checkout/individual", 303));
+stripeRoutes.get("/api/checkout/individual", (c) => c.redirect("/checkout/individual", 303));
+stripeRoutes.post("/api/checkout/organization", (c) => c.redirect("/checkout/organization", 303));
+stripeRoutes.get("/api/checkout/organization", (c) => c.redirect("/checkout/organization", 303));
 
 // Checkout success page
 stripeRoutes.get("/checkout/success", (c) => {
