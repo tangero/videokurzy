@@ -15,7 +15,7 @@ const ArrowIcon = () => (
   </svg>
 );
 
-export const LoginPage: FC = () => (
+export const LoginPage: FC<{ prefillEmail?: string; error?: string }> = ({ prefillEmail, error }) => (
   <Layout title="Přihlášení">
     <div class="container-narrow" style="margin-top:40px">
       <div class="card" style="padding:36px">
@@ -27,8 +27,17 @@ export const LoginPage: FC = () => (
           Napište email, pošleme vám jednorázový odkaz. Funguje i&nbsp;pro&nbsp;firemní licence
           — stačí email na&nbsp;firemní doméně.
         </p>
+        {error && (
+          <div style="background:var(--error-bg);color:var(--error-text);padding:12px;border-radius:8px;border:1px solid var(--error-border);font-size:0.95rem;margin-bottom:16px">
+            {error}
+          </div>
+        )}
+        {/* Native action + method zajišťuje no-JS fallback (progressive enhancement).
+            htmx atributy přebírají submit, když běží JS, a zobrazí partial bez reloadu. */}
         <form
-          hx-post="/api/auth/sign-in/magic-link"
+          method="post"
+          action="/login/send"
+          hx-post="/login/send"
           hx-target="#login-result"
           hx-swap="innerHTML"
           hx-indicator="#login-spinner"
@@ -42,6 +51,7 @@ export const LoginPage: FC = () => (
               id="email"
               name="email"
               required
+              value={prefillEmail ?? ""}
               placeholder="jmeno@firma.cz"
               class="input"
               autocomplete="email"
