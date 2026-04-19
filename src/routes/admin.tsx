@@ -33,6 +33,32 @@ admin.get("/admin", async (c) => {
     .from(purchase);
   const orgs = await db.select().from(organization).orderBy(asc(organization.createdAt));
 
+  // I3: načíst emaily kupujících pro detekci domain mismatch
+  const orgPurchases = await db
+    .select({ email: purchase.email, createdAt: purchase.createdAt })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.type, "organization"),
+        or(eq(purchase.status, "pending"), eq(purchase.status, "active"))
+      )
+    )
+    .orderBy(desc(purchase.createdAt));
+
+  const buyerFor = (orgDomain: string, orgCreatedAt: Date): string | null => {
+    const hit = orgPurchases.find((p) =>
+      p.email.toLowerCase().endsWith(`@${orgDomain.toLowerCase()}`)
+    );
+    if (hit) return hit.email;
+    const t = orgCreatedAt.getTime();
+    return (
+      orgPurchases
+        .filter((p) => Math.abs(p.createdAt.getTime() - t) < 5 * 60 * 1000)
+        .sort((a, b) => Math.abs(a.createdAt.getTime() - t) - Math.abs(b.createdAt.getTime() - t))[0]
+        ?.email ?? null
+    );
+  };
+
   return c.html(
     <Layout title="Admin" user={currentUser}>
       <div class="max-w-4xl mx-auto px-4 py-8">
@@ -61,44 +87,60 @@ admin.get("/admin", async (c) => {
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-2 text-left">Doména</th>
+                <th class="px-4 py-2 text-left">Kupující</th>
                 <th class="px-4 py-2 text-left">Status</th>
                 <th class="px-4 py-2 text-left">Akce</th>
               </tr>
             </thead>
             <tbody>
-              {orgs.map((org) => (
-                <tr class="border-t" id={`org-${org.id}`}>
-                  <td class="px-4 py-2">{org.domain}</td>
-                  <td class="px-4 py-2">
-                    <span
-                      class={`px-2 py-1 rounded-full text-xs font-medium ${
-                        org.status === "active"
-                          ? "bg-green-100 text-green-700"
-                          : org.status === "pending"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : "bg-red-100 text-red-700"
-                      }`}
-                    >
-                      {org.status}
-                    </span>
-                  </td>
-                  <td class="px-4 py-2">
-                    {org.status === "pending" && (
-                      <button
-                        hx-post={`/admin/api/organizations/${org.id}/approve`}
-                        hx-target={`#org-${org.id}`}
-                        hx-swap="outerHTML"
-                        class="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700"
+              {orgs.map((org) => {
+                const buyer = buyerFor(org.domain, org.createdAt);
+                const buyerDomain = buyer?.split("@")[1]?.toLowerCase();
+                const mismatch = !!buyer && buyerDomain !== org.domain.toLowerCase();
+                return (
+                  <tr class="border-t" id={`org-${org.id}`}>
+                    <td class="px-4 py-2 font-medium">{org.domain}</td>
+                    <td class="px-4 py-2">
+                      {buyer ? (
+                        <span class={mismatch ? "text-yellow-700" : "text-gray-600"}>
+                          {mismatch && <span title="Email kupujícího neodpovídá doméně licence">⚠ </span>}
+                          {buyer}
+                        </span>
+                      ) : (
+                        <span class="text-gray-400 italic">neznámý</span>
+                      )}
+                    </td>
+                    <td class="px-4 py-2">
+                      <span
+                        class={`px-2 py-1 rounded-full text-xs font-medium ${
+                          org.status === "active"
+                            ? "bg-green-100 text-green-700"
+                            : org.status === "pending"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : "bg-red-100 text-red-700"
+                        }`}
                       >
-                        Schválit
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                        {org.status}
+                      </span>
+                    </td>
+                    <td class="px-4 py-2">
+                      {org.status === "pending" && (
+                        <button
+                          hx-post={`/admin/api/organizations/${org.id}/approve`}
+                          hx-target={`#org-${org.id}`}
+                          hx-swap="outerHTML"
+                          class="text-xs bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700"
+                        >
+                          Schválit
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {orgs.length === 0 && (
                 <tr>
-                  <td colspan={3} class="px-4 py-4 text-gray-500 text-center">
+                  <td colspan={4} class="px-4 py-4 text-gray-500 text-center">
                     Zatím žádné organizace
                   </td>
                 </tr>
@@ -168,7 +210,8 @@ admin.post("/admin/api/organizations/:id/approve", async (c) => {
 
   return c.html(
     <tr class="border-t" id={`org-${org.id}`}>
-      <td class="px-4 py-2">{org.domain}</td>
+      <td class="px-4 py-2 font-medium">{org.domain}</td>
+      <td class="px-4 py-2 text-gray-600">{buyerEmail ?? ""}</td>
       <td class="px-4 py-2">
         <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
           active
