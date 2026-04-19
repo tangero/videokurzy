@@ -14,7 +14,7 @@
 
 ---
 
-## Stav projektu (commit `7b8f295`, branch `main`)
+## Stav projektu (commit `c67d101`, branch `main`)
 
 ### Hotovo
 
@@ -78,13 +78,12 @@
    - `stripe webhook_endpoints delete we_1TNo7hLxrPFHwJcKFfMZwww3` (test endpoint cleanup)
    - Redeploy
 
-2. **Stránka `/terms`** — footer na ni linkuje, vrací 404. PRD vyžaduje pre-launch.
-   - Vytvořit `src/views/terms.tsx` a napojit v `src/index.tsx` na `/terms` (podobně jako `/privacy`)
-   - Text obchodních podmínek pro B2C + B2B licenci + FIO splatnost + refund policy (14 dní / < 50% epizod, viz PRD sekce 4)
+2. ✅ **Stránka `/terms`** (commit `c67d101`) — B2C + B2B licence, FIO splatnost 7/21 dní, refund policy
 
 3. **Error monitoring** — Cloudflare Logpush → R2
-   - `wrangler logpush create` nebo přes Cloudflare Dashboard
-   - Minimálně `workers-trace-events` → R2 bucket
+   - ✅ R2 bucket `videokurzy-logs` vytvořen (`wrangler r2 bucket create`)
+   - ⏳ Logpush job — Dashboard: Logs → Logpush → Create → Workers trace events → filter `Outcome=exception` → R2 `videokurzy-logs`
+   - **Poznámka:** `wrangler logpush` neexistuje, pouze přes Dashboard nebo Cloudflare API
 
 ### ~~Prio 2: Etapa 3 — Admin CRUD~~ ✅ HOTOVO
 
