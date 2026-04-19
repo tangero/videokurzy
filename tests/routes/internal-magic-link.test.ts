@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 // We verify the route's guards (internal-secret auth, allowlist, validation).
 // The success path (200) is not tested here because it would call the real
 // Resend API; end-to-end delivery is verified manually in Task 15.
+// Note: On Better Auth errors, handler relays upstream 4xx status (rate limit,
+// validation) and logs a correlationId. Unknown errors remain 502. Happy path
+// and correlation-ID propagation are verified manually in Task 15 QA.
 describe("POST /internal/auth/magic-link", () => {
   it("403 without secret", async () => {
     const res = await SELF.fetch("https://test.local/internal/auth/magic-link", {

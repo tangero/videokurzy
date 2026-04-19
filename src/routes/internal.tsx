@@ -38,8 +38,21 @@ internal.post("/internal/auth/magic-link", async (c) => {
       headers: new Headers(),
     });
   } catch (err) {
-    console.warn("[internal/magic-link] send failed", err);
-    return c.json({ error: "send_failed" }, 502);
+    const status = (err as { status?: number; statusCode?: number }).status
+      ?? (err as { statusCode?: number }).statusCode
+      ?? 502;
+    const correlationId = crypto.randomUUID();
+    console.warn(JSON.stringify({
+      scope: "internal/magic-link",
+      event: "send_failed",
+      correlationId,
+      email,
+      status,
+      message: (err as Error)?.message,
+    }));
+    // Relay 4xx from auth library (rate limit, invalid input); upstream 5xx stays 502
+    const outStatus = status >= 400 && status < 500 ? (status as 400 | 401 | 403 | 429) : 502;
+    return c.json({ error: "send_failed", correlationId }, outStatus);
   }
   return c.json({ ok: true });
 });
