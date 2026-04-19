@@ -82,7 +82,7 @@ auth.post("/login/send", async (c) => {
       <div style="background:var(--accent-subtle);color:var(--accent-2);padding:16px;border-radius:8px;border:1px solid var(--accent-border);font-size:0.95rem;text-align:center">
         <strong>Magický odkaz odeslán na {email}.</strong>
         <div style="margin-top:6px;color:var(--muted);font-size:0.9rem">
-          Zkontrolujte emailovou schránku (včetně spam složky). Odkaz platí 5 minut.
+          Zkontrolujte emailovou schránku (včetně spam složky). Odkaz platí 10 minut.
         </div>
       </div>
     );

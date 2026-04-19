@@ -100,7 +100,7 @@ export const MagicLinkSentPage: FC = () => (
             // tip
           </div>
           <div style="font-size:0.95rem">
-            Odkaz platí 15 minut. Otevřete ho na&nbsp;stejném zařízení, abyste zůstali přihlášeni.
+            Odkaz platí 10 minut. Otevřete ho na&nbsp;stejném zařízení, abyste zůstali přihlášeni.
           </div>
         </div>
         <a class="btn btn-ghost btn-sm" href="/login">

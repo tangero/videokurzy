@@ -70,7 +70,7 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
                   Přihlásit se
                 </a>
                 <p style="margin-top:16px;color:#666;font-size:14px;">
-                  Odkaz je platný 5 minut. Pokud jste o přihlášení nežádali, tento email ignorujte.
+                  Odkaz je platný 10 minut. Pokud jste o přihlášení nežádali, tento email ignorujte.
                 </p>
               `,
             }),
@@ -79,7 +79,7 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
             throw new Error(`Failed to send magic link: ${res.status}`);
           }
         },
-        expiresIn: 300, // 5 minutes
+        expiresIn: 600, // 10 minutes
       }),
     ],
 
