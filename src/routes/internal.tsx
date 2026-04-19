@@ -136,8 +136,16 @@ internal.post("/internal/auth/revoke", async (c) => {
     });
     const setCookie = res.headers.get("set-cookie");
     return c.json({ ok: true, setCookie });
-  } catch {
-    // Idempotent: signing out without a valid session should not error.
+  } catch (err) {
+    // Idempotent: "no session" is an expected state. Still log so real
+    // failures (DB outage, Better Auth internal crash) are traceable.
+    const correlationId = crypto.randomUUID();
+    console.warn(JSON.stringify({
+      scope: "internal/revoke",
+      event: "signout_failed_or_no_session",
+      correlationId,
+      message: (err as Error)?.message,
+    }));
     return c.json({ ok: true, setCookie: null });
   }
 });
