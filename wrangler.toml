@@ -40,3 +40,6 @@ migrations_dir = "drizzle/migrations"
 [[env.test.kv_namespaces]]
 binding = "KV"
 id = "test-kv"
+
+[env.test.vars]
+AUTH_INTERNAL_SECRET = "test-internal-secret"
