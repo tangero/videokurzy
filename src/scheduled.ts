@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, lt } from "drizzle-orm";
 import { purchase } from "./db/schema";
+import { sendRenewalReminders } from "./lib/renewal-reminders";
 import type { Env } from "./types";
 
 /**
@@ -9,8 +10,7 @@ import type { Env } from "./types";
  *
  * Úkoly:
  * 1. Expirace FIO pending objednávek, kterým vypršela splatnost.
- * 2. Renewal reminders pro aktivní FIO předplatné (3/2/1 týden / 1 den před expirací).
- *    (Implementace v Etapě 2 — zatím jen TODO.)
+ * 2. Renewal reminders pro aktivní FIO předplatné (21/14/7/1 den před expirací).
  */
 export async function handleScheduled(
   event: ScheduledEvent,
@@ -20,7 +20,6 @@ export async function handleScheduled(
   const db = drizzle(env.DB);
   const now = new Date();
 
-  // ─── 1) Expirace pending FIO objednávek ──────────────────────────
   try {
     const expiredCount = await expirePendingFioOrders(db, now);
     console.log(`[cron] expired ${expiredCount} pending FIO orders at ${event.scheduledTime}`);
@@ -28,8 +27,12 @@ export async function handleScheduled(
     console.error("[cron] expirePendingFioOrders failed:", err);
   }
 
-  // ─── 2) Renewal reminders (implementace v Etapě 2) ───────────────
-  // TODO(etapa-2): sendRenewalReminders(db, env, now);
+  try {
+    const { sent, errors } = await sendRenewalReminders(db, env, now);
+    console.log(`[cron] renewal reminders: sent=${sent}, errors=${errors}`);
+  } catch (err) {
+    console.error("[cron] sendRenewalReminders failed:", err);
+  }
 }
 
 /** Přepne všechny pending FIO objednávky s expiresAt < now na status `expired`. */
