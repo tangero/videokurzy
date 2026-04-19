@@ -7,6 +7,7 @@ export const user = sqliteTable("user", {
   emailVerified: integer("emailVerified", { mode: "boolean" }).notNull().default(false),
   image: text("image"),
   role: text("role").notNull().default("user"),
+  recoveryBannerDismissedUntil: integer("recoveryBannerDismissedUntil", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
 });
