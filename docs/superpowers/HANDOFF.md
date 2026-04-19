@@ -14,7 +14,7 @@
 
 ---
 
-## Stav projektu (commit `f6427ae`, branch `main`)
+## Stav projektu (commit `7b8f295`, branch `main`)
 
 ### Hotovo
 
@@ -88,11 +88,11 @@
 
 ### ~~Prio 2: Etapa 3 — Admin CRUD~~ ✅ HOTOVO
 
-### Prio 2: Technický dluh z review Etapy 2
+### ~~Prio 2: Technický dluh z review Etapy 2~~ ✅ HOTOVO
 
-- **I3** Admin UI domain mismatch warning — když B2B buyer z `@gmail.com` žádá licenci pro `microsoft.com`, admin UI to vizuálně zvýrazní
-- **I5** Renewal reminder idempotence — nahradit time-window ±12h za KV marker `reminder:{purchaseId}:{daysLeft}` s TTL 2 dny
-- **M10** Unit testy pro `matchPayment`, `isFreemailDomain`, `generateVariableSymbol` (fintech kritické)
+- **I3** ✅ Admin UI domain mismatch warning (commit `4625479`) — sloupec Kupující v org tabulce, ⚠ badge při neshodě domény
+- **I5** ✅ Renewal reminder idempotence (commit `73c30b1`) — KV marker `reminder:{purchaseId}:{daysLeft}`, TTL 2 dny
+- **M10** ✅ Unit testy (commit `7b8f295`) — 35 testů pro `matchPayment`, `isFreemailDomain`, `generateVariableSymbol`
 
 ### Prio 4: Nice-to-have
 
