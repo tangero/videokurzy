@@ -14,7 +14,7 @@
     "db:migrate:prod": "wrangler d1 migrations apply videokurzy-db --remote",
     "db:seed": "wrangler d1 execute videokurzy-db --local --file=scripts/seed.sql",
     "db:seed:prod": "wrangler d1 execute videokurzy-db --remote --file=scripts/seed.sql",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },

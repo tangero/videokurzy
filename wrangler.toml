@@ -33,6 +33,7 @@ crons = ["0 3 * * *"]
 [[env.test.d1_databases]]
 binding = "DB"
 database_name = "videokurzy-db-test"
+# placeholder UUID; miniflare uses local SQLite in-memory for tests
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "drizzle/migrations"
 
