@@ -16,6 +16,7 @@ import profileRoutes from "./routes/profile";
 import { handleQueue } from "./queue";
 import { handleScheduled } from "./scheduled";
 import { PrivacyPage } from "./views/privacy";
+import { TermsPage } from "./views/terms";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -54,6 +55,7 @@ app.route("/", profileRoutes);
 
 // Static pages
 app.get("/privacy", (c) => c.html(<PrivacyPage />));
+app.get("/terms", (c) => c.html(<TermsPage />));
 
 // Health check
 app.get("/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
