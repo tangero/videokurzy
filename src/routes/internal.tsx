@@ -154,20 +154,27 @@ internal.post("/internal/auth/revoke", async (c) => {
 });
 
 /**
- * Verify a magic-link token that was sent to confirm ownership of a
- * secondary email. Unlike /internal/auth/verify-token, we do NOT want to
- * create a new session for the verified email — instead we attach the
- * email to the ORIGINAL user (body.userId) and then revoke the ad-hoc
- * session Better Auth creates during verify.
+ * Attaches a magic-link-verified email to a specified user account.
  *
- * Consumer flow:
- *  1. User (signed in as A) calls POST /api/profile/emails with email B.
- *  2. Magic link sent to B. Callback URL includes `intent=add-email` and
- *     `userId=A`.
- *  3. Consumer Worker receives the callback, detects intent, and calls this
- *     endpoint with the token and userId=A.
- *  4. We verify the token (proves B ownership), attach B to user A, and
- *     throw away the temp session. The user remains signed in as A.
+ * @security
+ * **CRITICAL CONTRACT:** The caller (consumer Worker) is trusted with the
+ * internal secret AND must guarantee that `body.userId` matches the
+ * currently-authenticated session user in the consumer's context. This
+ * endpoint does not verify the connection between `body.userId` and any
+ * session — a malicious caller with the internal secret could otherwise
+ * attach an email to an arbitrary userId.
+ *
+ * Consumer-side check (required): `session.user.id === body.userId` before
+ * forwarding to this endpoint.
+ *
+ * Flow:
+ * 1. User is logged in as primary user_A (consumer-held session cookie).
+ * 2. User submits form to add email B. Consumer sends magic link to B with
+ *    callbackUrl carrying ?intent=add-email&userId=<user_A.id>.
+ * 3. User clicks link. Consumer's /auth/verify route calls this endpoint
+ *    with { token, userId: user_A.id }.
+ * 4. This endpoint verifies the token, extracts verified email, attaches
+ *    to user_A, and discards the ad-hoc session for B.
  */
 internal.post("/internal/auth/verify-add-email", async (c) => {
   const body = await c.req
