@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
+import { oidcProvider } from "better-auth/plugins/oidc-provider";
 import { drizzle } from "drizzle-orm/d1";
 import * as authSchema from "../db/auth-schema";
 import type { Env } from "../types";
@@ -80,6 +81,14 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
           }
         },
         expiresIn: 600, // 10 minutes
+      }),
+      oidcProvider({
+        // Task 13: minimální nasazení. Žádný registrovaný klient v MVP —
+        // slouží jen k expozici discovery metadata endpointu pro budoucí
+        // cross-domain SSO (např. marigold.cz). Plugin je v Better Auth
+        // 1.6.5 označen jako deprecated (→ @better-auth/oauth-provider),
+        // ale pro MVP stačí. Issuer defaultuje na BETTER_AUTH_URL.
+        loginPage: "/login",
       }),
     ],
 
