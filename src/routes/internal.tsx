@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
+import { and, desc, eq } from "drizzle-orm";
 import { createAuth } from "../lib/auth";
 import { isAllowedCallback } from "../lib/callback-allowlist";
 import { requireInternalSecret } from "../middleware/internal-auth";
 import { addUserEmail } from "../lib/user-emails";
 import { logIdentityEvent } from "../lib/audit";
+import { purchase } from "../db/schema";
 import type { Env } from "../types";
 
 /**
@@ -245,6 +247,39 @@ internal.post("/internal/auth/verify-add-email", async (c) => {
     }));
     return c.json({ error: "verify_failed", correlationId }, 401);
   }
+});
+
+/**
+ * List active enrollments (purchases) for the caller's session. Consumer
+ * worker on vibecoding.cz queries this for the /profil/kurzy dashboard.
+ */
+internal.get("/internal/user/enrollments", async (c) => {
+  const auth = createAuth(c.env, c.executionCtx);
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session?.user) return c.json({ error: "unauthenticated" }, 401);
+
+  const db = drizzle(c.env.DB);
+  const now = new Date();
+  const rows = await db
+    .select()
+    .from(purchase)
+    .where(and(eq(purchase.userId, session.user.id), eq(purchase.status, "active")))
+    .orderBy(desc(purchase.createdAt))
+    .all();
+
+  const enrollments = rows
+    .filter((r) => !r.expiresAt || r.expiresAt > now)
+    .map((r) => ({
+      id: String(r.id),
+      title: "Claude Code s Patrickem",
+      meta: r.expiresAt
+        ? `Aktivní do ${r.expiresAt.toLocaleDateString("cs-CZ")}`
+        : "Aktivní",
+      type: r.type,
+      expiresAt: r.expiresAt,
+    }));
+
+  return c.json({ enrollments });
 });
 
 export default internal;
