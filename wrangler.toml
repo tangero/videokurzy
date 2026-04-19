@@ -43,3 +43,6 @@ id = "test-kv"
 
 [env.test.vars]
 AUTH_INTERNAL_SECRET = "test-internal-secret"
+BETTER_AUTH_SECRET = "test-better-auth-secret-32-chars-minimum"
+BETTER_AUTH_URL = "http://localhost:8787"
+RESEND_API_KEY = "test-resend-key"

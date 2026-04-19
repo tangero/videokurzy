@@ -11,6 +11,7 @@ import { checkoutRoutes } from "./routes/checkout";
 import { devRoutes } from "./routes/dev";
 import { adminRoutes } from "./routes/admin";
 import { leadRoutes } from "./routes/leads";
+import internalRoutes from "./routes/internal";
 import { handleQueue } from "./queue";
 import { handleScheduled } from "./scheduled";
 import { PrivacyPage } from "./views/privacy";
@@ -47,6 +48,7 @@ app.route("/", checkoutRoutes);
 app.route("/", devRoutes);
 app.route("/", leadRoutes);
 app.route("/", adminRoutes);
+app.route("/", internalRoutes);
 
 // Static pages
 app.get("/privacy", (c) => c.html(<PrivacyPage />));
