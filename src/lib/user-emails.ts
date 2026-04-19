@@ -108,6 +108,34 @@ export async function promotePrimary(
 }
 
 /**
+ * Idempotently seed a user_emails row with `isPrimary=true` for the given
+ * user. Used by Better Auth user.create hook so that every new user gets
+ * their login email recorded in user_emails immediately.
+ */
+export async function ensureUserEmailRecord(
+  db: Db,
+  opts: { userId: string; email: string },
+): Promise<void> {
+  const email = normalizeEmail(opts.email);
+  const existing = await db
+    .select()
+    .from(userEmails)
+    .where(eq(userEmails.email, email))
+    .get();
+  if (existing) return;
+  const now = new Date();
+  await db.insert(userEmails).values({
+    id: nanoid(),
+    userId: opts.userId,
+    email,
+    verifiedAt: now,
+    isPrimary: true,
+    addedAt: now,
+    addedVia: "signup",
+  });
+}
+
+/**
  * Remove a secondary email from the account. Rejects if it's the only email
  * on the account, or if it's the primary (promote another first).
  */

@@ -6,6 +6,7 @@ import * as authSchema from "../../src/db/auth-schema";
 import * as identitySchema from "../../src/db/identity-schema";
 import {
   addUserEmail,
+  ensureUserEmailRecord,
   listUserEmails,
   promotePrimary,
   removeUserEmail,
@@ -101,5 +102,23 @@ describe("user-emails lib", () => {
     const userId = await seedUser(db, "case@test.cz");
     const found = await findUserIdByEmail(db, "CASE@Test.CZ");
     expect(found).toBe(userId);
+  });
+
+  it("ensureUserEmailRecord is idempotent", async () => {
+    const userId = "u-ensure-test";
+    await db.insert(authSchema.user).values({
+      id: userId,
+      email: "ensure@test.cz",
+      emailVerified: true,
+      role: "user",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await ensureUserEmailRecord(db, { userId, email: "Ensure@test.cz" });
+    await ensureUserEmailRecord(db, { userId, email: "ensure@test.cz" });
+    const emails = await listUserEmails(db, userId);
+    expect(emails).toHaveLength(1);
+    expect(emails[0].isPrimary).toBe(true);
+    expect(emails[0].addedVia).toBe("signup");
   });
 });

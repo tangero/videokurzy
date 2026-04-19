@@ -4,6 +4,7 @@ import { magicLink } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/d1";
 import * as authSchema from "../db/auth-schema";
 import type { Env } from "../types";
+import { ensureUserEmailRecord } from "./user-emails";
 
 export function createAuth(env: Env, ctx: ExecutionContext) {
   const db = drizzle(env.DB, { schema: authSchema });
@@ -29,6 +30,20 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
         role: {
           type: "string",
           defaultValue: "user",
+        },
+      },
+    },
+
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (createdUser) => {
+            const hookDb = drizzle(env.DB);
+            await ensureUserEmailRecord(hookDb, {
+              userId: createdUser.id,
+              email: createdUser.email,
+            });
+          },
         },
       },
     },

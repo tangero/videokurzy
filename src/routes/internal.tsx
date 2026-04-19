@@ -57,4 +57,51 @@ internal.post("/internal/auth/magic-link", async (c) => {
   return c.json({ ok: true });
 });
 
+internal.post("/internal/auth/verify-token", async (c) => {
+  const body = await c.req
+    .json<{ token?: string }>()
+    .catch(() => ({}) as { token?: string });
+  if (!body.token) {
+    return c.json({ error: "token required" }, 400);
+  }
+
+  const auth = createAuth(c.env, c.executionCtx);
+  try {
+    const result = await auth.api.magicLinkVerify({
+      query: { token: body.token },
+      headers: new Headers(),
+      asResponse: true,
+    });
+    const setCookie = result.headers.get("set-cookie");
+    const session = await auth.api.getSession({ headers: result.headers });
+    if (!session?.user) {
+      return c.json({ error: "invalid_token" }, 401);
+    }
+    return c.json({
+      user: {
+        id: session.user.id,
+        email: session.user.email,
+        name: session.user.name ?? null,
+        role: (session.user as { role?: string }).role ?? "user",
+      },
+      sessionToken: session.session.token,
+      expiresAt: session.session.expiresAt,
+      setCookie,
+    });
+  } catch (err) {
+    const status = (err as { status?: number; statusCode?: number }).status
+      ?? (err as { statusCode?: number }).statusCode
+      ?? 401;
+    const correlationId = crypto.randomUUID();
+    console.warn(JSON.stringify({
+      scope: "internal/verify-token",
+      event: "verify_failed",
+      correlationId,
+      status,
+      message: (err as Error)?.message,
+    }));
+    return c.json({ error: "invalid_token", correlationId }, 401);
+  }
+});
+
 export default internal;
