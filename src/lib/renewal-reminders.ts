@@ -49,6 +49,9 @@ export async function sendRenewalReminders(
     if (!template) continue;
 
     for (const r of rows) {
+      const kvKey = `reminder:${r.id}:${daysLeft}`;
+      if (await env.KV.get(kvKey)) continue; // už odesláno, přeskočit
+
       const renewUrl = `${env.BETTER_AUTH_URL}/checkout/individual`;
       const subject = daysLeft === 1
         ? "Poslední den k prodloužení přístupu ke kurzu"
@@ -58,8 +61,12 @@ export async function sendRenewalReminders(
         subject,
         html: template(renewUrl),
       });
-      if (ok) sent++;
-      else errors++;
+      if (ok) {
+        sent++;
+        await env.KV.put(kvKey, "1", { expirationTtl: 2 * 24 * 3600 });
+      } else {
+        errors++;
+      }
     }
   }
 
