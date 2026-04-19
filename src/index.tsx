@@ -7,6 +7,8 @@ import { dashboardRoutes } from "./routes/dashboard";
 import { watchRoutes } from "./routes/watch";
 import { progressRoutes } from "./routes/progress";
 import { stripeRoutes } from "./routes/stripe";
+import { checkoutRoutes } from "./routes/checkout";
+import { devRoutes } from "./routes/dev";
 import { adminRoutes } from "./routes/admin";
 import { leadRoutes } from "./routes/leads";
 import { handleQueue } from "./queue";
@@ -41,6 +43,8 @@ app.route("/", dashboardRoutes);
 app.route("/", watchRoutes);
 app.route("/", progressRoutes);
 app.route("/", stripeRoutes);
+app.route("/", checkoutRoutes);
+app.route("/", devRoutes);
 app.route("/", leadRoutes);
 app.route("/", adminRoutes);
 

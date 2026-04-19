@@ -239,13 +239,11 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
                 14 dní na vrácení, bez dotazů
               </li>
             </ul>
-            <form method="post" action="/api/checkout/individual" style="margin:0">
-              <button type="submit" class="btn btn-block btn-lg">
-                koupit za 3&nbsp;000&nbsp;Kč
-              </button>
-            </form>
+            <a href="/checkout/individual" class="btn btn-block btn-lg" style="text-decoration:none">
+              koupit za 2&nbsp;000&nbsp;Kč
+            </a>
             <div class="mono muted" style="text-align:center">
-              platba kartou přes Stripe
+              platba kartou nebo převodem
             </div>
           </div>
           <div class="price-card">
@@ -282,13 +280,11 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
                 Přehled využití pro&nbsp;L&amp;D oddělení
               </li>
             </ul>
-            <form method="post" action="/api/checkout/organization" style="margin:0">
-              <button type="submit" class="btn btn-ghost btn-block btn-lg">
-                koupit firemní licenci
-              </button>
-            </form>
+            <a href="/checkout/organization" class="btn btn-ghost btn-block btn-lg" style="text-decoration:none">
+              koupit firemní licenci
+            </a>
             <div class="mono muted" style="text-align:center">
-              aktivace do 24&nbsp;h po&nbsp;schválení
+              platba kartou nebo převodem, aktivace do 24&nbsp;h po&nbsp;schválení
             </div>
           </div>
         </div>
