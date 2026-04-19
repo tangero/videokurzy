@@ -80,10 +80,7 @@
 
 2. ✅ **Stránka `/terms`** (commit `c67d101`) — B2C + B2B licence, FIO splatnost 7/21 dní, refund policy
 
-3. **Error monitoring** — Cloudflare Logpush → R2
-   - ✅ R2 bucket `videokurzy-logs` vytvořen (`wrangler r2 bucket create`)
-   - ⏳ Logpush job — Dashboard: Logs → Logpush → Create → Workers trace events → filter `Outcome=exception` → R2 `videokurzy-logs`
-   - **Poznámka:** `wrangler logpush` neexistuje, pouze přes Dashboard nebo Cloudflare API
+3. ✅ **Error monitoring** — rozhodnuto: Workers Observability (Dashboard → Workers & Pages → videokurzy → Observability), Logpush odložen. R2 bucket `videokurzy-logs` vytvořen pro případné budoucí použití.
 
 ### ~~Prio 2: Etapa 3 — Admin CRUD~~ ✅ HOTOVO
 
