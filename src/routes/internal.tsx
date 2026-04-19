@@ -112,4 +112,34 @@ internal.post("/internal/auth/verify-token", async (c) => {
   }
 });
 
+internal.get("/internal/auth/me", async (c) => {
+  const auth = createAuth(c.env, c.executionCtx);
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session?.user) return c.json({ error: "unauthenticated" }, 401);
+  return c.json({
+    user: {
+      id: session.user.id,
+      email: session.user.email,
+      name: session.user.name ?? null,
+      role: (session.user as { role?: string }).role ?? "user",
+    },
+    expiresAt: session.session.expiresAt,
+  });
+});
+
+internal.post("/internal/auth/revoke", async (c) => {
+  const auth = createAuth(c.env, c.executionCtx);
+  try {
+    const res = await auth.api.signOut({
+      headers: c.req.raw.headers,
+      asResponse: true,
+    });
+    const setCookie = res.headers.get("set-cookie");
+    return c.json({ ok: true, setCookie });
+  } catch {
+    // Idempotent: signing out without a valid session should not error.
+    return c.json({ ok: true, setCookie: null });
+  }
+});
+
 export default internal;
