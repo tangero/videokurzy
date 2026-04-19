@@ -7,6 +7,13 @@ import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user } from "../db/schema";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml } from "../lib/email";
+import {
+  AdminCoursesList,
+  AdminCourseForm,
+  AdminCourseDetail,
+  AdminModuleForm,
+  AdminLessonForm,
+} from "../views/admin-courses";
 
 const admin = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -172,49 +179,314 @@ admin.post("/admin/api/organizations/:id/approve", async (c) => {
   );
 });
 
-// Courses management
+// ─── Courses CRUD ─────────────────────────────────────────────────
+
 admin.get("/admin/courses", async (c) => {
   const currentUser = c.get("user")!;
   const db = drizzle(c.env.DB);
-
   const courses = await db.select().from(course).orderBy(asc(course.id));
-
   return c.html(
     <Layout title="Správa kurzů" user={currentUser}>
-      <div class="max-w-4xl mx-auto px-4 py-8">
-        <div class="flex justify-between items-center mb-6">
-          <h1 class="text-2xl font-bold">Kurzy</h1>
-          <a href="/admin" class="text-sm text-gray-500 hover:underline">
-            &larr; Admin
-          </a>
-        </div>
-
-        {courses.map((c) => (
-          <div class="bg-white p-4 rounded-lg border mb-4">
-            <div class="flex justify-between items-center">
-              <div>
-                <h3 class="font-semibold">{c.title}</h3>
-                <p class="text-sm text-gray-500">/{c.slug}</p>
-              </div>
-              <span
-                class={`text-xs px-2 py-1 rounded-full ${
-                  c.published
-                    ? "bg-green-100 text-green-700"
-                    : "bg-gray-100 text-gray-600"
-                }`}
-              >
-                {c.published ? "publikován" : "draft"}
-              </span>
-            </div>
-          </div>
-        ))}
-
-        {courses.length === 0 && (
-          <p class="text-gray-500">Zatím žádné kurzy. Použijte seed script.</p>
-        )}
-      </div>
+      <AdminCoursesList courses={courses} />
     </Layout>
   );
+});
+
+admin.get("/admin/courses/new", async (c) => {
+  const currentUser = c.get("user")!;
+  return c.html(
+    <Layout title="Nový kurz" user={currentUser}>
+      <AdminCourseForm />
+    </Layout>
+  );
+});
+
+admin.post("/admin/courses/new", async (c) => {
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const title = String(body.title ?? "").trim();
+  const slug = String(body.slug ?? "").trim();
+  const description = String(body.description ?? "").trim();
+  const published = body.published === "on";
+
+  const [created] = await db
+    .insert(course)
+    .values({ title, slug, description, published })
+    .returning({ id: course.id });
+
+  await c.env.KV.delete("cache:catalog");
+  return c.redirect(`/admin/courses/${created.id}`);
+});
+
+admin.get("/admin/courses/:id", async (c) => {
+  const currentUser = c.get("user")!;
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+
+  const [courseRow] = await db
+    .select()
+    .from(course)
+    .where(eq(course.id, id))
+    .limit(1);
+  if (!courseRow) return c.text("Not found", 404);
+
+  const courseModules = await db
+    .select()
+    .from(module)
+    .where(eq(module.courseId, id))
+    .orderBy(asc(module.sortOrder));
+
+  const modulesWithLessons = await Promise.all(
+    courseModules.map(async (m) => {
+      const lessons = await db
+        .select()
+        .from(lesson)
+        .where(eq(lesson.moduleId, m.id))
+        .orderBy(asc(lesson.sortOrder));
+      return { ...m, lessons };
+    })
+  );
+
+  return c.html(
+    <Layout title={courseRow.title} user={currentUser}>
+      <AdminCourseDetail course={courseRow} modules={modulesWithLessons} />
+    </Layout>
+  );
+});
+
+admin.get("/admin/courses/:id/edit", async (c) => {
+  const currentUser = c.get("user")!;
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const [courseRow] = await db
+    .select()
+    .from(course)
+    .where(eq(course.id, id))
+    .limit(1);
+  if (!courseRow) return c.text("Not found", 404);
+  return c.html(
+    <Layout title="Upravit kurz" user={currentUser}>
+      <AdminCourseForm course={courseRow} />
+    </Layout>
+  );
+});
+
+admin.post("/admin/courses/:id/edit", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const title = String(body.title ?? "").trim();
+  const slug = String(body.slug ?? "").trim();
+  const description = String(body.description ?? "").trim();
+  const published = body.published === "on";
+
+  await db
+    .update(course)
+    .set({ title, slug, description, published })
+    .where(eq(course.id, id));
+
+  await c.env.KV.delete("cache:catalog");
+  return c.redirect(`/admin/courses/${id}`);
+});
+
+admin.post("/admin/courses/:id/delete", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  await db.delete(course).where(eq(course.id, id));
+  await c.env.KV.delete("cache:catalog");
+  return c.redirect("/admin/courses");
+});
+
+// ─── Modules CRUD ─────────────────────────────────────────────────
+
+admin.get("/admin/courses/:courseId/modules/new", async (c) => {
+  const currentUser = c.get("user")!;
+  const courseId = parseInt(c.req.param("courseId"), 10);
+  return c.html(
+    <Layout title="Nový modul" user={currentUser}>
+      <AdminModuleForm courseId={courseId} />
+    </Layout>
+  );
+});
+
+admin.post("/admin/courses/:courseId/modules/new", async (c) => {
+  const courseId = parseInt(c.req.param("courseId"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const title = String(body.title ?? "").trim();
+  const slug = String(body.slug ?? "").trim();
+  const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
+
+  await db.insert(module).values({ courseId, title, slug, sortOrder });
+  await c.env.KV.delete("cache:catalog");
+  return c.redirect(`/admin/courses/${courseId}`);
+});
+
+admin.get("/admin/courses/:courseId/modules/:moduleId/edit", async (c) => {
+  const currentUser = c.get("user")!;
+  const courseId = parseInt(c.req.param("courseId"), 10);
+  const moduleId = parseInt(c.req.param("moduleId"), 10);
+  const db = drizzle(c.env.DB);
+  const [mod] = await db
+    .select()
+    .from(module)
+    .where(eq(module.id, moduleId))
+    .limit(1);
+  if (!mod) return c.text("Not found", 404);
+  return c.html(
+    <Layout title="Upravit modul" user={currentUser}>
+      <AdminModuleForm courseId={courseId} mod={mod} />
+    </Layout>
+  );
+});
+
+admin.post("/admin/courses/:courseId/modules/:moduleId/edit", async (c) => {
+  const courseId = parseInt(c.req.param("courseId"), 10);
+  const moduleId = parseInt(c.req.param("moduleId"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const title = String(body.title ?? "").trim();
+  const slug = String(body.slug ?? "").trim();
+  const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
+
+  await db
+    .update(module)
+    .set({ title, slug, sortOrder })
+    .where(eq(module.id, moduleId));
+
+  await c.env.KV.delete("cache:catalog");
+  return c.redirect(`/admin/courses/${courseId}`);
+});
+
+admin.post(
+  "/admin/courses/:courseId/modules/:moduleId/delete",
+  async (c) => {
+    const courseId = parseInt(c.req.param("courseId"), 10);
+    const moduleId = parseInt(c.req.param("moduleId"), 10);
+    const db = drizzle(c.env.DB);
+    await db.delete(module).where(eq(module.id, moduleId));
+    await c.env.KV.delete("cache:catalog");
+    return c.redirect(`/admin/courses/${courseId}`);
+  }
+);
+
+// ─── Lessons CRUD ─────────────────────────────────────────────────
+
+admin.get(
+  "/admin/courses/:courseId/modules/:moduleId/lessons/new",
+  async (c) => {
+    const currentUser = c.get("user")!;
+    const courseId = parseInt(c.req.param("courseId"), 10);
+    const moduleId = parseInt(c.req.param("moduleId"), 10);
+    return c.html(
+      <Layout title="Nová epizoda" user={currentUser}>
+        <AdminLessonForm courseId={courseId} moduleId={moduleId} />
+      </Layout>
+    );
+  }
+);
+
+admin.post(
+  "/admin/courses/:courseId/modules/:moduleId/lessons/new",
+  async (c) => {
+    const courseId = parseInt(c.req.param("courseId"), 10);
+    const moduleId = parseInt(c.req.param("moduleId"), 10);
+    const db = drizzle(c.env.DB);
+    const body = await c.req.parseBody();
+    const title = String(body.title ?? "").trim();
+    const slug = String(body.slug ?? "").trim();
+    const bunnyVideoId = String(body.bunnyVideoId ?? "").trim() || null;
+    const durationSeconds = parseInt(String(body.durationSeconds ?? "0"), 10);
+    const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
+    const isFree = body.isFree === "on";
+
+    await db.insert(lesson).values({
+      moduleId,
+      publicId: nanoid(8),
+      title,
+      slug,
+      bunnyVideoId,
+      durationSeconds,
+      sortOrder,
+      isFree,
+    });
+
+    await c.env.KV.delete("cache:catalog");
+    return c.redirect(`/admin/courses/${courseId}`);
+  }
+);
+
+admin.get("/admin/lessons/:id/edit", async (c) => {
+  const currentUser = c.get("user")!;
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+
+  const [row] = await db
+    .select({ lesson: lesson, courseId: module.courseId })
+    .from(lesson)
+    .innerJoin(module, eq(lesson.moduleId, module.id))
+    .where(eq(lesson.id, id))
+    .limit(1);
+
+  if (!row) return c.text("Not found", 404);
+
+  return c.html(
+    <Layout title="Upravit epizodu" user={currentUser}>
+      <AdminLessonForm
+        courseId={row.courseId}
+        moduleId={row.lesson.moduleId}
+        lesson={row.lesson}
+      />
+    </Layout>
+  );
+});
+
+admin.post("/admin/lessons/:id/edit", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+
+  const [row] = await db
+    .select({ courseId: module.courseId })
+    .from(lesson)
+    .innerJoin(module, eq(lesson.moduleId, module.id))
+    .where(eq(lesson.id, id))
+    .limit(1);
+
+  if (!row) return c.text("Not found", 404);
+
+  const body = await c.req.parseBody();
+  const title = String(body.title ?? "").trim();
+  const slug = String(body.slug ?? "").trim();
+  const bunnyVideoId = String(body.bunnyVideoId ?? "").trim() || null;
+  const durationSeconds = parseInt(String(body.durationSeconds ?? "0"), 10);
+  const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
+  const isFree = body.isFree === "on";
+
+  await db
+    .update(lesson)
+    .set({ title, slug, bunnyVideoId, durationSeconds, sortOrder, isFree })
+    .where(eq(lesson.id, id));
+
+  await c.env.KV.delete("cache:catalog");
+  return c.redirect(`/admin/courses/${row.courseId}`);
+});
+
+admin.post("/admin/lessons/:id/delete", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+
+  const [row] = await db
+    .select({ courseId: module.courseId })
+    .from(lesson)
+    .innerJoin(module, eq(lesson.moduleId, module.id))
+    .where(eq(lesson.id, id))
+    .limit(1);
+
+  if (!row) return c.text("Not found", 404);
+
+  await db.delete(lesson).where(eq(lesson.id, id));
+  await c.env.KV.delete("cache:catalog");
+  return c.redirect(`/admin/courses/${row.courseId}`);
 });
 
 export { admin as adminRoutes };
