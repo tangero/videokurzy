@@ -4,13 +4,7 @@ import { userIdentityAudit } from "../db/identity-schema";
 
 type Db = ReturnType<typeof drizzle>;
 
-export type IdentityAction =
-  | "email_added"
-  | "email_removed"
-  | "email_promoted_primary"
-  | "email_verified"
-  | "recovery_approved"
-  | "recovery_banner_dismissed";
+export type IdentityAction = NonNullable<typeof userIdentityAudit.$inferInsert.action>;
 
 /**
  * Write an audit record for an identity-related action.
