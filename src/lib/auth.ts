@@ -38,6 +38,8 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
       user: {
         create: {
           after: async (createdUser) => {
+            // ensureUserEmailRecord only touches user_emails (typed inserts via
+            // drizzle with imported userEmails symbol), so no schema passing needed.
             const hookDb = drizzle(env.DB);
             await ensureUserEmailRecord(hookDb, {
               userId: createdUser.id,

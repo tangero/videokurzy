@@ -124,15 +124,30 @@ export async function ensureUserEmailRecord(
     .get();
   if (existing) return;
   const now = new Date();
-  await db.insert(userEmails).values({
-    id: nanoid(),
-    userId: opts.userId,
-    email,
-    verifiedAt: now,
-    isPrimary: true,
-    addedAt: now,
-    addedVia: "signup",
-  });
+  try {
+    await db.insert(userEmails).values({
+      id: nanoid(),
+      userId: opts.userId,
+      email,
+      verifiedAt: now,
+      isPrimary: true,
+      addedAt: now,
+      addedVia: "signup",
+    });
+  } catch (err) {
+    // Concurrent insert (another login race). DB UNIQUE on email guarantees
+    // exactly one row survives; treat failure as success if a row now exists.
+    const msg = String((err as Error)?.message ?? err);
+    if (msg.includes("UNIQUE") || msg.includes("constraint")) {
+      const nowExists = await db
+        .select()
+        .from(userEmails)
+        .where(eq(userEmails.email, email))
+        .get();
+      if (nowExists) return;
+    }
+    throw err;
+  }
 }
 
 /**

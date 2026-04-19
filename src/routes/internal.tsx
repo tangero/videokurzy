@@ -73,6 +73,8 @@ internal.post("/internal/auth/verify-token", async (c) => {
       asResponse: true,
     });
     const setCookie = result.headers.get("set-cookie");
+    // result.headers contains the Set-Cookie from magic-link verify; Better Auth
+    // uses it to read the fresh session on the follow-up getSession call.
     const session = await auth.api.getSession({ headers: result.headers });
     if (!session?.user) {
       const correlationId = crypto.randomUUID();
