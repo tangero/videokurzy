@@ -75,7 +75,13 @@ internal.post("/internal/auth/verify-token", async (c) => {
     const setCookie = result.headers.get("set-cookie");
     const session = await auth.api.getSession({ headers: result.headers });
     if (!session?.user) {
-      return c.json({ error: "invalid_token" }, 401);
+      const correlationId = crypto.randomUUID();
+      console.warn(JSON.stringify({
+        scope: "internal/verify-token",
+        event: "no_session_after_verify",
+        correlationId,
+      }));
+      return c.json({ error: "invalid_token", correlationId }, 401);
     }
     return c.json({
       user: {
