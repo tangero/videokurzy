@@ -35,7 +35,11 @@ export async function addUserEmail(
     .where(eq(userEmails.email, email))
     .get();
   if (existing) {
-    throw new Error(`Email already registered: ${email}`);
+    if (existing.userId === opts.userId) {
+      throw new Error("Tento e-mail už na účtu máte.");
+    }
+    // Different user — don't leak existence; use generic message.
+    throw new Error("E-mail nelze přidat.");
   }
   const now = new Date();
   await db.insert(userEmails).values({

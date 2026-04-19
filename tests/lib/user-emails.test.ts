@@ -65,11 +65,19 @@ describe("user-emails lib", () => {
     expect(emails.find((e) => e.email === "primary@test.cz")!.isPrimary).toBe(true);
   });
 
-  it("rejects duplicate email", async () => {
+  it("rejects duplicate email on same account", async () => {
     const userId = await seedUser(db, "dup@test.cz");
     await expect(
       addUserEmail(db, { userId, email: "dup@test.cz", via: "self-add" }),
-    ).rejects.toThrow(/already/i);
+    ).rejects.toThrow(/už na účtu máte/i);
+  });
+
+  it("rejects email registered to different account with generic message", async () => {
+    const userA = await seedUser(db, "owner@test.cz");
+    const userB = await seedUser(db, "other@test.cz");
+    await expect(
+      addUserEmail(db, { userId: userB, email: "owner@test.cz", via: "self-add" }),
+    ).rejects.toThrow(/nelze přidat/i);
   });
 
   it("promotes secondary to primary, demotes old", async () => {

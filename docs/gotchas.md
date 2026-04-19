@@ -6,10 +6,10 @@
   "not yet verified" because `user_emails.verifiedAt` is NOT NULL. Future
   refactor: nullable `verifiedAt` or separate `verified: boolean` column.
 
-- **`addUserEmail` error message for duplicate** currently says "already
-  registered" regardless of whether it's on the same user or different. Before
-  this flows to a user-facing API, distinguish: "you already have this email"
-  vs. generic "cannot add" (do not leak cross-account existence).
+- **`addUserEmail` error differentiation** (resolved 2026-04-19): duplicate
+  email returns "Tento e-mail už na účtu máte" when it belongs to the same
+  user, generic "E-mail nelze přidat" otherwise. Do not change to leak
+  cross-account existence even for DX debugging.
 
 - **`promotePrimary` / `removeUserEmail` read-then-write race:** application
   reads rows, then writes. Partial unique index
