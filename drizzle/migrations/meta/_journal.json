@@ -36,6 +36,13 @@
       "when": 1776578561418,
       "tag": "0004_calm_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1776579513239,
+      "tag": "0005_user_emails_primary_invariant",
+      "breakpoints": true
     }
   ]
 }

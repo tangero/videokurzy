@@ -10,6 +10,20 @@ export function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
+/**
+ * Add a new email to the user. Default is verified = true (email was
+ * confirmed via magic link before calling this). Pass `verified: false` to
+ * mark as unverified (e.g., if admin adds an email on behalf of a user
+ * before they confirm ownership).
+ *
+ * **Unverified sentinel:** we use `verifiedAt: new Date(0)` (Unix epoch) to
+ * represent "not yet verified" because the `verifiedAt` column is NOT NULL.
+ * If this pattern becomes unwieldy, consider migrating to nullable
+ * `verifiedAt` or adding a separate `verified: boolean` column (see
+ * code-review follow-up in docs/gotchas.md).
+ *
+ * Throws if the email is already registered (to any user — global unique).
+ */
 export async function addUserEmail(
   db: Db,
   opts: { userId: string; email: string; via: AddVia; verified?: boolean },
@@ -55,6 +69,15 @@ export async function findUserIdByEmail(
   return row?.userId ?? null;
 }
 
+/**
+ * Atomically make `email` the user's primary — demotes all other emails
+ * and promotes target. Uses `db.batch()` for atomicity. Rejects if email
+ * is not verified.
+ *
+ * DB-level safeguard: partial unique index
+ * `user_emails_one_primary_per_user` (migration 0005) enforces the
+ * invariant even against concurrent writes.
+ */
 export async function promotePrimary(
   db: Db,
   opts: { userId: string; email: string },
@@ -84,6 +107,10 @@ export async function promotePrimary(
   ]);
 }
 
+/**
+ * Remove a secondary email from the account. Rejects if it's the only email
+ * on the account, or if it's the primary (promote another first).
+ */
 export async function removeUserEmail(
   db: Db,
   opts: { userId: string; email: string },
