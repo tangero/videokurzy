@@ -28,3 +28,14 @@ max_retries = 3
 
 [triggers]
 crons = ["0 3 * * *"]
+
+[env.test]
+[[env.test.d1_databases]]
+binding = "DB"
+database_name = "videokurzy-db-test"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "drizzle/migrations"
+
+[[env.test.kv_namespaces]]
+binding = "KV"
+id = "test-kv"
