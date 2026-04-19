@@ -8,6 +8,10 @@ export const userEmails = sqliteTable(
     userId: text("userId")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // COLLATE NOCASE is applied manually in migration 0004 SQL for
+    // case-insensitive UNIQUE. Drizzle has no first-class support for
+    // SQLite COLLATE, so if you regenerate the migration via `db:generate`,
+    // re-add `COLLATE NOCASE` to this column before applying.
     email: text("email").notNull().unique(),
     verifiedAt: integer("verifiedAt", { mode: "timestamp" }).notNull(),
     isPrimary: integer("isPrimary", { mode: "boolean" }).notNull().default(false),
@@ -19,6 +23,13 @@ export const userEmails = sqliteTable(
   (t) => [index("idx_user_emails_user").on(t.userId)],
 );
 
+/**
+ * Audit log of identity-related actions.
+ *
+ * Note: userId has no FK constraint on purpose — audit records must survive
+ * user deletion for forensic and compliance (GDPR retention is handled
+ * separately via a dedicated retention policy, not via CASCADE).
+ */
 export const userIdentityAudit = sqliteTable(
   "user_identity_audit",
   {
