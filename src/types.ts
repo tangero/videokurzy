@@ -14,6 +14,7 @@ export interface Env {
   BUNNY_LIBRARY_ID: string;
   BUNNY_TOKEN_KEY: string;
   FIO_API_TOKEN: string;
+  COOKIE_DOMAIN?: string;
 }
 
 export type Variables = {

@@ -106,6 +106,15 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
             p.catch((err) => console.warn("[auth] Background task failed:", err))
           ),
       },
+      defaultCookieAttributes: {
+        secure: true,
+        sameSite: "lax",
+        httpOnly: true,
+        // COOKIE_DOMAIN is set in production (".vibecoding.cz") so the session
+        // cookie is visible across subdomains. In dev/test it's unset, which
+        // falls back to host-only (no Domain attribute emitted by better-call).
+        ...(env.COOKIE_DOMAIN ? { domain: env.COOKIE_DOMAIN } : {}),
+      },
     },
   });
 }

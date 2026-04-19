@@ -46,3 +46,11 @@ AUTH_INTERNAL_SECRET = "test-internal-secret"
 BETTER_AUTH_SECRET = "test-better-auth-secret-32-chars-minimum"
 BETTER_AUTH_URL = "http://localhost:8787"
 RESEND_API_KEY = "test-resend-key"
+# NOTE: COOKIE_DOMAIN intentionally unset in test env → host-only cookies, matches dev behavior.
+
+# TODO(deploy): update `deploy` script in package.json to `wrangler deploy --env production`
+# so that the values below actually apply. Until then, the default env (no `--env`) is used
+# and COOKIE_DOMAIN is undefined in production. Session cookies will remain host-only.
+[env.production]
+[env.production.vars]
+COOKIE_DOMAIN = ".vibecoding.cz"
