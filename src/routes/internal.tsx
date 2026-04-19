@@ -1,7 +1,10 @@
 import { Hono } from "hono";
+import { drizzle } from "drizzle-orm/d1";
 import { createAuth } from "../lib/auth";
 import { isAllowedCallback } from "../lib/callback-allowlist";
 import { requireInternalSecret } from "../middleware/internal-auth";
+import { addUserEmail } from "../lib/user-emails";
+import { logIdentityEvent } from "../lib/audit";
 import type { Env } from "../types";
 
 /**
@@ -147,6 +150,93 @@ internal.post("/internal/auth/revoke", async (c) => {
       message: (err as Error)?.message,
     }));
     return c.json({ ok: true, setCookie: null });
+  }
+});
+
+/**
+ * Verify a magic-link token that was sent to confirm ownership of a
+ * secondary email. Unlike /internal/auth/verify-token, we do NOT want to
+ * create a new session for the verified email — instead we attach the
+ * email to the ORIGINAL user (body.userId) and then revoke the ad-hoc
+ * session Better Auth creates during verify.
+ *
+ * Consumer flow:
+ *  1. User (signed in as A) calls POST /api/profile/emails with email B.
+ *  2. Magic link sent to B. Callback URL includes `intent=add-email` and
+ *     `userId=A`.
+ *  3. Consumer Worker receives the callback, detects intent, and calls this
+ *     endpoint with the token and userId=A.
+ *  4. We verify the token (proves B ownership), attach B to user A, and
+ *     throw away the temp session. The user remains signed in as A.
+ */
+internal.post("/internal/auth/verify-add-email", async (c) => {
+  const body = await c.req
+    .json<{ token?: string; userId?: string }>()
+    .catch(() => ({}) as { token?: string; userId?: string });
+  if (!body.token || !body.userId) {
+    return c.json({ error: "token and userId required" }, 400);
+  }
+
+  const auth = createAuth(c.env, c.executionCtx);
+  try {
+    const result = await auth.api.magicLinkVerify({
+      query: { token: body.token },
+      headers: new Headers(),
+      asResponse: true,
+    });
+    const session = await auth.api.getSession({ headers: result.headers });
+    if (!session?.user) {
+      const correlationId = crypto.randomUUID();
+      console.warn(JSON.stringify({
+        scope: "internal/verify-add-email",
+        event: "no_session_after_verify",
+        correlationId,
+      }));
+      return c.json({ error: "invalid_token", correlationId }, 401);
+    }
+
+    const db = drizzle(c.env.DB);
+    try {
+      await addUserEmail(db, {
+        userId: body.userId,
+        email: session.user.email,
+        via: "self-add",
+        verified: true,
+      });
+    } catch (err) {
+      const correlationId = crypto.randomUUID();
+      console.warn(JSON.stringify({
+        scope: "internal/verify-add-email",
+        event: "add_email_failed",
+        correlationId,
+        message: (err as Error)?.message,
+      }));
+      return c.json({ error: "add_failed", correlationId }, 400);
+    }
+
+    await logIdentityEvent(db, {
+      userId: body.userId,
+      action: "email_added",
+      actor: "self",
+      details: { email: session.user.email },
+    });
+
+    // Revoke the ad-hoc session created by verify. Consumer keeps the
+    // primary-user session cookie; silently swallow errors — best-effort.
+    await auth.api
+      .signOut({ headers: result.headers })
+      .catch(() => {});
+
+    return c.json({ ok: true, email: session.user.email });
+  } catch (err) {
+    const correlationId = crypto.randomUUID();
+    console.warn(JSON.stringify({
+      scope: "internal/verify-add-email",
+      event: "verify_failed",
+      correlationId,
+      message: (err as Error)?.message,
+    }));
+    return c.json({ error: "verify_failed", correlationId }, 401);
   }
 });
 

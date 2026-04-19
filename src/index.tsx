@@ -12,6 +12,7 @@ import { devRoutes } from "./routes/dev";
 import { adminRoutes } from "./routes/admin";
 import { leadRoutes } from "./routes/leads";
 import internalRoutes from "./routes/internal";
+import profileRoutes from "./routes/profile";
 import { handleQueue } from "./queue";
 import { handleScheduled } from "./scheduled";
 import { PrivacyPage } from "./views/privacy";
@@ -49,6 +50,7 @@ app.route("/", devRoutes);
 app.route("/", leadRoutes);
 app.route("/", adminRoutes);
 app.route("/", internalRoutes);
+app.route("/", profileRoutes);
 
 // Static pages
 app.get("/privacy", (c) => c.html(<PrivacyPage />));
