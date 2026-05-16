@@ -26,6 +26,8 @@ type Lesson = {
   durationSeconds: number;
   isFree: boolean;
   sortOrder: number;
+  chapters: string | null;
+  moments: string | null;
 };
 
 // ─── Navigation ───────────────────────────────────────────────────
@@ -453,6 +455,44 @@ export function AdminLessonForm({
           name="isFree"
           checked={les?.isFree ?? false}
         />
+
+        {/* Chapters */}
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm font-medium text-gray-700">Chapters</label>
+            <button type="button" id="add-chapter-btn" class="text-xs text-indigo-500 hover:text-indigo-700">+ Přidat chapter</button>
+          </div>
+          <div id="chapters-list" class="space-y-2">
+            {(les?.chapters ? JSON.parse(les.chapters) as {title:string;start:number;end:number}[] : []).map((ch, i) => (
+              <div class="chapter-row flex gap-2 items-start">
+                <input type="text" name={`chapter_title_${i}`} value={ch.title} placeholder="Název" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" />
+                <input type="number" name={`chapter_start_${i}`} value={String(ch.start)} placeholder="Začátek (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" />
+                <input type="number" name={`chapter_end_${i}`} value={String(ch.end)} placeholder="Konec (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" />
+                <button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg leading-none px-1">✕</button>
+              </div>
+            ))}
+          </div>
+          <input type="hidden" name="chaptersJson" id="chapters-json" value={les?.chapters ?? "[]"} />
+        </div>
+
+        {/* Moments */}
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm font-medium text-gray-700">Moments</label>
+            <button type="button" id="add-moment-btn" class="text-xs text-indigo-500 hover:text-indigo-700">+ Přidat moment</button>
+          </div>
+          <div id="moments-list" class="space-y-2">
+            {(les?.moments ? JSON.parse(les.moments) as {label:string;timestamp:number}[] : []).map((mo, i) => (
+              <div class="moment-row flex gap-2 items-start">
+                <input type="text" name={`moment_label_${i}`} value={mo.label} placeholder="Popisek" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" />
+                <input type="number" name={`moment_timestamp_${i}`} value={String(mo.timestamp)} placeholder="Čas (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" />
+                <button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg leading-none px-1">✕</button>
+              </div>
+            ))}
+          </div>
+          <input type="hidden" name="momentsJson" id="moments-json" value={les?.moments ?? "[]"} />
+        </div>
+
         <div class="flex gap-3 pt-2">
           <button
             type="submit"
@@ -476,6 +516,10 @@ export function AdminLessonForm({
           var bunnyIdEl = document.getElementById('bunny-video-id');
           var bunnyBtn = document.getElementById('bunny-load-btn');
           var bunnyStatus = document.getElementById('bunny-status');
+          var chaptersList = document.getElementById('chapters-list');
+          var momentsList = document.getElementById('moments-list');
+          var chaptersJson = document.getElementById('chapters-json');
+          var momentsJson = document.getElementById('moments-json');
           var autoMode = slugEl.value === '';
 
           function slugify(s) {
@@ -486,14 +530,75 @@ export function AdminLessonForm({
               .replace(/^-+|-+$/, '');
           }
 
+          function fmtTime(s) {
+            var m = Math.floor(s/60);
+            return m + ':' + String(s%60).padStart(2,'0');
+          }
+
+          function addChapterRow(title, start, end) {
+            var div = document.createElement('div');
+            div.className = 'chapter-row flex gap-2 items-start';
+            div.innerHTML =
+              '<input type="text" placeholder="Název" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (title||'').replace(/"/g,'&quot;') + '">' +
+              '<input type="number" placeholder="Začátek (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (start||0) + '">' +
+              '<input type="number" placeholder="Konec (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (end||0) + '">' +
+              '<button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg leading-none px-1">✕</button>';
+            div.querySelector('.remove-row').addEventListener('click', function(){ div.remove(); serializeChapters(); });
+            div.querySelectorAll('input').forEach(function(el){ el.addEventListener('change', serializeChapters); el.addEventListener('input', serializeChapters); });
+            chaptersList.appendChild(div);
+            serializeChapters();
+          }
+
+          function addMomentRow(label, timestamp) {
+            var div = document.createElement('div');
+            div.className = 'moment-row flex gap-2 items-start';
+            div.innerHTML =
+              '<input type="text" placeholder="Popisek" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (label||'').replace(/"/g,'&quot;') + '">' +
+              '<input type="number" placeholder="Čas (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (timestamp||0) + '">' +
+              '<button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg leading-none px-1">✕</button>';
+            div.querySelector('.remove-row').addEventListener('click', function(){ div.remove(); serializeMoments(); });
+            div.querySelectorAll('input').forEach(function(el){ el.addEventListener('change', serializeMoments); el.addEventListener('input', serializeMoments); });
+            momentsList.appendChild(div);
+            serializeMoments();
+          }
+
+          function serializeChapters() {
+            var rows = chaptersList.querySelectorAll('.chapter-row');
+            var result = [];
+            rows.forEach(function(row) {
+              var inputs = row.querySelectorAll('input');
+              result.push({ title: inputs[0].value, start: parseInt(inputs[1].value)||0, end: parseInt(inputs[2].value)||0 });
+            });
+            chaptersJson.value = JSON.stringify(result);
+          }
+
+          function serializeMoments() {
+            var rows = momentsList.querySelectorAll('.moment-row');
+            var result = [];
+            rows.forEach(function(row) {
+              var inputs = row.querySelectorAll('input');
+              result.push({ label: inputs[0].value, timestamp: parseInt(inputs[1].value)||0 });
+            });
+            momentsJson.value = JSON.stringify(result);
+          }
+
+          // Wire up remove buttons for server-rendered rows
+          chaptersList.querySelectorAll('.remove-row').forEach(function(btn) {
+            btn.addEventListener('click', function(){ btn.closest('.chapter-row').remove(); serializeChapters(); });
+          });
+          chaptersList.querySelectorAll('input').forEach(function(el){ el.addEventListener('change', serializeChapters); el.addEventListener('input', serializeChapters); });
+          momentsList.querySelectorAll('.remove-row').forEach(function(btn) {
+            btn.addEventListener('click', function(){ btn.closest('.moment-row').remove(); serializeMoments(); });
+          });
+          momentsList.querySelectorAll('input').forEach(function(el){ el.addEventListener('change', serializeMoments); el.addEventListener('input', serializeMoments); });
+
+          document.getElementById('add-chapter-btn').addEventListener('click', function(){ addChapterRow('', 0, 0); });
+          document.getElementById('add-moment-btn').addEventListener('click', function(){ addMomentRow('', 0); });
+
           titleEl && titleEl.addEventListener('input', function () {
             if (autoMode) slugEl.value = slugify(this.value);
           });
-
-          slugEl && slugEl.addEventListener('input', function () {
-            autoMode = false;
-          });
-
+          slugEl && slugEl.addEventListener('input', function () { autoMode = false; });
           autoBtn && autoBtn.addEventListener('click', function () {
             autoMode = true;
             slugEl.value = slugify(titleEl.value);
@@ -509,21 +614,32 @@ export function AdminLessonForm({
               var res = await fetch('/admin/api/bunny/video/' + encodeURIComponent(videoId));
               var data = await res.json();
               if (!res.ok || data.error) {
-                bunnyStatus.textContent = data.error || 'Chyba při načítání.';
+                bunnyStatus.textContent = (data.error || 'Chyba') + (data.detail ? ': ' + data.detail : '');
                 bunnyStatus.className = 'text-xs mt-1 text-red-500';
                 bunnyStatus.classList.remove('hidden');
+                bunnyBtn.textContent = 'Načíst z Bunny';
+                bunnyBtn.disabled = false;
                 return;
               }
+              // Duration
               var mins = Math.floor((data.length || 0) / 60);
               var secs = (data.length || 0) % 60;
               document.querySelector('[name=durationMinutes]').value = mins;
               document.querySelector('[name=durationSecondsRem]').value = secs;
+              // Title
               if (data.title && !titleEl.value) {
                 titleEl.value = data.title;
                 if (autoMode) slugEl.value = slugify(data.title);
               }
+              // Chapters — replace existing rows
+              chaptersList.innerHTML = '';
+              (data.chapters || []).forEach(function(ch) { addChapterRow(ch.title, ch.start, ch.end); });
+              // Moments — replace existing rows
+              momentsList.innerHTML = '';
+              (data.moments || []).forEach(function(mo) { addMomentRow(mo.label, mo.timestamp); });
               var info = mins + ':' + String(secs).padStart(2,'0');
               if (data.chapters && data.chapters.length) info += ' · ' + data.chapters.length + ' kapitol';
+              if (data.moments && data.moments.length) info += ' · ' + data.moments.length + ' momentů';
               bunnyStatus.textContent = '✓ Načteno: ' + info;
               bunnyStatus.className = 'text-xs mt-1 text-green-600';
               bunnyStatus.classList.remove('hidden');

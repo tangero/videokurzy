@@ -226,12 +226,20 @@ admin.post("/admin/api/organizations/:id/approve", async (c) => {
 
 admin.get("/admin/api/bunny/video/:videoId", async (c) => {
   const videoId = c.req.param("videoId");
-  const res = await fetch(
-    `https://video.bunnycdn.com/library/${c.env.BUNNY_LIBRARY_ID}/videos/${videoId}`,
-    { headers: { AccessKey: c.env.BUNNY_API_KEY } }
-  );
-  if (!res.ok) return c.json({ error: "Video nenalezeno v Bunny" }, 404);
-  const data = await res.json() as Record<string, unknown>;
+  const libraryId = c.env.BUNNY_LIBRARY_ID;
+  const apiKey = c.env.BUNNY_API_KEY;
+  const url = `https://video.bunnycdn.com/library/${libraryId}/videos/${videoId}`;
+  const res = await fetch(url, { headers: { AccessKey: apiKey } });
+  const body = await res.text();
+  if (!res.ok) {
+    return c.json({
+      error: `Bunny vrátil ${res.status}`,
+      detail: body,
+      libraryId,
+      url,
+    }, 502);
+  }
+  const data = JSON.parse(body) as Record<string, unknown>;
   return c.json({
     title: data.title,
     length: data.length,
@@ -464,6 +472,8 @@ admin.post(
       parseInt(String(body.durationSecondsRem ?? "0"), 10);
     const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
     const isFree = body.isFree === "on";
+    const chapters = String(body.chaptersJson ?? "[]").trim() || "[]";
+    const moments = String(body.momentsJson ?? "[]").trim() || "[]";
 
     await db.insert(lesson).values({
       moduleId,
@@ -474,6 +484,8 @@ admin.post(
       durationSeconds,
       sortOrder,
       isFree,
+      chapters,
+      moments,
     });
 
     await c.env.KV.delete("cache:catalog");
@@ -528,10 +540,12 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
     parseInt(String(body.durationSecondsRem ?? "0"), 10);
   const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
   const isFree = body.isFree === "on";
+  const chapters = String(body.chaptersJson ?? "[]").trim() || "[]";
+  const moments = String(body.momentsJson ?? "[]").trim() || "[]";
 
   await db
     .update(lesson)
-    .set({ title, slug, bunnyVideoId, durationSeconds, sortOrder, isFree })
+    .set({ title, slug, bunnyVideoId, durationSeconds, sortOrder, isFree, chapters, moments })
     .where(eq(lesson.id, id));
 
   await c.env.KV.delete("cache:catalog");

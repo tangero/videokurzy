@@ -43,6 +43,8 @@ export const lesson = sqliteTable("lesson", {
   durationSeconds: integer("durationSeconds").notNull().default(0),
   isFree: integer("isFree", { mode: "boolean" }).notNull().default(false),
   sortOrder: integer("sortOrder").notNull().default(0),
+  chapters: text("chapters"),
+  moments: text("moments"),
 });
 
 export const progress = sqliteTable(
