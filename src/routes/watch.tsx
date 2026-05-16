@@ -10,6 +10,41 @@ import { WatchPage } from "../views/watch";
 
 const watch = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+type LessonChapter = {
+  title: string;
+  start: number;
+  end: number;
+};
+
+function parseLessonChapters(value: string | null): LessonChapter[] {
+  if (!value) return [];
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item): LessonChapter | null => {
+        if (!item || typeof item !== "object") return null;
+        const chapter = item as Record<string, unknown>;
+        const title = typeof chapter.title === "string" ? chapter.title.trim() : "";
+        const start = Number(chapter.start);
+        const end = Number(chapter.end);
+        if (!title || !Number.isFinite(start) || start < 0) return null;
+
+        return {
+          title,
+          start: Math.floor(start),
+          end: Number.isFinite(end) && end > start ? Math.floor(end) : Math.floor(start),
+        };
+      })
+      .filter((chapter): chapter is LessonChapter => chapter !== null)
+      .sort((a, b) => a.start - b.start);
+  } catch {
+    return [];
+  }
+}
+
 watch.get("/watch/:slug", async (c) => {
   const slug = c.req.param("slug");
   const user = c.get("user");
@@ -26,6 +61,7 @@ watch.get("/watch/:slug", async (c) => {
       isFree: lesson.isFree,
       moduleId: lesson.moduleId,
       sortOrder: lesson.sortOrder,
+      chapters: lesson.chapters,
     })
     .from(lesson)
     .where(eq(lesson.slug, slug))
@@ -109,6 +145,7 @@ watch.get("/watch/:slug", async (c) => {
     <WatchPage
       user={user ?? { name: null, email: "" }}
       lesson={{ ...found, moduleTitle: moduleRow[0]?.title }}
+      chapters={parseLessonChapters(found.chapters)}
       embedUrl={embedUrl}
       completed={completed}
       prevSlug={prevSlug}

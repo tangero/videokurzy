@@ -12,6 +12,12 @@ interface SidebarLesson {
   globalIndex: number;
 }
 
+interface LessonChapter {
+  title: string;
+  start: number;
+  end: number;
+}
+
 interface WatchProps {
   user: { name: string | null; email: string };
   lesson: {
@@ -22,6 +28,7 @@ interface WatchProps {
     moduleId: number;
     moduleTitle?: string;
   };
+  chapters: LessonChapter[];
   embedUrl: string;
   completed: boolean;
   prevSlug: string | null;
@@ -80,6 +87,7 @@ const PlaySmIcon = () => (
 export const WatchPage: FC<WatchProps> = ({
   user,
   lesson,
+  chapters,
   embedUrl,
   completed,
   prevSlug,
@@ -110,6 +118,7 @@ export const WatchPage: FC<WatchProps> = ({
             <div class="video-wrap">
               {embedUrl ? (
                 <iframe
+                  id="lesson-video-player"
                   src={embedUrl}
                   loading="lazy"
                   allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
@@ -150,6 +159,39 @@ export const WatchPage: FC<WatchProps> = ({
                 {formatDuration(lesson.durationSeconds)}
               </p>
             </div>
+
+            {chapters.length > 0 && (
+              <section class="chapter-panel" aria-labelledby="chapter-panel-title">
+                <div class="chapter-panel-head">
+                  <div>
+                    <div class="mono chapter-eyebrow">// kapitoly</div>
+                    <h2 id="chapter-panel-title">Obsah epizody</h2>
+                  </div>
+                  <span class="chapter-count">{chapters.length}</span>
+                </div>
+                <div class="chapter-list">
+                  {chapters.map((chapter, index) => (
+                    <button
+                      type="button"
+                      class="chapter-item"
+                      data-chapter-start={String(chapter.start)}
+                      data-chapter-end={String(chapter.end)}
+                    >
+                      <span class="chapter-index">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                      <span class="chapter-main">
+                        <span class="chapter-title">{chapter.title}</span>
+                        <span class="chapter-time">
+                          {formatDuration(chapter.start)}
+                          {chapter.end > chapter.start ? ` - ${formatDuration(chapter.end)}` : ""}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* Controls */}
             <div
@@ -281,6 +323,52 @@ export const WatchPage: FC<WatchProps> = ({
           .watch-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
+      {embedUrl && chapters.length > 0 && (
+        <>
+          <script src="https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js"></script>
+          <script dangerouslySetInnerHTML={{ __html: `
+            (function () {
+              var iframe = document.getElementById('lesson-video-player');
+              var buttons = Array.prototype.slice.call(document.querySelectorAll('.chapter-item'));
+              if (!iframe || !buttons.length || !window.playerjs) return;
+
+              var player = new window.playerjs.Player(iframe);
+
+              function setActive(seconds) {
+                var active = null;
+                buttons.forEach(function (button) {
+                  var start = parseInt(button.getAttribute('data-chapter-start') || '0', 10);
+                  var end = parseInt(button.getAttribute('data-chapter-end') || '0', 10);
+                  if (seconds >= start && (!end || seconds <= end)) active = button;
+                  button.classList.remove('is-active');
+                  button.removeAttribute('aria-current');
+                });
+                if (active) {
+                  active.classList.add('is-active');
+                  active.setAttribute('aria-current', 'true');
+                }
+              }
+
+              player.on('ready', function () {
+                buttons.forEach(function (button) {
+                  button.addEventListener('click', function () {
+                    var start = parseInt(button.getAttribute('data-chapter-start') || '0', 10);
+                    player.setCurrentTime(start);
+                    player.play();
+                    setActive(start);
+                  });
+                });
+
+                player.on('timeupdate', function (event) {
+                  var data = event && event.data ? event.data : event;
+                  var seconds = data && typeof data.seconds === 'number' ? data.seconds : 0;
+                  setActive(seconds);
+                });
+              });
+            })();
+          ` }} />
+        </>
+      )}
     </Layout>
   );
 };

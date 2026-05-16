@@ -10,7 +10,7 @@ export const PrivacyPage: FC = () => (
       <h2>1. Správce údajů</h2>
       <p>
         Správcem osobních údajů je Patrick Zandl, provozovatel webu vibecoding.cz
-        a kurz.vibecoding.cz.
+        a kurzy.vibecoding.cz.
       </p>
 
       <h2>2. Jaké údaje zpracováváme</h2>

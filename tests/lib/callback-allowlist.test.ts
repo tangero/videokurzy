@@ -4,7 +4,7 @@ import { isAllowedCallback } from "../../src/lib/callback-allowlist";
 describe("isAllowedCallback", () => {
   it.each([
     ["https://vibecoding.cz/auth/verify", true],
-    ["https://kurz.vibecoding.cz/auth/verify", true],
+    ["https://kurzy.vibecoding.cz/auth/verify", true],
     ["https://any.sub.vibecoding.cz/x", true],
     ["http://localhost:4321/auth/verify", true],
     ["http://localhost/foo", true],

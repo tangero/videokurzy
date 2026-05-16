@@ -68,7 +68,7 @@ function emailDomain(email: string): string {
 
 checkoutRoutes.get("/checkout/individual", (c) => {
   return c.html(
-    <Layout title="Roční přístup — kurz.vibecoding.cz">
+    <Layout title="Roční přístup — kurzy.vibecoding.cz">
       <CheckoutSelect type="individual" />
     </Layout>
   );
@@ -104,7 +104,7 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
 
 checkoutRoutes.get("/checkout/organization", (c) => {
   return c.html(
-    <Layout title="Firemní licence — kurz.vibecoding.cz">
+    <Layout title="Firemní licence — kurzy.vibecoding.cz">
       <CheckoutSelect type="organization" />
     </Layout>
   );
@@ -298,7 +298,7 @@ async function startFioCheckout(
   c.executionCtx.waitUntil(
     sendEmail(c.env, {
       to: email,
-      subject: "Potvrzení objednávky — kurz.vibecoding.cz",
+      subject: "Potvrzení objednávky — kurzy.vibecoding.cz",
       html: fioPendingHtml(payUrl, price, formatDueDate(expiresAt)),
     })
   );

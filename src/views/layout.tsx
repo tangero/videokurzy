@@ -28,12 +28,12 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>{title} | kurz.vibecoding.cz</title>
+      <title>{title} | kurzy.vibecoding.cz</title>
       <meta name="description" content={description} />
       <meta property="og:title" content={title} />
       <meta property="og:description" content={description} />
       <meta property="og:type" content="website" />
-      <meta property="og:url" content="https://kurz.vibecoding.cz" />
+      <meta property="og:url" content="https://kurzy.vibecoding.cz" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
       <link
@@ -54,7 +54,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
           <a class="brand" href="/">
             <div class="avatar">kz</div>
             <div>
-              <div class="brand-title">kurz.vibecoding.cz</div>
+              <div class="brand-title">kurzy.vibecoding.cz</div>
               <div class="brand-subtitle">videokurzy vibe codingu</div>
             </div>
           </a>

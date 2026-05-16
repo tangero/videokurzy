@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   Design tokens + komponenty — brand kurz.vibecoding.cz
+   Design tokens + komponenty — brand kurzy.vibecoding.cz
 
    Přesunuto z src/views/layout.tsx (inline <style> blok) do samostatného
    CSS souboru, aby se:
@@ -353,6 +353,94 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 }
 .video-wrap iframe {
   position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+}
+.chapter-panel {
+  margin-top: 22px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 18px 0 16px;
+}
+.chapter-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.chapter-eyebrow {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.chapter-panel h2 {
+  font-family: var(--font-head);
+  font-size: 1.05rem;
+  line-height: 1.2;
+  margin: 0;
+}
+.chapter-count {
+  min-width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: var(--surface);
+}
+.chapter-list {
+  display: grid;
+  gap: 2px;
+}
+.chapter-item {
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  transition: background 140ms ease, color 140ms ease;
+}
+.chapter-item:hover,
+.chapter-item:focus-visible {
+  background: var(--hover-bg);
+  outline: none;
+}
+.chapter-item.is-active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.chapter-index {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding-top: 1px;
+}
+.chapter-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.chapter-title {
+  font-size: 0.94rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.chapter-time {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
 }
 
 /* CTA BANNER */

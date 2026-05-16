@@ -14,7 +14,7 @@ export const TermsPage: FC = () => (
       <h2>1. Předmět smlouvy</h2>
       <p>
         Tyto podmínky upravují nákup přístupu k videokurzům dostupným na
-        kurz.vibecoding.cz (dále „platforma"). Uzavřením objednávky zákazník
+        kurzy.vibecoding.cz (dále „platforma"). Uzavřením objednávky zákazník
         souhlasí s těmito podmínkami.
       </p>
 

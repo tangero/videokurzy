@@ -38,19 +38,19 @@ export async function sendEmail(env: Env, opts: SendEmailOptions): Promise<boole
   }
 }
 
-/** Sdílený HTML wrapper s brandingem kurz.vibecoding.cz. */
+/** Sdílený HTML wrapper s brandingem kurzy.vibecoding.cz. */
 function emailWrapper(content: string): string {
   return `<!DOCTYPE html>
 <html lang="cs">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto; padding: 40px 20px; color: #1a1a1a; background: #ffffff;">
   <div style="text-align: center; margin-bottom: 32px;">
-    <h1 style="font-size: 20px; font-weight: 600; margin: 0;">kurz.vibecoding.cz</h1>
+    <h1 style="font-size: 20px; font-weight: 600; margin: 0;">kurzy.vibecoding.cz</h1>
   </div>
   ${content}
   <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 32px 0;">
   <p style="font-size: 12px; color: #999; text-align: center;">
-    kurz.vibecoding.cz &middot; Andrea Maloveczká &middot; Vibecoding.cz
+    kurzy.vibecoding.cz &middot; Andrea Maloveczká &middot; Vibecoding.cz
   </p>
 </body>
 </html>`;
