@@ -4,6 +4,8 @@
 export const ADMIN_EMAILS = [
   "patrick@vibecoding.cz",
   "andrea@vibecoding.cz",
+  "patrick@zandl.cz",
+  "patrick.zandl@marigold.cz",
 ] as const;
 
 /** Odesílatel všech transakčních emailů (magic link, purchase confirmation, reminders). */
