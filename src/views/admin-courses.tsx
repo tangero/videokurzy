@@ -367,21 +367,80 @@ export function AdminLessonForm({
       <h1 class="text-2xl font-bold mb-6 mt-2">
         {isEdit ? "Upravit epizodu" : "Nová epizoda"}
       </h1>
-      <form method="post" class="space-y-4">
-        <AdminField label="Název" name="title" value={les?.title} required />
-        <AdminField label="Slug" name="slug" value={les?.slug} required />
-        <AdminField
-          label="Bunny Video ID"
-          name="bunnyVideoId"
-          value={les?.bunnyVideoId ?? ""}
-        />
-        <AdminField
-          label="Délka (sekundy)"
-          name="durationSeconds"
-          type="number"
-          value={String(les?.durationSeconds ?? 0)}
-          required
-        />
+      <form method="post" class="space-y-4" id="lesson-form">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Název</label>
+          <input
+            id="lesson-title"
+            type="text"
+            name="title"
+            value={les?.title ?? ""}
+            required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          />
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="block text-sm font-medium text-gray-700">Slug</label>
+            <button
+              type="button"
+              id="slug-auto-btn"
+              class="text-xs text-indigo-500 hover:text-indigo-700"
+            >
+              ↺ generovat z názvu
+            </button>
+          </div>
+          <input
+            id="slug-input"
+            type="text"
+            name="slug"
+            value={les?.slug ?? ""}
+            required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Bunny Video ID</label>
+          <div class="flex gap-2">
+            <input
+              id="bunny-video-id"
+              type="text"
+              name="bunnyVideoId"
+              value={les?.bunnyVideoId ?? ""}
+              class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            <button
+              type="button"
+              id="bunny-load-btn"
+              class="bg-gray-100 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-200 whitespace-nowrap"
+            >
+              Načíst z Bunny
+            </button>
+          </div>
+          <div id="bunny-status" class="text-xs mt-1 text-gray-400 hidden"></div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Délka</label>
+          <div class="flex items-center gap-2">
+            <input
+              type="number"
+              name="durationMinutes"
+              min="0"
+              value={String(Math.floor((les?.durationSeconds ?? 0) / 60))}
+              class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            <span class="text-gray-500 text-sm">min</span>
+            <input
+              type="number"
+              name="durationSecondsRem"
+              min="0"
+              max="59"
+              value={String((les?.durationSeconds ?? 0) % 60)}
+              class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            <span class="text-gray-500 text-sm">sek</span>
+          </div>
+        </div>
         <AdminField
           label="Pořadí"
           name="sortOrder"
@@ -409,6 +468,76 @@ export function AdminLessonForm({
           </a>
         </div>
       </form>
+      <script dangerouslySetInnerHTML={{ __html: `
+        (function () {
+          var titleEl = document.getElementById('lesson-title');
+          var slugEl = document.getElementById('slug-input');
+          var autoBtn = document.getElementById('slug-auto-btn');
+          var bunnyIdEl = document.getElementById('bunny-video-id');
+          var bunnyBtn = document.getElementById('bunny-load-btn');
+          var bunnyStatus = document.getElementById('bunny-status');
+          var autoMode = slugEl.value === '';
+
+          function slugify(s) {
+            var map = {'á':'a','č':'c','ď':'d','é':'e','ě':'e','í':'i','ň':'n','ó':'o','ř':'r','š':'s','ť':'t','ú':'u','ů':'u','ý':'y','ž':'z'};
+            return s.toLowerCase()
+              .replace(/[áčďéěíňóřšťúůýž]/g, function(c){ return map[c]||c; })
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/, '');
+          }
+
+          titleEl && titleEl.addEventListener('input', function () {
+            if (autoMode) slugEl.value = slugify(this.value);
+          });
+
+          slugEl && slugEl.addEventListener('input', function () {
+            autoMode = false;
+          });
+
+          autoBtn && autoBtn.addEventListener('click', function () {
+            autoMode = true;
+            slugEl.value = slugify(titleEl.value);
+          });
+
+          bunnyBtn && bunnyBtn.addEventListener('click', async function () {
+            var videoId = bunnyIdEl.value.trim();
+            if (!videoId) { bunnyStatus.textContent = 'Zadej nejdřív Bunny Video ID.'; bunnyStatus.className = 'text-xs mt-1 text-red-500'; bunnyStatus.classList.remove('hidden'); return; }
+            bunnyBtn.textContent = 'Načítám…';
+            bunnyBtn.disabled = true;
+            bunnyStatus.classList.add('hidden');
+            try {
+              var res = await fetch('/admin/api/bunny/video/' + encodeURIComponent(videoId));
+              var data = await res.json();
+              if (!res.ok || data.error) {
+                bunnyStatus.textContent = data.error || 'Chyba při načítání.';
+                bunnyStatus.className = 'text-xs mt-1 text-red-500';
+                bunnyStatus.classList.remove('hidden');
+                return;
+              }
+              var mins = Math.floor((data.length || 0) / 60);
+              var secs = (data.length || 0) % 60;
+              document.querySelector('[name=durationMinutes]').value = mins;
+              document.querySelector('[name=durationSecondsRem]').value = secs;
+              if (data.title && !titleEl.value) {
+                titleEl.value = data.title;
+                if (autoMode) slugEl.value = slugify(data.title);
+              }
+              var info = mins + ':' + String(secs).padStart(2,'0');
+              if (data.chapters && data.chapters.length) info += ' · ' + data.chapters.length + ' kapitol';
+              bunnyStatus.textContent = '✓ Načteno: ' + info;
+              bunnyStatus.className = 'text-xs mt-1 text-green-600';
+              bunnyStatus.classList.remove('hidden');
+              bunnyBtn.textContent = '✓ Načteno';
+            } catch(e) {
+              bunnyStatus.textContent = 'Síťová chyba.';
+              bunnyStatus.className = 'text-xs mt-1 text-red-500';
+              bunnyStatus.classList.remove('hidden');
+              bunnyBtn.textContent = 'Načíst z Bunny';
+              bunnyBtn.disabled = false;
+            }
+          });
+        })();
+      ` }} />
       {isEdit && (
         <div class="mt-8 pt-6 border-t border-gray-200">
           <form method="post" action={`/admin/lessons/${les!.id}/delete`}>

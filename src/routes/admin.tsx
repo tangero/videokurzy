@@ -222,6 +222,26 @@ admin.post("/admin/api/organizations/:id/approve", async (c) => {
   );
 });
 
+// ─── Bunny API proxy ──────────────────────────────────────────────
+
+admin.get("/admin/api/bunny/video/:videoId", async (c) => {
+  const videoId = c.req.param("videoId");
+  const res = await fetch(
+    `https://video.bunnycdn.com/library/${c.env.BUNNY_LIBRARY_ID}/videos/${videoId}`,
+    { headers: { AccessKey: c.env.BUNNY_API_KEY } }
+  );
+  if (!res.ok) return c.json({ error: "Video nenalezeno v Bunny" }, 404);
+  const data = await res.json() as Record<string, unknown>;
+  return c.json({
+    title: data.title,
+    length: data.length,
+    chapters: data.chapters,
+    moments: data.moments,
+    thumbnailFileName: data.thumbnailFileName,
+    status: data.status,
+  });
+});
+
 // ─── Courses CRUD ─────────────────────────────────────────────────
 
 admin.get("/admin/courses", async (c) => {
@@ -439,7 +459,9 @@ admin.post(
     const title = String(body.title ?? "").trim();
     const slug = String(body.slug ?? "").trim();
     const bunnyVideoId = String(body.bunnyVideoId ?? "").trim() || null;
-    const durationSeconds = parseInt(String(body.durationSeconds ?? "0"), 10);
+    const durationSeconds =
+      parseInt(String(body.durationMinutes ?? "0"), 10) * 60 +
+      parseInt(String(body.durationSecondsRem ?? "0"), 10);
     const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
     const isFree = body.isFree === "on";
 
@@ -501,7 +523,9 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
   const title = String(body.title ?? "").trim();
   const slug = String(body.slug ?? "").trim();
   const bunnyVideoId = String(body.bunnyVideoId ?? "").trim() || null;
-  const durationSeconds = parseInt(String(body.durationSeconds ?? "0"), 10);
+  const durationSeconds =
+    parseInt(String(body.durationMinutes ?? "0"), 10) * 60 +
+    parseInt(String(body.durationSecondsRem ?? "0"), 10);
   const sortOrder = parseInt(String(body.sortOrder ?? "0"), 10);
   const isFree = body.isFree === "on";
 

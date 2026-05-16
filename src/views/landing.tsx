@@ -3,38 +3,32 @@ import { Layout } from "./layout";
 
 interface LandingProps {
   user?: { name: string | null; email: string } | null;
+  modules?: Array<{
+    id: number;
+    title: string;
+    lessons: Array<{
+      id: number;
+      title: string;
+      durationSeconds: number;
+      isFree: boolean;
+      sortOrder: number;
+    }>;
+  }>;
 }
 
-const MODULES = [
-  {
-    id: 1,
-    title: "Začínáme",
-    lessons: [
-      { id: 1, title: "Od nápadu k profi zadání", sub: "PRD s Cowork", duration: "18:45", free: true },
-      { id: 2, title: "Postav appku za 20 minut", sub: 'Ten „wow" moment', duration: "22:00", free: true },
-      { id: 3, title: "První funkce, která opravdu funguje", sub: "Iterace a kontrola", duration: "24:25", free: true },
-    ],
-  },
-  {
-    id: 2,
-    title: "Stavíme aplikaci",
-    lessons: [
-      { id: 4, title: "Krásný design na prvním místě", sub: "Moodboard + vizuální magie", duration: "30:20", free: false },
-      { id: 5, title: "Data a paměť tvé appky", sub: "Databáze bez databázářů", duration: "35:05", free: false },
-      { id: 6, title: "Když se to rozbije", sub: "Jak to opravit rychle", duration: "26:30", free: false },
-      { id: 7, title: "Připojení k světu", sub: "API a integrace", duration: "37:20", free: false },
-    ],
-  },
-  {
-    id: 3,
-    title: "Produkce a polish",
-    lessons: [
-      { id: 8, title: "Bezpečnost a přihlášení bez bolesti", sub: "Auth v praxi", duration: "28:40", free: false },
-      { id: 9, title: "Nahraj to na internet", sub: "Deployment jednoduše", duration: "24:40", free: false },
-      { id: 10, title: "Finální lesk a co dál", sub: "Údržba, vylepšení, limity", duration: "32:30", free: false },
-    ],
-  },
-];
+function fmtDuration(seconds: number): string {
+  if (!seconds) return "";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function fmtTotalDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h === 0) return `${m} min`;
+  return m > 0 ? `${h} h ${m} min` : `${h} h`;
+}
 
 const TESTIMONIALS = [
   { body: "Konečně česky, strukturovaně a od někoho, komu věřím. Za měsíc jsem postavil interní tool, na který jsme měsíce čekali na IT.", name: "Marek K.", role: "Projektový manažer", initials: "MK" },
@@ -78,7 +72,11 @@ const ArrowIcon = () => (
   </svg>
 );
 
-export const LandingPage: FC<LandingProps> = ({ user }) => (
+export const LandingPage: FC<LandingProps> = ({ user, modules = [] }) => {
+  const allLessons = modules.flatMap((m) => m.lessons);
+  const totalSeconds = allLessons.reduce((s, l) => s + l.durationSeconds, 0);
+  const lessonCount = allLessons.length;
+  return (
   <Layout user={user}>
     <div class="container">
       {/* Hero */}
@@ -102,9 +100,9 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
             </a>
           </div>
           <div class="hero-meta">
-            <span>10 epizod</span>
+            <span>{lessonCount > 0 ? `${lessonCount} epizod` : "10 epizod"}</span>
             <span class="dot"></span>
-            <span>4 h 45 min videa</span>
+            <span>{totalSeconds > 0 ? `${fmtTotalDuration(totalSeconds)} videa` : "4 h 45 min videa"}</span>
             <span class="dot"></span>
             <span>česky, od&nbsp;Patricka&nbsp;Zandla</span>
           </div>
@@ -157,12 +155,12 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
           </div>
         </div>
         <div class="module-list">
-          {MODULES.map((m) => (
+          {modules.map((m, mi) => (
             <div class="module">
               <div class="module-head">
                 <div>
                   <div class="module-index">
-                    modul {String(m.id).padStart(2, "0")}
+                    modul {String(mi + 1).padStart(2, "0")}
                   </div>
                   <h3 class="module-title">{m.title}</h3>
                 </div>
@@ -170,11 +168,11 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
                   {m.lessons.length} epizod
                 </div>
               </div>
-              {m.lessons.map((l) => (
-                <div class={`lesson ${l.free ? "" : "locked"}`}>
-                  <span class="lesson-num">{String(l.id).padStart(2, "0")}</span>
+              {m.lessons.map((l, li) => (
+                <div class={`lesson ${l.isFree ? "" : "locked"}`}>
+                  <span class="lesson-num">{String(li + 1).padStart(2, "0")}</span>
                   <span class="lesson-icon">
-                    {l.free ? (
+                    {l.isFree ? (
                       <span style="color:var(--accent)">
                         <PlaySmIcon />
                       </span>
@@ -186,13 +184,17 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
                   </span>
                   <div class="lesson-title">
                     {l.title}
-                    <span class="lesson-sub">{l.sub}</span>
                   </div>
-                  <span class="lesson-duration">{l.duration}</span>
+                  <span class="lesson-duration">{fmtDuration(l.durationSeconds)}</span>
                 </div>
               ))}
             </div>
           ))}
+          {modules.length === 0 && (
+            <p style="color:var(--muted);text-align:center;padding:2rem 0">
+              Obsah kurzu se připravuje.
+            </p>
+          )}
         </div>
       </section>
 
@@ -419,4 +421,5 @@ export const LandingPage: FC<LandingProps> = ({ user }) => (
       </section>
     </div>
   </Layout>
-);
+  );
+};
