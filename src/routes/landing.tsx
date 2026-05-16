@@ -3,7 +3,9 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, asc } from "drizzle-orm";
 import type { Env, Variables } from "../types";
 import { LandingPage } from "../views/landing";
-import { course, module, lesson } from "../db/schema";
+import { course, module, lesson, siteConfig } from "../db/schema";
+import { hasAccess } from "../lib/access";
+import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
 
 const landing = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -22,6 +24,7 @@ landing.get("/", async (c) => {
     title: string;
     lessons: Array<{
       id: number;
+      slug: string;
       title: string;
       durationSeconds: number;
       isFree: boolean;
@@ -39,7 +42,14 @@ landing.get("/", async (c) => {
     modules = await Promise.all(
       courseModules.map(async (m) => {
         const lessons = await db
-          .select()
+          .select({
+            id: lesson.id,
+            slug: lesson.slug,
+            title: lesson.title,
+            durationSeconds: lesson.durationSeconds,
+            isFree: lesson.isFree,
+            sortOrder: lesson.sortOrder,
+          })
           .from(lesson)
           .where(eq(lesson.moduleId, m.id))
           .orderBy(asc(lesson.sortOrder));
@@ -48,7 +58,39 @@ landing.get("/", async (c) => {
     );
   }
 
-  return c.html(<LandingPage user={user} modules={modules} />);
+  // Zjisti přístup přihlášeného uživatele
+  let userHasAccess = false;
+  if (user) {
+    if (user.role === "admin") {
+      userHasAccess = true;
+    } else {
+      userHasAccess = await hasAccess(user.id, user.email, db);
+    }
+  }
+
+  // Načti ceny a výhody z DB, fallback na config hodnoty
+  const configRows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(configRows.map((r) => [r.key, r.value]));
+  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
+  const benefitsIndividual = JSON.parse(
+    cfg.benefits_individual ?? '["Přístup ke všem epizodám","Všechny budoucí kurzy v předplatném","Komentáře a Q&A s Patrickem","14 dní na vrácení, bez dotazů"]'
+  ) as string[];
+  const benefitsOrganization = JSON.parse(
+    cfg.benefits_organization ?? '["Neomezený počet zaměstnanců","Přístup podle emailové domény","Faktura v CZK, standardní daňový doklad","Přehled využití pro L&D oddělení"]'
+  ) as string[];
+
+  return c.html(
+    <LandingPage
+      user={user}
+      modules={modules}
+      userHasAccess={userHasAccess}
+      priceIndividual={priceIndividual}
+      priceOrganization={priceOrganization}
+      benefitsIndividual={benefitsIndividual}
+      benefitsOrganization={benefitsOrganization}
+    />
+  );
 });
 
 export { landing as landingRoutes };

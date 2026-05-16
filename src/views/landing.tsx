@@ -2,18 +2,24 @@ import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 
 interface LandingProps {
-  user?: { name: string | null; email: string } | null;
+  user?: { name: string | null; email: string; role?: string } | null;
   modules?: Array<{
     id: number;
     title: string;
     lessons: Array<{
       id: number;
+      slug: string;
       title: string;
       durationSeconds: number;
       isFree: boolean;
       sortOrder: number;
     }>;
   }>;
+  userHasAccess?: boolean;
+  priceIndividual?: number;
+  priceOrganization?: number;
+  benefitsIndividual?: string[];
+  benefitsOrganization?: string[];
 }
 
 function fmtDuration(seconds: number): string {
@@ -72,10 +78,24 @@ const ArrowIcon = () => (
   </svg>
 );
 
-export const LandingPage: FC<LandingProps> = ({ user, modules = [] }) => {
+function fmtPrice(czk: number): string {
+  return czk.toLocaleString("cs-CZ") + " Kč";
+}
+
+export const LandingPage: FC<LandingProps> = ({
+  user,
+  modules = [],
+  userHasAccess = false,
+  priceIndividual = 2000,
+  priceOrganization = 15000,
+  benefitsIndividual = [],
+  benefitsOrganization = [],
+}) => {
   const allLessons = modules.flatMap((m) => m.lessons);
   const totalSeconds = allLessons.reduce((s, l) => s + l.durationSeconds, 0);
   const lessonCount = allLessons.length;
+  const freeCount = allLessons.filter((l) => l.isFree).length;
+  const canAccessAll = userHasAccess;
   return (
   <Layout user={user}>
     <div class="container">
@@ -96,7 +116,7 @@ export const LandingPage: FC<LandingProps> = ({ user, modules = [] }) => {
               </span>
             </a>
             <a class="btn btn-ghost btn-lg" href="#obsah">
-              první 3 epizody zdarma
+              {freeCount > 0 ? `${freeCount === 1 ? "první epizoda" : `první ${freeCount} epizody`} zdarma` : "část epizod zdarma"}
             </a>
           </div>
           <div class="hero-meta">
@@ -151,7 +171,11 @@ export const LandingPage: FC<LandingProps> = ({ user, modules = [] }) => {
             <h2>Claude Code s Patrickem</h2>
           </div>
           <div class="section-subtitle">
-            <span class="pill">první 3 epizody zdarma</span>
+            {freeCount > 0 && (
+              <span class="pill">
+                {freeCount === 1 ? "první epizoda zdarma" : `první ${freeCount} epizody zdarma`}
+              </span>
+            )}
           </div>
         </div>
         <div class="module-list">
@@ -168,26 +192,31 @@ export const LandingPage: FC<LandingProps> = ({ user, modules = [] }) => {
                   {m.lessons.length} epizod
                 </div>
               </div>
-              {m.lessons.map((l, li) => (
-                <div class={`lesson ${l.isFree ? "" : "locked"}`}>
-                  <span class="lesson-num">{String(li + 1).padStart(2, "0")}</span>
-                  <span class="lesson-icon">
-                    {l.isFree ? (
-                      <span style="color:var(--accent)">
-                        <PlaySmIcon />
-                      </span>
-                    ) : (
-                      <span style="color:var(--muted)">
-                        <LockIcon />
-                      </span>
-                    )}
-                  </span>
-                  <div class="lesson-title">
-                    {l.title}
-                  </div>
-                  <span class="lesson-duration">{fmtDuration(l.durationSeconds)}</span>
-                </div>
-              ))}
+              {m.lessons.map((l, li) => {
+                const accessible = l.isFree || canAccessAll;
+                const href = accessible ? `/watch/${l.slug}` : "/#cenik";
+                return (
+                  <a href={href} class={`lesson no-underline ${l.isFree || canAccessAll ? "" : "locked"}`}
+                    style="display:flex;align-items:center;gap:inherit;color:inherit">
+                    <span class="lesson-num">{String(li + 1).padStart(2, "0")}</span>
+                    <span class="lesson-icon">
+                      {accessible ? (
+                        <span style="color:var(--accent)">
+                          <PlaySmIcon />
+                        </span>
+                      ) : (
+                        <span style="color:var(--muted)">
+                          <LockIcon />
+                        </span>
+                      )}
+                    </span>
+                    <div class="lesson-title">
+                      {l.title}
+                    </div>
+                    <span class="lesson-duration">{fmtDuration(l.durationSeconds)}</span>
+                  </a>
+                );
+              })}
             </div>
           ))}
           {modules.length === 0 && (
@@ -213,36 +242,18 @@ export const LandingPage: FC<LandingProps> = ({ user, modules = [] }) => {
               <h3 style="margin-top:10px">Osobní předplatné</h3>
             </div>
             <div class="price-number">
-              3&nbsp;000&nbsp;Kč<small>/ rok</small>
+              {fmtPrice(priceIndividual)}<small>/ rok</small>
             </div>
             <ul class="price-features">
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                Přístup ke&nbsp;všem&nbsp;10&nbsp;epizodám
-              </li>
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                Všechny budoucí kurzy v&nbsp;předplatném
-              </li>
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                Komentáře a&nbsp;Q&amp;A s&nbsp;Patrickem
-              </li>
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                14 dní na vrácení, bez dotazů
-              </li>
+              {benefitsIndividual.map((b) => (
+                <li>
+                  <span class="check"><CheckIcon /></span>
+                  {b}
+                </li>
+              ))}
             </ul>
             <a href="/checkout/individual" class="btn btn-block btn-lg" style="text-decoration:none">
-              koupit za 2&nbsp;000&nbsp;Kč
+              koupit za {fmtPrice(priceIndividual)}
             </a>
             <div class="mono muted" style="text-align:center">
               platba kartou nebo převodem
@@ -254,33 +265,15 @@ export const LandingPage: FC<LandingProps> = ({ user, modules = [] }) => {
               <h3 style="margin-top:10px">Firemní licence</h3>
             </div>
             <div class="price-number">
-              15&nbsp;000&nbsp;Kč<small>/ rok</small>
+              {fmtPrice(priceOrganization)}<small>/ rok</small>
             </div>
             <ul class="price-features">
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                Neomezený počet zaměstnanců
-              </li>
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                Přístup podle emailové domény
-              </li>
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                Faktura v&nbsp;CZK, standardní daňový doklad
-              </li>
-              <li>
-                <span class="check">
-                  <CheckIcon />
-                </span>
-                Přehled využití pro&nbsp;L&amp;D oddělení
-              </li>
+              {benefitsOrganization.map((b) => (
+                <li>
+                  <span class="check"><CheckIcon /></span>
+                  {b}
+                </li>
+              ))}
             </ul>
             <a href="/checkout/organization" class="btn btn-ghost btn-block btn-lg" style="text-decoration:none">
               koupit firemní licenci

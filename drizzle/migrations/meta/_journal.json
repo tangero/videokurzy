@@ -50,6 +50,13 @@
       "when": 1747390000000,
       "tag": "0006_lesson_chapters_moments",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1747391000000,
+      "tag": "0007_site_config",
+      "breakpoints": true
     }
   ]
 }

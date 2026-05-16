@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
-import { course, module, lesson, organization, purchase, user } from "../db/schema";
+import { course, module, lesson, organization, purchase, user, siteConfig } from "../db/schema";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml } from "../lib/email";
 import {
@@ -13,6 +13,7 @@ import {
   AdminCourseDetail,
   AdminModuleForm,
   AdminLessonForm,
+  AdminSettingsForm,
 } from "../views/admin-courses";
 
 const admin = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -570,4 +571,59 @@ admin.post("/admin/lessons/:id/delete", async (c) => {
   return c.redirect(`/admin/courses/${row.courseId}`);
 });
 
-export { admin as adminRoutes };
+// ─── Settings ─────────────────────────────────────────────────────
+
+async function loadSettings(db: ReturnType<typeof drizzle>) {
+  const rows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    priceIndividual: parseInt(cfg.price_individual ?? "2000", 10),
+    priceOrganization: parseInt(cfg.price_organization ?? "15000", 10),
+    benefitsIndividual: JSON.parse(cfg.benefits_individual ?? "[]") as string[],
+    benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
+  };
+}
+
+admin.get("/admin/settings", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const settings = await loadSettings(db);
+  return c.html(
+    <Layout title="Nastavení" user={currentUser}>
+      <AdminSettingsForm {...settings} />
+    </Layout>
+  );
+});
+
+admin.post("/admin/settings", async (c) => {
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+
+  const priceIndividual = Math.max(0, parseInt(String(body.price_individual ?? "2000"), 10));
+  const priceOrganization = Math.max(0, parseInt(String(body.price_organization ?? "15000"), 10));
+  const benefitsIndividual = String(body.benefits_individual ?? "[]");
+  const benefitsOrganization = String(body.benefits_organization ?? "[]");
+
+  await Promise.all([
+    db.insert(siteConfig).values({ key: "price_individual", value: String(priceIndividual) })
+      .onConflictDoUpdate({ target: siteConfig.key, set: { value: String(priceIndividual) } }),
+    db.insert(siteConfig).values({ key: "price_organization", value: String(priceOrganization) })
+      .onConflictDoUpdate({ target: siteConfig.key, set: { value: String(priceOrganization) } }),
+    db.insert(siteConfig).values({ key: "benefits_individual", value: benefitsIndividual })
+      .onConflictDoUpdate({ target: siteConfig.key, set: { value: benefitsIndividual } }),
+    db.insert(siteConfig).values({ key: "benefits_organization", value: benefitsOrganization })
+      .onConflictDoUpdate({ target: siteConfig.key, set: { value: benefitsOrganization } }),
+  ]);
+
+  await c.env.KV.delete("cache:catalog");
+
+  const currentUser = c.get("user")!;
+  const settings = await loadSettings(db);
+  return c.html(
+    <Layout title="Nastavení" user={currentUser}>
+      <AdminSettingsForm {...settings} saved />
+    </Layout>
+  );
+});
+
+export { admin as adminRoutes, loadSettings };

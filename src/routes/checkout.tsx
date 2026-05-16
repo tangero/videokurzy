@@ -5,7 +5,7 @@ import { and, eq, gt } from "drizzle-orm";
 import Stripe from "stripe";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
-import { purchase, organization } from "../db/schema";
+import { purchase, organization, siteConfig } from "../db/schema";
 import {
   PAYMENT_ACCOUNT,
   PAYMENT_IBAN,
@@ -42,6 +42,15 @@ const checkoutRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
 // ─── Helpers ─────────────────────────────────────────────────────
+
+async function getPrices(db: ReturnType<typeof drizzle>) {
+  const rows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    individual: parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10),
+    organization: parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10),
+  };
+}
 
 function getStripe(secretKey: string) {
   return new Stripe(secretKey, { apiVersion: "2026-03-25.dahlia" });
@@ -80,10 +89,12 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
     );
   }
 
+  const db = drizzle(c.env.DB);
+  const prices = await getPrices(db);
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "individual", email, undefined);
+    return await startStripeCheckout(c, "individual", email, undefined, prices.individual);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline);
+    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, prices.individual);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -133,10 +144,12 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
     );
   }
 
+  const db = drizzle(c.env.DB);
+  const prices = await getPrices(db);
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "organization", email, domainRaw);
+    return await startStripeCheckout(c, "organization", email, domainRaw, prices.organization);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline);
+    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, prices.organization);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -148,11 +161,11 @@ async function startStripeCheckout(
   c: AppContext,
   type: "individual" | "organization",
   email: string,
-  domain: string | undefined
+  domain: string | undefined,
+  price: number
 ) {
   const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
   const isOrg = type === "organization";
-  const price = isOrg ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL;
   const productName = isOrg
     ? "Videokurz Claude Code — Firemní licence"
     : "Videokurz Claude Code — Jednotlivec";
@@ -201,10 +214,10 @@ async function startFioCheckout(
   type: "individual" | "organization",
   email: string,
   domain: string | undefined,
-  extendedDeadline: boolean
+  extendedDeadline: boolean,
+  price: number
 ) {
   const db = drizzle(c.env.DB);
-  const price = type === "organization" ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL;
   const dueDays = extendedDeadline ? FIO_EXTENDED_DUE_DAYS : FIO_DEFAULT_DUE_DAYS;
   const expiresAt = new Date(Date.now() + dueDays * 86400 * 1000);
   const createdAt = new Date();
@@ -346,7 +359,8 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
     );
   }
 
-  const price = p.type === "organization" ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL;
+  const prices = await getPrices(db);
+  const price = p.type === "organization" ? prices.organization : prices.individual;
   const dueDays = Math.round((p.expiresAt.getTime() - p.createdAt.getTime()) / 86400000);
   const isExtended = dueDays > FIO_DEFAULT_DUE_DAYS;
   const spd = generateSPD(PAYMENT_IBAN, price, p.variableSymbol!, `Videokurz ${p.email}`);
@@ -416,7 +430,8 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
   }
 
-  const expectedAmount = p.type === "organization" ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL;
+  const verifyPrices = await getPrices(db);
+  const expectedAmount = p.type === "organization" ? verifyPrices.organization : verifyPrices.individual;
   const match = matchPayment(fioRes.transactions, p.variableSymbol!, expectedAmount);
 
   if (!match.found || !match.transaction) {

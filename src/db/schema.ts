@@ -110,4 +110,9 @@ export const purchaseRelations = relations(purchase, ({ one }) => ({
   user: one(user, { fields: [purchase.userId], references: [user.id] }),
 }));
 
+export const siteConfig = sqliteTable("site_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
 export { user, session, account, verification } from "./auth-schema";

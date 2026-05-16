@@ -36,6 +36,7 @@ function AdminCoursesNav({ active }: { active: string }) {
   const links = [
     { href: "/admin", label: "Přehled" },
     { href: "/admin/courses", label: "Kurzy" },
+    { href: "/admin/settings", label: "Nastavení" },
   ];
   return (
     <nav class="flex gap-1 mb-8 border-b border-gray-200 pb-2">
@@ -728,4 +729,136 @@ export function adminFormatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// ─── Settings form ────────────────────────────────────────────────
+
+export function AdminSettingsForm({
+  priceIndividual,
+  priceOrganization,
+  benefitsIndividual,
+  benefitsOrganization,
+  saved,
+}: {
+  priceIndividual: number;
+  priceOrganization: number;
+  benefitsIndividual: string[];
+  benefitsOrganization: string[];
+  saved?: boolean;
+}) {
+  return (
+    <section class="max-w-3xl mx-auto px-4 py-8">
+      <h1 class="text-2xl font-bold mb-6">Admin</h1>
+      <nav class="flex gap-1 mb-8 border-b border-gray-200 pb-2">
+        <a href="/admin" class="px-4 py-2 rounded-t-lg text-sm font-medium no-underline text-gray-600 hover:bg-gray-100">Přehled</a>
+        <a href="/admin/courses" class="px-4 py-2 rounded-t-lg text-sm font-medium no-underline text-gray-600 hover:bg-gray-100">Kurzy</a>
+        <a href="/admin/settings" class="px-4 py-2 rounded-t-lg text-sm font-medium no-underline bg-indigo-600 text-white">Nastavení</a>
+      </nav>
+
+      {saved && (
+        <div class="mb-6 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg text-sm">
+          Nastavení uloženo.
+        </div>
+      )}
+
+      <form method="post" class="space-y-8">
+        {/* Ceny */}
+        <div>
+          <h2 class="text-lg font-semibold mb-4">Ceny předplatného (CZK/rok)</h2>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Osobní předplatné</label>
+              <div class="flex items-center gap-2">
+                <input type="number" name="price_individual" value={String(priceIndividual)} min="0" step="100"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                <span class="text-gray-500 text-sm whitespace-nowrap">Kč</span>
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Firemní licence</label>
+              <div class="flex items-center gap-2">
+                <input type="number" name="price_organization" value={String(priceOrganization)} min="0" step="100"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                <span class="text-gray-500 text-sm whitespace-nowrap">Kč</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Výhody - jednotlivec */}
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Výhody — osobní předplatné</h2>
+            <button type="button" id="add-benefit-ind" class="text-xs text-indigo-500 hover:text-indigo-700">+ Přidat</button>
+          </div>
+          <div id="benefits-ind-list" class="space-y-2">
+            {benefitsIndividual.map((b, i) => (
+              <div class="benefit-ind-row flex gap-2">
+                <input type="text" name={`benefit_ind_${i}`} value={b}
+                  class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                <button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg px-1">✕</button>
+              </div>
+            ))}
+          </div>
+          <input type="hidden" name="benefits_individual" id="benefits-ind-json" value={JSON.stringify(benefitsIndividual)} />
+        </div>
+
+        {/* Výhody - firma */}
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Výhody — firemní licence</h2>
+            <button type="button" id="add-benefit-org" class="text-xs text-indigo-500 hover:text-indigo-700">+ Přidat</button>
+          </div>
+          <div id="benefits-org-list" class="space-y-2">
+            {benefitsOrganization.map((b, i) => (
+              <div class="benefit-org-row flex gap-2">
+                <input type="text" name={`benefit_org_${i}`} value={b}
+                  class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                <button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg px-1">✕</button>
+              </div>
+            ))}
+          </div>
+          <input type="hidden" name="benefits_organization" id="benefits-org-json" value={JSON.stringify(benefitsOrganization)} />
+        </div>
+
+        <div class="pt-2">
+          <button type="submit" class="bg-indigo-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700">
+            Uložit nastavení
+          </button>
+        </div>
+      </form>
+
+      <script dangerouslySetInnerHTML={{ __html: `
+        (function() {
+          function makeRow(listId, rowClass, jsonId, serialize) {
+            var list = document.getElementById(listId);
+            var json = document.getElementById(jsonId);
+            function ser() {
+              var rows = list.querySelectorAll('.' + rowClass);
+              var vals = [];
+              rows.forEach(function(r){ var inp = r.querySelector('input[type=text]'); if(inp) vals.push(inp.value); });
+              json.value = JSON.stringify(vals);
+            }
+            list.querySelectorAll('.remove-row').forEach(function(btn){
+              btn.addEventListener('click', function(){ btn.closest('.' + rowClass).remove(); ser(); });
+            });
+            list.querySelectorAll('input').forEach(function(el){ el.addEventListener('input', ser); });
+            return function addRow(val) {
+              var div = document.createElement('div');
+              div.className = rowClass + ' flex gap-2';
+              div.innerHTML = '<input type="text" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" value="' + (val||'').replace(/"/g,'&quot;') + '"><button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg px-1">✕</button>';
+              div.querySelector('.remove-row').addEventListener('click', function(){ div.remove(); ser(); });
+              div.querySelector('input').addEventListener('input', ser);
+              list.appendChild(div);
+              ser();
+            };
+          }
+          var addInd = makeRow('benefits-ind-list', 'benefit-ind-row', 'benefits-ind-json');
+          var addOrg = makeRow('benefits-org-list', 'benefit-org-row', 'benefits-org-json');
+          document.getElementById('add-benefit-ind').addEventListener('click', function(){ addInd(''); });
+          document.getElementById('add-benefit-org').addEventListener('click', function(){ addOrg(''); });
+        })();
+      ` }} />
+    </section>
+  );
 }
