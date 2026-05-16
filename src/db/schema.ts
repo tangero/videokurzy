@@ -45,6 +45,7 @@ export const lesson = sqliteTable("lesson", {
   sortOrder: integer("sortOrder").notNull().default(0),
   chapters: text("chapters"),
   moments: text("moments"),
+  bodyMarkdown: text("bodyMarkdown"),
 });
 
 export const progress = sqliteTable(

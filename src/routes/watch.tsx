@@ -62,6 +62,7 @@ watch.get("/watch/:slug", async (c) => {
       moduleId: lesson.moduleId,
       sortOrder: lesson.sortOrder,
       chapters: lesson.chapters,
+      bodyMarkdown: lesson.bodyMarkdown,
     })
     .from(lesson)
     .where(eq(lesson.slug, slug))
@@ -146,6 +147,7 @@ watch.get("/watch/:slug", async (c) => {
       user={user ?? { name: null, email: "" }}
       lesson={{ ...found, moduleTitle: moduleRow[0]?.title }}
       chapters={parseLessonChapters(found.chapters)}
+      bodyMarkdown={found.bodyMarkdown}
       embedUrl={embedUrl}
       completed={completed}
       prevSlug={prevSlug}

@@ -1,4 +1,5 @@
 import type { FC } from "hono/jsx";
+import { renderMarkdown } from "../lib/markdown";
 import { Layout } from "./layout";
 
 interface SidebarLesson {
@@ -29,6 +30,7 @@ interface WatchProps {
     moduleTitle?: string;
   };
   chapters: LessonChapter[];
+  bodyMarkdown?: string | null;
   embedUrl: string;
   completed: boolean;
   prevSlug: string | null;
@@ -88,6 +90,7 @@ export const WatchPage: FC<WatchProps> = ({
   user,
   lesson,
   chapters,
+  bodyMarkdown,
   embedUrl,
   completed,
   prevSlug,
@@ -100,6 +103,7 @@ export const WatchPage: FC<WatchProps> = ({
   const idx = lessonGlobalIndex ?? 0;
   const moduleNum = String(lesson.moduleId).padStart(2, "0");
   const lessonNum = String(idx + 1).padStart(2, "0");
+  const bodyHtml = renderMarkdown(bodyMarkdown);
 
   return (
     <Layout title={lesson.title} user={user}>
@@ -109,7 +113,7 @@ export const WatchPage: FC<WatchProps> = ({
         </a>
 
         <div
-          style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:28px;align-items:start"
+          style={`display:grid;grid-template-columns:${chapters.length > 0 ? "minmax(0,1fr) 320px" : "1fr"};gap:28px;align-items:start`}
           class="watch-grid"
         >
           {/* Main column */}
@@ -158,40 +162,13 @@ export const WatchPage: FC<WatchProps> = ({
               <p style="color:var(--muted);font-size:1.02rem;margin:0">
                 {formatDuration(lesson.durationSeconds)}
               </p>
+              {bodyHtml && (
+                <div
+                  class="lesson-body"
+                  dangerouslySetInnerHTML={{ __html: bodyHtml }}
+                />
+              )}
             </div>
-
-            {chapters.length > 0 && (
-              <section class="chapter-panel" aria-labelledby="chapter-panel-title">
-                <div class="chapter-panel-head">
-                  <div>
-                    <div class="mono chapter-eyebrow">// kapitoly</div>
-                    <h2 id="chapter-panel-title">Obsah epizody</h2>
-                  </div>
-                  <span class="chapter-count">{chapters.length}</span>
-                </div>
-                <div class="chapter-list">
-                  {chapters.map((chapter, index) => (
-                    <button
-                      type="button"
-                      class="chapter-item"
-                      data-chapter-start={String(chapter.start)}
-                      data-chapter-end={String(chapter.end)}
-                    >
-                      <span class="chapter-index">
-                        {String(index + 1).padStart(2, "0")}
-                      </span>
-                      <span class="chapter-main">
-                        <span class="chapter-title">{chapter.title}</span>
-                        <span class="chapter-time">
-                          {formatDuration(chapter.start)}
-                          {chapter.end > chapter.start ? ` - ${formatDuration(chapter.end)}` : ""}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
 
             {/* Controls */}
             <div
@@ -234,6 +211,65 @@ export const WatchPage: FC<WatchProps> = ({
               </div>
             </div>
 
+            {nearbyLessons && nearbyLessons.length > 0 && (
+              <section class="next-lessons-panel" aria-labelledby="next-lessons-title">
+                <div
+                  class="mono"
+                  style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px"
+                >
+                  // epizody
+                </div>
+                <h2 id="next-lessons-title">Další epizody</h2>
+                <div class="next-lessons-list">
+                  {nearbyLessons.map((l) => {
+                    const locked = !hasPaidAccess && !l.isFree;
+                    const current = l.id === lesson.id;
+                    return (
+                      <div class={`lesson ${locked ? "locked" : ""} ${current ? "current" : ""}`}>
+                        <span class="lesson-num">
+                          {String(l.globalIndex + 1).padStart(2, "0")}
+                        </span>
+                        <span class="lesson-icon">
+                          {locked ? (
+                            <span style="color:var(--muted)">
+                              <LockIcon />
+                            </span>
+                          ) : l.completed ? (
+                            <span style="color:var(--accent)">
+                              <CheckIcon />
+                            </span>
+                          ) : current ? (
+                            <span style="color:var(--accent-2)">
+                              <PlaySmIcon />
+                            </span>
+                          ) : (
+                            <span style="color:var(--muted)">
+                              <CircleIcon />
+                            </span>
+                          )}
+                        </span>
+                        <div class="lesson-title">
+                          {locked || current ? (
+                            l.title
+                          ) : (
+                            <a href={`/watch/${l.slug}`}>{l.title}</a>
+                          )}
+                          <span class="lesson-sub">
+                            {formatDuration(l.durationSeconds)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {!hasPaidAccess && (
+                  <a class="btn btn-block btn-sm" href="/#cenik" style="margin-top:14px">
+                    odemknout vše
+                  </a>
+                )}
+              </section>
+            )}
+
             {/* Upgrade banner for free users watching last free lesson */}
             {isLastFreeLesson && !hasPaidAccess && (
               <div class="banner-upgrade" style="margin-top:28px">
@@ -255,64 +291,36 @@ export const WatchPage: FC<WatchProps> = ({
           </div>
 
           {/* Sidebar */}
-          {nearbyLessons && nearbyLessons.length > 0 && (
-            <aside class="card" style="padding:18px;position:sticky;top:90px">
-              <div
-                class="mono"
-                style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px"
-              >
-                // epizody
+          {chapters.length > 0 && (
+            <aside class="chapter-panel chapter-sidebar" aria-labelledby="chapter-panel-title">
+              <div class="chapter-panel-head">
+                <div>
+                  <div class="mono chapter-eyebrow">// kapitoly</div>
+                  <h2 id="chapter-panel-title">Obsah epizody</h2>
+                </div>
+                <span class="chapter-count">{chapters.length}</span>
               </div>
-              <div style="display:grid;gap:2px">
-                {nearbyLessons.map((l) => {
-                  const locked = !hasPaidAccess && !l.isFree;
-                  const current = l.id === lesson.id;
-                  return (
-                    <div
-                      class={`lesson ${locked ? "locked" : ""}`}
-                      style={`padding:10px;border-top:1px solid var(--border);${current ? "background:var(--accent-subtle);border-radius:10px;" : ""}`}
-                    >
-                      <span class="lesson-num">
-                        {String(l.globalIndex + 1).padStart(2, "0")}
+              <div class="chapter-list">
+                {chapters.map((chapter, index) => (
+                  <button
+                    type="button"
+                    class="chapter-item"
+                    data-chapter-start={String(chapter.start)}
+                    data-chapter-end={String(chapter.end)}
+                  >
+                    <span class="chapter-index">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span class="chapter-main">
+                      <span class="chapter-title">{chapter.title}</span>
+                      <span class="chapter-time">
+                        {formatDuration(chapter.start)}
+                        {chapter.end > chapter.start ? ` - ${formatDuration(chapter.end)}` : ""}
                       </span>
-                      <span class="lesson-icon">
-                        {locked ? (
-                          <span style="color:var(--muted)">
-                            <LockIcon />
-                          </span>
-                        ) : l.completed ? (
-                          <span style="color:var(--accent)">
-                            <CheckIcon />
-                          </span>
-                        ) : current ? (
-                          <span style="color:var(--accent-2)">
-                            <PlaySmIcon />
-                          </span>
-                        ) : (
-                          <span style="color:var(--muted)">
-                            <CircleIcon />
-                          </span>
-                        )}
-                      </span>
-                      <div class="lesson-title" style="font-size:0.88rem">
-                        {locked || current ? (
-                          l.title
-                        ) : (
-                          <a href={`/watch/${l.slug}`}>{l.title}</a>
-                        )}
-                        <span class="lesson-sub" style="font-size:0.68rem">
-                          {formatDuration(l.durationSeconds)}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
+                    </span>
+                  </button>
+                ))}
               </div>
-              {!hasPaidAccess && (
-                <a class="btn btn-block btn-sm" href="/#cenik" style="margin-top:14px">
-                  odemknout vše
-                </a>
-              )}
             </aside>
           )}
         </div>

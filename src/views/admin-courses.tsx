@@ -28,6 +28,7 @@ type Lesson = {
   sortOrder: number;
   chapters: string | null;
   moments: string | null;
+  bodyMarkdown: string | null;
 };
 
 // ─── Navigation ───────────────────────────────────────────────────
@@ -456,6 +457,20 @@ export function AdminLessonForm({
           name="isFree"
           checked={les?.isFree ?? false}
         />
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Popis lekce (Markdown)</label>
+          <textarea
+            name="bodyMarkdown"
+            rows={7}
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono"
+            placeholder="Krátký úvod, odkazy, odrážky nebo poznámky k epizodě."
+          >
+            {les?.bodyMarkdown ?? ""}
+          </textarea>
+          <p class="text-xs text-gray-400 mt-1">
+            Podporuje odstavce, odrážky, odkazy, tučné písmo, kurzívu a inline kód.
+          </p>
+        </div>
 
         {/* Chapters */}
         <div>

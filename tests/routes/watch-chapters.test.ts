@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 describe("GET /watch/:slug chapters", () => {
-  it("renders lesson chapters as clickable navigation", async () => {
+  it("renders lesson chapters in the sidebar, lesson markdown below title, and nearby lessons below video", async () => {
     await env.DB.prepare(
       "INSERT INTO course (id, title, slug, description, published) VALUES (?, ?, ?, ?, ?)"
     )
@@ -14,7 +14,7 @@ describe("GET /watch/:slug chapters", () => {
       .bind(201, 101, "Test modul", "test-modul", 1)
       .run();
     await env.DB.prepare(
-      "INSERT INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder, chapters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder, chapters, bodyMarkdown) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
       .bind(
         301,
@@ -29,7 +29,25 @@ describe("GET /watch/:slug chapters", () => {
         JSON.stringify([
           { title: "Prvni prompt", start: 15, end: 145 },
           { title: "Kontrola vysledku", start: 146, end: 310 },
-        ])
+        ]),
+        "Krátký **popis lekce** s [odkazem](https://vibecoding.cz).\n\n- první bod\n- druhý bod"
+      )
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, bunnyVideoId, durationSeconds, isFree, sortOrder, chapters, bodyMarkdown) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+      .bind(
+        302,
+        201,
+        "lesson-302",
+        "Navazujici epizoda",
+        "navazujici-epizoda",
+        "video-302",
+        420,
+        1,
+        2,
+        "[]",
+        ""
       )
       .run();
 
@@ -42,5 +60,12 @@ describe("GET /watch/:slug chapters", () => {
     expect(html).toContain('data-chapter-start="15"');
     expect(html).toContain("0:15");
     expect(html).toContain("Kontrola vysledku");
+    expect(html).toContain("chapter-sidebar");
+    expect(html).toContain('class="lesson-body"');
+    expect(html).toContain("<strong>popis lekce</strong>");
+    expect(html).toContain('<a href="https://vibecoding.cz"');
+    expect(html).toContain("next-lessons-panel");
+    expect(html).toContain("Další epizody");
+    expect(html).toContain("Navazujici epizoda");
   });
 });

@@ -475,6 +475,7 @@ admin.post(
     const isFree = body.isFree === "on";
     const chapters = String(body.chaptersJson ?? "[]").trim() || "[]";
     const moments = String(body.momentsJson ?? "[]").trim() || "[]";
+    const bodyMarkdown = String(body.bodyMarkdown ?? "").trim();
 
     await db.insert(lesson).values({
       moduleId,
@@ -487,6 +488,7 @@ admin.post(
       isFree,
       chapters,
       moments,
+      bodyMarkdown,
     });
 
     await c.env.KV.delete("cache:catalog");
@@ -543,10 +545,11 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
   const isFree = body.isFree === "on";
   const chapters = String(body.chaptersJson ?? "[]").trim() || "[]";
   const moments = String(body.momentsJson ?? "[]").trim() || "[]";
+  const bodyMarkdown = String(body.bodyMarkdown ?? "").trim();
 
   await db
     .update(lesson)
-    .set({ title, slug, bunnyVideoId, durationSeconds, sortOrder, isFree, chapters, moments })
+    .set({ title, slug, bunnyVideoId, durationSeconds, sortOrder, isFree, chapters, moments, bodyMarkdown })
     .where(eq(lesson.id, id));
 
   await c.env.KV.delete("cache:catalog");
