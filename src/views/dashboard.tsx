@@ -23,6 +23,7 @@ interface DashboardProps {
   completedCount: number;
   totalCount: number;
   hasPaidAccess: boolean;
+  priceIndividual: number;
 }
 
 function formatDuration(seconds: number): string {
@@ -35,6 +36,10 @@ function formatTotal(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h} h ${m} min` : `${m} min`;
+}
+
+function formatPrice(amount: number): string {
+  return new Intl.NumberFormat("cs-CZ").format(amount) + " Kč";
 }
 
 const CheckIcon = () => (
@@ -75,12 +80,22 @@ export const DashboardPage: FC<DashboardProps> = ({
   completedCount,
   totalCount,
   hasPaidAccess,
+  priceIndividual,
 }) => {
   const allLessons = modules.flatMap((m) => m.lessons);
-  const nextLesson = allLessons.find((l) => !l.completed) ?? allLessons[0];
-  const accessibleCount = hasPaidAccess ? totalCount : 3;
-  const pct = accessibleCount > 0 ? Math.round((completedCount / accessibleCount) * 100) : 0;
+  const accessibleLessons = allLessons.filter((l) => hasPaidAccess || l.isFree);
+  const lockedCount = allLessons.length - accessibleLessons.length;
+  const freeLessonCount = allLessons.filter((l) => l.isFree).length;
+  const completedAccessibleCount = accessibleLessons.filter((l) => l.completed).length;
+  const nextLesson = accessibleLessons.find((l) => !l.completed) ?? accessibleLessons[0] ?? allLessons[0];
+  const nextModule = modules.find((m) => m.lessons.some((l) => l.id === nextLesson?.id));
+  const remainingInModule = nextModule?.lessons
+    .filter((l) => (hasPaidAccess || l.isFree) && !l.completed)
+    .reduce((a, l) => a + l.durationSeconds, 0) ?? 0;
+  const accessibleCount = accessibleLessons.length;
+  const pct = accessibleCount > 0 ? Math.round((completedAccessibleCount / accessibleCount) * 100) : 0;
   const totalDuration = allLessons.reduce((a, l) => a + l.durationSeconds, 0);
+  const hasCompletedAccessible = accessibleCount > 0 && completedAccessibleCount >= accessibleCount;
 
   return (
     <Layout title="Můj kurz" user={user}>
@@ -100,7 +115,7 @@ export const DashboardPage: FC<DashboardProps> = ({
             <p style="color:var(--muted);font-size:1.02rem;max-width:520px;margin:0 0 20px">
               {hasPaidAccess
                 ? `Pokračuješ v kurzu. Dokoukáno ${completedCount} z ${totalCount} epizod.`
-                : `Máš přístup k prvním 3 epizodám zdarma. Zhlédnuto ${completedCount} ze 3.`}
+                : `Máš přístup k ${freeLessonCount} bezplatným epizodám. Zhlédnuto ${completedAccessibleCount} z ${freeLessonCount}.`}
             </p>
             <div class="progress" style="max-width:520px;margin-bottom:18px">
               <span style={`width:${pct}%`}></span>
@@ -109,12 +124,12 @@ export const DashboardPage: FC<DashboardProps> = ({
               {nextLesson && (
                 <a class="btn btn-lg" href={`/watch/${nextLesson.slug}`}>
                   <PlaySmIcon />
-                  {completedCount > 0 ? "pokračovat" : "začít"} — {nextLesson.title}
+                  {hasCompletedAccessible ? "projít znovu" : completedAccessibleCount > 0 ? "pokračovat" : "začít"} — {nextLesson.title}
                 </a>
               )}
               {!hasPaidAccess && (
                 <a class="btn btn-ghost btn-lg" href="/#cenik">
-                  odemknout vše za 3&nbsp;000&nbsp;Kč
+                  odemknout {lockedCount} epizod za {formatPrice(priceIndividual)}
                 </a>
               )}
             </div>
@@ -130,29 +145,33 @@ export const DashboardPage: FC<DashboardProps> = ({
             />
             <MiniStat
               label="dokoukáno"
-              value={`${completedCount}/${totalCount}`}
+              value={`${completedAccessibleCount}/${accessibleCount}`}
               hint={formatTotal(totalDuration)}
             />
             {nextLesson && (
               <MiniStat
-                label="další epizoda"
+                label={hasCompletedAccessible ? "opakování" : "další lekce"}
                 value={`#${String(allLessons.findIndex((l) => l.id === nextLesson.id) + 1).padStart(2, "0")}`}
-                hint={formatDuration(nextLesson.durationSeconds)}
+                hint={nextModule?.title ?? formatDuration(nextLesson.durationSeconds)}
               />
             )}
-            <MiniStat label="přístup" value={hasPaidAccess ? "roční" : "zdarma"} hint="magic link" />
+            <MiniStat
+              label="zbývá v modulu"
+              value={remainingInModule > 0 ? formatTotal(remainingInModule) : "hotovo"}
+              hint={hasPaidAccess ? "plný přístup" : `${lockedCount} zamčeno`}
+            />
           </div>
         </section>
 
         {/* Upgrade banner */}
-        {!hasPaidAccess && (
+        {!hasPaidAccess && lockedCount > 0 && (
           <div class="banner-upgrade" style="margin-bottom:36px">
             <div style="flex:1;min-width:240px">
-              <h4>Zůstalo 7 epizod pod&nbsp;zámkem.</h4>
-              <p>Modul 02 a 03 — design, databáze, deployment. Odemkne se za 3&nbsp;000&nbsp;Kč/rok.</p>
+              <h4>{lockedCount} epizod je pod&nbsp;zámkem.</h4>
+              <p>Po odemknutí dashboard naváže další lekcí a zpřístupní celý výukový plán.</p>
             </div>
             <a class="btn" href="/#cenik">
-              koupit kurz{" "}
+              odemknout za {formatPrice(priceIndividual)}{" "}
               <span class="arrow">
                 <ArrowIcon />
               </span>

@@ -3,9 +3,10 @@ import { eq, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Env, Variables } from "../types";
 import { requireAuth } from "../middleware/auth";
-import { course, module, lesson, progress } from "../db/schema";
+import { course, module, lesson, progress, siteConfig } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { DashboardPage } from "../views/dashboard";
+import { PRICE_INDIVIDUAL } from "../config/payment";
 
 const dashboard = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -79,7 +80,10 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
 
   const totalCount = modules.length;
   const completedCount = completedSet.size;
-  const hasPaidAccess = await hasAccess(user.id, user.email, db);
+  const hasPaidAccess = user.role === "admin" || await hasAccess(user.id, user.email, db);
+  const settingsRows = await db.select().from(siteConfig);
+  const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+  const priceIndividual = parseInt(settings.price_individual ?? String(PRICE_INDIVIDUAL), 10);
 
   return c.html(
     <DashboardPage
@@ -88,6 +92,7 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
       completedCount={completedCount}
       totalCount={totalCount}
       hasPaidAccess={hasPaidAccess}
+      priceIndividual={priceIndividual}
     />
   );
 });

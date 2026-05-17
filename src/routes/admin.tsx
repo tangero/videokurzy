@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { FC } from "hono/jsx";
 import { and, desc, eq, asc, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
@@ -7,6 +8,7 @@ import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user, siteConfig } from "../db/schema";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml } from "../lib/email";
+import { createAdminUser } from "../lib/admin-users";
 import {
   AdminCoursesList,
   AdminCourseForm,
@@ -17,6 +19,111 @@ import {
 } from "../views/admin-courses";
 
 const admin = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+const AdminUserForm: FC<{
+  error?: string;
+  values?: { email?: string; name?: string; role?: string; access?: string };
+}> = ({ error, values }) => (
+  <div class="max-w-2xl mx-auto px-4 py-8">
+    <a href="/admin" class="text-sm text-blue-600 hover:underline">
+      ← zpět na admin
+    </a>
+    <h1 class="text-2xl font-bold mt-4 mb-2">Nový uživatel</h1>
+    <p class="text-sm text-gray-600 mb-6">
+      Uživatel se zakládá bez hesla. Přístup získá přes magic link na přihlašovací stránce.
+    </p>
+    {error && (
+      <div class="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        {error}
+      </div>
+    )}
+    <form method="post" action="/admin/users/new" class="bg-white border rounded-lg p-5 space-y-4">
+      <label class="block">
+        <span class="block text-sm font-medium text-gray-700 mb-1">E-mail</span>
+        <input
+          name="email"
+          type="email"
+          required
+          value={values?.email ?? ""}
+          class="w-full rounded border px-3 py-2"
+          placeholder="jmeno@example.com"
+        />
+      </label>
+      <label class="block">
+        <span class="block text-sm font-medium text-gray-700 mb-1">Jméno</span>
+        <input
+          name="name"
+          value={values?.name ?? ""}
+          class="w-full rounded border px-3 py-2"
+          placeholder="Volitelné"
+        />
+      </label>
+      <label class="block">
+        <span class="block text-sm font-medium text-gray-700 mb-1">Role</span>
+        <select name="role" class="w-full rounded border px-3 py-2">
+          <option value="user" selected={(values?.role ?? "user") === "user"}>
+            user
+          </option>
+          <option value="admin" selected={values?.role === "admin"}>
+            admin
+          </option>
+        </select>
+      </label>
+      <fieldset class="rounded border px-3 py-3">
+        <legend class="px-1 text-sm font-medium text-gray-700">Přístup</legend>
+        <div class="space-y-2 text-sm">
+          <label class="flex items-start gap-2">
+            <input
+              type="radio"
+              name="access"
+              value="free"
+              checked={(values?.access ?? "free") === "free"}
+              class="mt-1"
+            />
+            <span>
+              <span class="font-medium">Zdarma</span>
+              <span class="block text-gray-500">Bez placené licence, uvidí jen bezplatné lekce.</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-2">
+            <input
+              type="radio"
+              name="access"
+              value="individual"
+              checked={values?.access === "individual"}
+              class="mt-1"
+            />
+            <span>
+              <span class="font-medium">Soukromá licence</span>
+              <span class="block text-gray-500">Plný přístup bez platebních výzev.</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-2">
+            <input
+              type="radio"
+              name="access"
+              value="organization"
+              checked={values?.access === "organization"}
+              class="mt-1"
+            />
+            <span>
+              <span class="font-medium">Firemní licence</span>
+              <span class="block text-gray-500">Plný přístup pro tohoto uživatele, bez platebních výzev.</span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+      <div class="flex items-center gap-3 pt-2">
+        <button type="submit" class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700">
+          Založit uživatele
+        </button>
+        <a href="/admin" class="text-sm text-gray-600 hover:underline">
+          zrušit
+        </a>
+      </div>
+    </form>
+  </div>
+);
 
 // All admin routes require admin role
 admin.use("/admin/*", requireAdmin);
@@ -32,7 +139,19 @@ admin.get("/admin", async (c) => {
   const [purchaseCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase);
+  const recentUsers = await db
+    .select({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      createdAt: user.createdAt,
+    })
+    .from(user)
+    .orderBy(desc(user.createdAt))
+    .limit(8);
   const orgs = await db.select().from(organization).orderBy(asc(organization.createdAt));
+  const userCreated = c.req.query("userCreated");
 
   // I3: načíst emaily kupujících pro detekci domain mismatch
   const orgPurchases = await db
@@ -64,6 +183,11 @@ admin.get("/admin", async (c) => {
     <Layout title="Admin" user={currentUser}>
       <div class="max-w-4xl mx-auto px-4 py-8">
         <h1 class="text-2xl font-bold mb-6">Admin</h1>
+        {userCreated && (
+          <div class="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            Uživatel {userCreated} byl založen. Přihlásí se přes magic link na /login.
+          </div>
+        )}
 
         {/* Stats */}
         <div class="grid grid-cols-3 gap-4 mb-8">
@@ -79,6 +203,53 @@ admin.get("/admin", async (c) => {
             <p class="text-sm text-gray-500">Organizace</p>
             <p class="text-2xl font-bold">{orgs.length}</p>
           </div>
+        </div>
+
+        {/* Users */}
+        <div class="flex items-center justify-between gap-4 mb-4">
+          <h2 class="text-xl font-bold">Uživatelé</h2>
+          <a href="/admin/users/new" class="text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
+            Přidat uživatele
+          </a>
+        </div>
+        <div class="bg-white rounded-lg border overflow-hidden mb-8">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-2 text-left">E-mail</th>
+                <th class="px-4 py-2 text-left">Jméno</th>
+                <th class="px-4 py-2 text-left">Role</th>
+                <th class="px-4 py-2 text-left">Vytvořen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentUsers.map((u) => (
+                <tr class="border-t">
+                  <td class="px-4 py-2 font-medium">{u.email}</td>
+                  <td class="px-4 py-2 text-gray-600">{u.name ?? "—"}</td>
+                  <td class="px-4 py-2">
+                    <span class={`px-2 py-1 rounded-full text-xs font-medium ${
+                      u.role === "admin"
+                        ? "bg-blue-100 text-blue-700"
+                        : "bg-gray-100 text-gray-700"
+                    }`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td class="px-4 py-2 text-gray-500">
+                    {u.createdAt.toLocaleDateString("cs-CZ")}
+                  </td>
+                </tr>
+              ))}
+              {recentUsers.length === 0 && (
+                <tr>
+                  <td colspan={4} class="px-4 py-4 text-gray-500 text-center">
+                    Zatím žádní uživatelé
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
 
         {/* Organizations */}
@@ -159,6 +330,41 @@ admin.get("/admin", async (c) => {
       </div>
     </Layout>
   );
+});
+
+admin.get("/admin/users/new", async (c) => {
+  const currentUser = c.get("user")!;
+  return c.html(
+    <Layout title="Nový uživatel" user={currentUser}>
+      <AdminUserForm />
+    </Layout>
+  );
+});
+
+admin.post("/admin/users/new", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const email = String(body.email ?? "");
+  const name = String(body.name ?? "");
+  const role = String(body.role ?? "user");
+  const access = String(body.access ?? "free");
+
+  try {
+    const created = await createAdminUser(db, { email, name, role, access });
+    return c.redirect(`/admin?userCreated=${encodeURIComponent(created.email)}`);
+  } catch (err) {
+    const message = (err as Error).message || "Uživatele se nepodařilo založit.";
+    return c.html(
+      <Layout title="Nový uživatel" user={currentUser}>
+        <AdminUserForm
+          error={message}
+          values={{ email: email.trim(), name: name.trim(), role, access }}
+        />
+      </Layout>,
+      400
+    );
+  }
 });
 
 // Approve organization (htmx)
