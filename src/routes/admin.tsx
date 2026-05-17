@@ -8,7 +8,11 @@ import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user, siteConfig } from "../db/schema";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml } from "../lib/email";
-import { createAdminUser } from "../lib/admin-users";
+import {
+  createAdminUsers,
+  defaultAdminGrantExpiresOn,
+  parseAdminGrantExpiresAt,
+} from "../lib/admin-users";
 import {
   AdminNav,
   AdminCoursesList,
@@ -23,7 +27,7 @@ const admin = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 const AdminUserForm: FC<{
   error?: string;
-  values?: { email?: string; name?: string; role?: string; access?: string };
+  values?: { emails?: string; name?: string; role?: string; access?: string; accessExpiresOn?: string };
 }> = ({ error, values }) => (
   <div class="max-w-2xl mx-auto px-4 py-8">
     <h1 class="text-2xl font-bold mb-6">Admin</h1>
@@ -39,15 +43,19 @@ const AdminUserForm: FC<{
     )}
     <form method="post" action="/admin/users/new" class="bg-white border rounded-lg p-5 space-y-4">
       <label class="block">
-        <span class="block text-sm font-medium text-gray-700 mb-1">E-mail</span>
-        <input
-          name="email"
-          type="email"
+        <span class="block text-sm font-medium text-gray-700 mb-1">E-maily</span>
+        <textarea
+          name="emails"
           required
-          value={values?.email ?? ""}
+          rows={6}
           class="w-full rounded border px-3 py-2"
-          placeholder="jmeno@example.com"
-        />
+          placeholder={"jmeno@example.com\njine.jmeno@example.com"}
+        >
+          {values?.emails ?? ""}
+        </textarea>
+        <span class="mt-1 block text-xs text-gray-500">
+          Vlož jeden nebo více e-mailů. Oddělení může být nový řádek, mezera, čárka nebo středník.
+        </span>
       </label>
       <label class="block">
         <span class="block text-sm font-medium text-gray-700 mb-1">Jméno</span>
@@ -57,6 +65,9 @@ const AdminUserForm: FC<{
           class="w-full rounded border px-3 py-2"
           placeholder="Volitelné"
         />
+        <span class="mt-1 block text-xs text-gray-500">
+          Jméno se použije jen při založení jednoho uživatele.
+        </span>
       </label>
       <label class="block">
         <span class="block text-sm font-medium text-gray-700 mb-1">Role</span>
@@ -77,7 +88,7 @@ const AdminUserForm: FC<{
               type="radio"
               name="access"
               value="free"
-              checked={(values?.access ?? "free") === "free"}
+              checked={(values?.access ?? "individual") === "free"}
               class="mt-1"
             />
             <span>
@@ -90,12 +101,12 @@ const AdminUserForm: FC<{
               type="radio"
               name="access"
               value="individual"
-              checked={values?.access === "individual"}
+              checked={(values?.access ?? "individual") === "individual"}
               class="mt-1"
             />
             <span>
               <span class="font-medium">Soukromá licence</span>
-              <span class="block text-gray-500">Plný přístup bez platebních výzev.</span>
+              <span class="block text-gray-500">Plný přístup do zvoleného data.</span>
             </span>
           </label>
           <label class="flex items-start gap-2">
@@ -108,11 +119,23 @@ const AdminUserForm: FC<{
             />
             <span>
               <span class="font-medium">Firemní licence</span>
-              <span class="block text-gray-500">Plný přístup pro tohoto uživatele, bez platebních výzev.</span>
+              <span class="block text-gray-500">Plný přístup pro tyto uživatele do zvoleného data.</span>
             </span>
           </label>
         </div>
       </fieldset>
+      <label class="block">
+        <span class="block text-sm font-medium text-gray-700 mb-1">Platnost přístupu do</span>
+        <input
+          name="accessExpiresOn"
+          type="date"
+          value={values?.accessExpiresOn ?? defaultAdminGrantExpiresOn()}
+          class="w-full rounded border px-3 py-2"
+        />
+        <span class="mt-1 block text-xs text-gray-500">
+          Výchozí hodnota je 90 dní od dnešního dne. U volby Zdarma se placená licence nevytváří.
+        </span>
+      </label>
       <div class="flex items-center gap-3 pt-2">
         <button type="submit" class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700">
           Založit uživatele
@@ -186,7 +209,7 @@ admin.get("/admin", async (c) => {
         <AdminNav active="/admin" />
         {userCreated && (
           <div class="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-            Uživatel {userCreated} byl založen. Přihlásí se přes magic link na /login.
+            Založeno: {userCreated}. Přihlášení probíhá přes magic link na /login.
           </div>
         )}
 
@@ -346,21 +369,30 @@ admin.post("/admin/users/new", async (c) => {
   const currentUser = c.get("user")!;
   const db = drizzle(c.env.DB);
   const body = await c.req.parseBody();
-  const email = String(body.email ?? "");
+  const emails = String(body.emails ?? body.email ?? "");
   const name = String(body.name ?? "");
   const role = String(body.role ?? "user");
-  const access = String(body.access ?? "free");
+  const access = String(body.access ?? "individual");
+  const accessExpiresOn = String(body.accessExpiresOn ?? "");
 
   try {
-    const created = await createAdminUser(db, { email, name, role, access });
-    return c.redirect(`/admin?userCreated=${encodeURIComponent(created.email)}`);
+    const expiresAt = parseAdminGrantExpiresAt(accessExpiresOn);
+    const result = await createAdminUsers(db, { emails, name, role, access, expiresAt });
+    if (result.errors.length > 0) {
+      const failed = result.errors.map((e) => `${e.email}: ${e.message}`).join("; ");
+      throw new Error(`${result.created.length} založeno, ${result.errors.length} se nepodařilo: ${failed}`);
+    }
+    const label = result.created.length === 1
+      ? result.created[0].email
+      : `${result.created.length} uživatelů`;
+    return c.redirect(`/admin?userCreated=${encodeURIComponent(label)}`);
   } catch (err) {
     const message = (err as Error).message || "Uživatele se nepodařilo založit.";
     return c.html(
       <Layout title="Nový uživatel" user={currentUser}>
         <AdminUserForm
           error={message}
-          values={{ email: email.trim(), name: name.trim(), role, access }}
+          values={{ emails: emails.trim(), name: name.trim(), role, access, accessExpiresOn }}
         />
       </Layout>,
       400
