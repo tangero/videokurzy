@@ -8,6 +8,6 @@ describe("AdminNav", () => {
 
     expect(html).toContain('href="/admin/users/new"');
     expect(html).toContain("Přidat uživatele");
-    expect(html).toContain('href="/admin#users"');
+    expect(html).toContain('href="/admin/users"');
   });
 });

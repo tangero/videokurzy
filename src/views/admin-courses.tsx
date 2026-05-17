@@ -36,7 +36,7 @@ type Lesson = {
 export function AdminNav({ active }: { active: string }) {
   const links = [
     { href: "/admin", label: "Přehled" },
-    { href: "/admin#users", label: "Uživatelé" },
+    { href: "/admin/users", label: "Uživatelé" },
     { href: "/admin/courses", label: "Kurzy" },
     { href: "/admin/settings", label: "Nastavení" },
   ];

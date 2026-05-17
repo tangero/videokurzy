@@ -8,6 +8,8 @@ interface SendEmailOptions {
   to: string | string[];
   subject: string;
   html: string;
+  from?: string;
+  replyTo?: string;
 }
 
 /** Odešle email přes Resend. Vrací true při úspěchu. */
@@ -20,8 +22,8 @@ export async function sendEmail(env: Env, opts: SendEmailOptions): Promise<boole
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: EMAIL_FROM,
-        reply_to: EMAIL_REPLY_TO,
+        from: opts.from ?? EMAIL_FROM,
+        reply_to: opts.replyTo ?? EMAIL_REPLY_TO,
         to: Array.isArray(opts.to) ? opts.to : [opts.to],
         subject: opts.subject,
         html: opts.html,
@@ -111,6 +113,47 @@ export function adminNewOrgHtml(domain: string, buyerEmail: string, paymentMetho
       <p style="margin: 4px 0; font-size: 14px;"><strong>Stav:</strong> Čeká na schválení</p>
     </div>
     ${primaryButton(adminUrl, "Otevřít administraci")}`);
+}
+
+// ─── Šablona: admin uvítací email ──────────────────────────────
+
+const ACCESS_LABEL: Record<"free" | "individual" | "organization", string> = {
+  free: "bezplatný účet (přístup jen k volně dostupným lekcím)",
+  individual: "soukromá licence — plný přístup ke všem kurzům",
+  organization: "firemní licence — plný přístup ke všem kurzům",
+};
+
+/** Email od Patricka novému uživateli zřízenému adminem. */
+export function adminWelcomeUserHtml(opts: {
+  personalMessage: string;
+  email: string;
+  access: "free" | "individual" | "organization";
+  expiresAt: Date | null;
+  loginUrl: string;
+}): string {
+  const expiryLine = opts.access === "free" || !opts.expiresAt
+    ? "Účet je bez časového omezení."
+    : `Přístup je platný do <strong>${opts.expiresAt.toLocaleDateString("cs-CZ")}</strong>.`;
+  const escapedMessage = opts.personalMessage
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>");
+  return emailWrapper(`
+    <div style="font-size: 16px; line-height: 1.5; white-space: pre-wrap;">${escapedMessage}</div>
+    <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 24px 0;">
+    <p style="font-size: 14px; color: #444; line-height: 1.5;"><strong>Informace o tvém účtu</strong></p>
+    <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 12px 0; font-size: 14px; line-height: 1.6;">
+      <p style="margin: 0;"><strong>Platforma:</strong> kurzy.vibecoding.cz</p>
+      <p style="margin: 4px 0 0;"><strong>Přihlašovací e-mail:</strong> ${opts.email}</p>
+      <p style="margin: 4px 0 0;"><strong>Typ přístupu:</strong> ${ACCESS_LABEL[opts.access]}</p>
+      <p style="margin: 4px 0 0;">${expiryLine}</p>
+    </div>
+    <p style="font-size: 14px; color: #444; line-height: 1.5;">
+      Přihlášení probíhá bez hesla — na přihlašovací stránce zadáš svůj e-mail a obratem dostaneš
+      jednorázový odkaz ke vstupu.
+    </p>
+    ${primaryButton(opts.loginUrl, "Přihlásit se do kurzu")}`);
 }
 
 // ─── Šablony: renewal reminders (21/14/7/1 den) ─────────────────

@@ -1,8 +1,9 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { user } from "../db/schema";
-import { purchase } from "../db/schema";
+import { purchase, progress } from "../db/schema";
+import { userEmails } from "../db/identity-schema";
 import { ensureUserEmailRecord, normalizeEmail } from "./user-emails";
 import { linkPurchasesToUser } from "./access";
 
@@ -109,6 +110,237 @@ export async function createAdminUser(
   }
 
   return { id, email, name, role };
+}
+
+export type AdminUserListItem = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  createdAt: Date;
+  activeAccess: AdminAccess | null;
+  accessExpiresAt: Date | null;
+};
+
+export async function listAdminUsers(
+  db: Db,
+  opts: { search?: string; limit?: number; offset?: number } = {},
+): Promise<{ rows: AdminUserListItem[]; total: number }> {
+  const limit = Math.max(1, Math.min(200, opts.limit ?? 50));
+  const offset = Math.max(0, opts.offset ?? 0);
+  const search = opts.search?.trim().toLowerCase() ?? "";
+
+  const pattern = `%${search.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+  const where = search
+    ? sql`(lower(${user.email}) LIKE ${pattern} ESCAPE '\\' OR lower(coalesce(${user.name}, '')) LIKE ${pattern} ESCAPE '\\')`
+    : undefined;
+
+  const baseQuery = db
+    .select({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      createdAt: user.createdAt,
+    })
+    .from(user);
+
+  const rows = await (where ? baseQuery.where(where) : baseQuery)
+    .orderBy(desc(user.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  const countQuery = db.select({ c: sql<number>`count(*)` }).from(user);
+  const totalRow = await (where ? countQuery.where(where) : countQuery).get();
+  const total = totalRow?.c ?? 0;
+
+  if (rows.length === 0) return { rows: [], total };
+
+  const ids = rows.map((r) => r.id);
+  const activePurchases = await db
+    .select({
+      userId: purchase.userId,
+      type: purchase.type,
+      expiresAt: purchase.expiresAt,
+    })
+    .from(purchase)
+    .where(and(eq(purchase.status, "active"), inArray(purchase.userId, ids)));
+
+  const activeByUser = new Map<string, { type: AdminAccess; expiresAt: Date }>();
+  for (const p of activePurchases) {
+    if (!p.userId) continue;
+    const prev = activeByUser.get(p.userId);
+    if (!prev || prev.expiresAt < p.expiresAt) {
+      activeByUser.set(p.userId, { type: p.type as AdminAccess, expiresAt: p.expiresAt });
+    }
+  }
+
+  return {
+    rows: rows.map((r) => {
+      const active = activeByUser.get(r.id);
+      return {
+        ...r,
+        activeAccess: active?.type ?? null,
+        accessExpiresAt: active?.expiresAt ?? null,
+      };
+    }),
+    total,
+  };
+}
+
+export type AdminUserDetail = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  emailVerified: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  emails: { email: string; isPrimary: boolean; verifiedAt: Date; addedAt: Date; addedVia: string }[];
+  purchases: {
+    id: number;
+    email: string;
+    type: AdminAccess;
+    paymentMethod: "stripe" | "fio";
+    status: "pending" | "active" | "expired" | "refunded";
+    expiresAt: Date;
+    createdAt: Date;
+  }[];
+  progressCount: number;
+};
+
+export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserDetail | null> {
+  const u = await db.select().from(user).where(eq(user.id, id)).get();
+  if (!u) return null;
+
+  const emails = await db
+    .select()
+    .from(userEmails)
+    .where(eq(userEmails.userId, id))
+    .all();
+
+  const purchases = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.userId, id))
+    .orderBy(desc(purchase.createdAt))
+    .all();
+
+  const progressRow = await db
+    .select({ c: sql<number>`count(*)` })
+    .from(progress)
+    .where(eq(progress.userId, id))
+    .get();
+
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    emailVerified: u.emailVerified,
+    createdAt: u.createdAt,
+    updatedAt: u.updatedAt,
+    emails: emails.map((e) => ({
+      email: e.email,
+      isPrimary: e.isPrimary,
+      verifiedAt: e.verifiedAt,
+      addedAt: e.addedAt,
+      addedVia: e.addedVia,
+    })),
+    purchases: purchases.map((p) => ({
+      id: p.id,
+      email: p.email,
+      type: p.type as AdminAccess,
+      paymentMethod: p.paymentMethod,
+      status: p.status,
+      expiresAt: p.expiresAt,
+      createdAt: p.createdAt,
+    })),
+    progressCount: progressRow?.c ?? 0,
+  };
+}
+
+export async function updateAdminUser(
+  db: Db,
+  id: string,
+  opts: { name?: string | null; role?: string },
+): Promise<void> {
+  const u = await db.select({ id: user.id }).from(user).where(eq(user.id, id)).get();
+  if (!u) throw new Error("Uživatel nenalezen.");
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (opts.name !== undefined) {
+    const trimmed = opts.name?.trim() ?? "";
+    updates.name = trimmed || null;
+  }
+  if (opts.role !== undefined) {
+    if (!VALID_ROLES.has(opts.role)) throw new Error("Neplatná role.");
+    updates.role = opts.role;
+  }
+  await db.update(user).set(updates).where(eq(user.id, id));
+}
+
+export async function deleteAdminUser(db: Db, id: string): Promise<void> {
+  const u = await db.select({ id: user.id }).from(user).where(eq(user.id, id)).get();
+  if (!u) throw new Error("Uživatel nenalezen.");
+  // Detach purchases (history is preserved, ties to user are cleared).
+  await db.update(purchase).set({ userId: null }).where(eq(purchase.userId, id));
+  // user_emails, session, account, progress all cascade via FK.
+  await db.delete(user).where(eq(user.id, id));
+}
+
+export async function grantAdminAccess(
+  db: Db,
+  opts: { userId: string; access: Exclude<AdminAccess, "free">; expiresAt: Date },
+): Promise<void> {
+  const u = await db
+    .select({ id: user.id, email: user.email })
+    .from(user)
+    .where(eq(user.id, opts.userId))
+    .get();
+  if (!u) throw new Error("Uživatel nenalezen.");
+  const now = new Date();
+  await db.insert(purchase).values({
+    email: u.email,
+    userId: u.id,
+    type: opts.access,
+    paymentMethod: "stripe",
+    stripePaymentId: `admin_grant_${nanoid(16)}`,
+    status: "active",
+    expiresAt: opts.expiresAt,
+    createdAt: now,
+  });
+}
+
+export async function revokeAdminPurchase(
+  db: Db,
+  opts: { userId: string; purchaseId: number },
+): Promise<void> {
+  const row = await db
+    .select({ id: purchase.id })
+    .from(purchase)
+    .where(and(eq(purchase.id, opts.purchaseId), eq(purchase.userId, opts.userId)))
+    .get();
+  if (!row) throw new Error("Grant nenalezen.");
+  await db
+    .update(purchase)
+    .set({ status: "expired", expiresAt: new Date() })
+    .where(eq(purchase.id, opts.purchaseId));
+}
+
+export async function extendAdminPurchase(
+  db: Db,
+  opts: { userId: string; purchaseId: number; expiresAt: Date },
+): Promise<void> {
+  const row = await db
+    .select({ id: purchase.id })
+    .from(purchase)
+    .where(and(eq(purchase.id, opts.purchaseId), eq(purchase.userId, opts.userId)))
+    .get();
+  if (!row) throw new Error("Grant nenalezen.");
+  await db
+    .update(purchase)
+    .set({ status: "active", expiresAt: opts.expiresAt })
+    .where(eq(purchase.id, opts.purchaseId));
 }
 
 export async function createAdminUsers(

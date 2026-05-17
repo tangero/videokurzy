@@ -7,12 +7,20 @@ import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user, siteConfig } from "../db/schema";
 import { Layout } from "../views/layout";
-import { sendEmail, organizationApprovedHtml } from "../lib/email";
+import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml } from "../lib/email";
 import {
   createAdminUsers,
   defaultAdminGrantExpiresOn,
   parseAdminGrantExpiresAt,
+  listAdminUsers,
+  getAdminUserDetail,
+  updateAdminUser,
+  deleteAdminUser,
+  grantAdminAccess,
+  revokeAdminPurchase,
+  extendAdminPurchase,
 } from "../lib/admin-users";
+import { AdminUsersList, AdminUserDetailView } from "../views/admin-users";
 import {
   AdminNav,
   AdminCoursesList,
@@ -25,9 +33,20 @@ import {
 
 const admin = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+const DEFAULT_WELCOME_MESSAGE = `Ahoj či Dobrý den,
+zřídil jsem Ti účet do mojí vzdělávací AI platformy kurzy.vibecoding.cz. Budu rád, když mi dáš zpětnou vazbu na to, co jsi se tu naučil! Patrick`;
+
 const AdminUserForm: FC<{
   error?: string;
-  values?: { emails?: string; name?: string; role?: string; access?: string; accessExpiresOn?: string };
+  values?: {
+    emails?: string;
+    name?: string;
+    role?: string;
+    access?: string;
+    accessExpiresOn?: string;
+    sendWelcomeEmail?: boolean;
+    welcomeMessage?: string;
+  };
 }> = ({ error, values }) => (
   <div class="max-w-2xl mx-auto px-4 py-8">
     <h1 class="text-2xl font-bold mb-6">Admin</h1>
@@ -136,6 +155,34 @@ const AdminUserForm: FC<{
           Výchozí hodnota je 90 dní od dnešního dne. U volby Zdarma se placená licence nevytváří.
         </span>
       </label>
+      <fieldset class="rounded border px-3 py-3">
+        <legend class="px-1 text-sm font-medium text-gray-700">Uvítací e-mail</legend>
+        <label class="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="sendWelcomeEmail"
+            value="on"
+            checked={values?.sendWelcomeEmail ?? true}
+            class="mt-1"
+          />
+          <span>
+            <span class="font-medium">Odeslat uvítací e-mail z patrick@vibecoding.cz</span>
+            <span class="block text-gray-500">
+              Pod tvůj text se automaticky připojí technické informace o účtu, typu přístupu a platnosti.
+            </span>
+          </span>
+        </label>
+        <label class="block mt-3">
+          <span class="block text-sm font-medium text-gray-700 mb-1">Text e-mailu</span>
+          <textarea
+            name="welcomeMessage"
+            rows={6}
+            class="w-full rounded border px-3 py-2 text-sm"
+          >
+            {values?.welcomeMessage ?? DEFAULT_WELCOME_MESSAGE}
+          </textarea>
+        </label>
+      </fieldset>
       <div class="flex items-center gap-3 pt-2">
         <button type="submit" class="bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700">
           Založit uživatele
@@ -232,9 +279,14 @@ admin.get("/admin", async (c) => {
         {/* Users */}
         <div id="users" class="flex items-center justify-between gap-4 mb-4">
           <h2 class="text-xl font-bold">Uživatelé</h2>
-          <a href="/admin/users/new" class="text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
-            Přidat uživatele
-          </a>
+          <div class="flex items-center gap-2">
+            <a href="/admin/users" class="text-sm text-indigo-600 hover:underline">
+              všichni uživatelé →
+            </a>
+            <a href="/admin/users/new" class="text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
+              Přidat uživatele
+            </a>
+          </div>
         </div>
         <div class="bg-white rounded-lg border overflow-hidden mb-8">
           <table class="w-full text-sm">
@@ -249,7 +301,11 @@ admin.get("/admin", async (c) => {
             <tbody>
               {recentUsers.map((u) => (
                 <tr class="border-t">
-                  <td class="px-4 py-2 font-medium">{u.email}</td>
+                  <td class="px-4 py-2 font-medium">
+                    <a href={`/admin/users/${u.id}`} class="text-indigo-600 hover:underline no-underline">
+                      {u.email}
+                    </a>
+                  </td>
                   <td class="px-4 py-2 text-gray-600">{u.name ?? "—"}</td>
                   <td class="px-4 py-2">
                     <span class={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -374,6 +430,8 @@ admin.post("/admin/users/new", async (c) => {
   const role = String(body.role ?? "user");
   const access = String(body.access ?? "individual");
   const accessExpiresOn = String(body.accessExpiresOn ?? "");
+  const sendWelcomeEmail = body.sendWelcomeEmail === "on";
+  const welcomeMessage = String(body.welcomeMessage ?? "").trim();
 
   try {
     const expiresAt = parseAdminGrantExpiresAt(accessExpiresOn);
@@ -382,6 +440,31 @@ admin.post("/admin/users/new", async (c) => {
       const failed = result.errors.map((e) => `${e.email}: ${e.message}`).join("; ");
       throw new Error(`${result.created.length} založeno, ${result.errors.length} se nepodařilo: ${failed}`);
     }
+
+    if (sendWelcomeEmail && welcomeMessage && result.created.length > 0) {
+      const access2 = (["free", "individual", "organization"].includes(access)
+        ? access
+        : "individual") as "free" | "individual" | "organization";
+      const expiryForEmail = access2 === "free" ? null : expiresAt;
+      for (const u of result.created) {
+        c.executionCtx.waitUntil(
+          sendEmail(c.env, {
+            from: "Patrick Zandl <patrick@vibecoding.cz>",
+            replyTo: "patrick@vibecoding.cz",
+            to: u.email,
+            subject: "Tvůj účet na kurzy.vibecoding.cz",
+            html: adminWelcomeUserHtml({
+              personalMessage: welcomeMessage,
+              email: u.email,
+              access: access2,
+              expiresAt: expiryForEmail,
+              loginUrl: `${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(u.email)}`,
+            }),
+          })
+        );
+      }
+    }
+
     const label = result.created.length === 1
       ? result.created[0].email
       : `${result.created.length} uživatelů`;
@@ -392,11 +475,162 @@ admin.post("/admin/users/new", async (c) => {
       <Layout title="Nový uživatel" user={currentUser}>
         <AdminUserForm
           error={message}
-          values={{ emails: emails.trim(), name: name.trim(), role, access, accessExpiresOn }}
+          values={{
+            emails: emails.trim(),
+            name: name.trim(),
+            role,
+            access,
+            accessExpiresOn,
+            sendWelcomeEmail,
+            welcomeMessage,
+          }}
         />
       </Layout>,
       400
     );
+  }
+});
+
+// ─── Users CRUD ───────────────────────────────────────────────────
+
+const USER_PAGE_SIZE = 50;
+const FLASH_MESSAGES: Record<string, { kind: "ok" | "err"; text: string }> = {
+  saved: { kind: "ok", text: "Změny uloženy." },
+  deleted: { kind: "ok", text: "Uživatel smazán." },
+  granted: { kind: "ok", text: "Přístup přidán." },
+  revoked: { kind: "ok", text: "Přístup odebrán." },
+  extended: { kind: "ok", text: "Platnost přístupu upravena." },
+};
+
+function flashFromQuery(c: { req: { query: (k: string) => string | undefined } }) {
+  const ok = c.req.query("ok");
+  if (ok && FLASH_MESSAGES[ok]) return FLASH_MESSAGES[ok];
+  const err = c.req.query("err");
+  if (err) return { kind: "err" as const, text: err };
+  return undefined;
+}
+
+admin.get("/admin/users", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const search = (c.req.query("q") ?? "").trim();
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const offset = (page - 1) * USER_PAGE_SIZE;
+  const { rows, total } = await listAdminUsers(db, { search, limit: USER_PAGE_SIZE, offset });
+
+  return c.html(
+    <Layout title="Uživatelé" user={currentUser}>
+      <AdminUsersList
+        rows={rows}
+        total={total}
+        search={search}
+        page={page}
+        pageSize={USER_PAGE_SIZE}
+        flash={flashFromQuery(c)}
+      />
+    </Layout>
+  );
+});
+
+admin.get("/admin/users/:id", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const detail = await getAdminUserDetail(db, c.req.param("id"));
+  if (!detail) return c.text("Not found", 404);
+  return c.html(
+    <Layout title={detail.email} user={currentUser}>
+      <AdminUserDetailView
+        user={detail}
+        flash={flashFromQuery(c)}
+        defaultExpiresOn={defaultAdminGrantExpiresOn()}
+        currentUserId={currentUser.id}
+      />
+    </Layout>
+  );
+});
+
+admin.post("/admin/users/:id/edit", async (c) => {
+  const currentUser = c.get("user")!;
+  const id = c.req.param("id");
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const name = String(body.name ?? "");
+  const role = String(body.role ?? "user");
+
+  try {
+    // Nelze měnit vlastní roli — chrání před locked-out adminem.
+    const roleToSet = id === currentUser.id ? undefined : role;
+    await updateAdminUser(db, id, { name, role: roleToSet });
+    return c.redirect(`/admin/users/${id}?ok=saved`);
+  } catch (err) {
+    const message = encodeURIComponent((err as Error).message || "Změny se nepodařilo uložit.");
+    return c.redirect(`/admin/users/${id}?err=${message}`);
+  }
+});
+
+admin.post("/admin/users/:id/delete", async (c) => {
+  const currentUser = c.get("user")!;
+  const id = c.req.param("id");
+  if (id === currentUser.id) {
+    return c.redirect(`/admin/users/${id}?err=${encodeURIComponent("Vlastní účet nelze smazat.")}`);
+  }
+  const db = drizzle(c.env.DB);
+  try {
+    await deleteAdminUser(db, id);
+    return c.redirect("/admin/users?ok=deleted");
+  } catch (err) {
+    const message = encodeURIComponent((err as Error).message || "Uživatele se nepodařilo smazat.");
+    return c.redirect(`/admin/users/${id}?err=${message}`);
+  }
+});
+
+admin.post("/admin/users/:id/purchases/new", async (c) => {
+  const id = c.req.param("id");
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const access = String(body.access ?? "individual");
+  const expiresOn = String(body.expiresOn ?? "");
+
+  if (access !== "individual" && access !== "organization") {
+    return c.redirect(`/admin/users/${id}?err=${encodeURIComponent("Neplatný typ přístupu.")}`);
+  }
+
+  try {
+    const expiresAt = parseAdminGrantExpiresAt(expiresOn);
+    await grantAdminAccess(db, { userId: id, access, expiresAt });
+    return c.redirect(`/admin/users/${id}?ok=granted`);
+  } catch (err) {
+    const message = encodeURIComponent((err as Error).message || "Grant se nepodařilo přidat.");
+    return c.redirect(`/admin/users/${id}?err=${message}`);
+  }
+});
+
+admin.post("/admin/users/:id/purchases/:purchaseId/revoke", async (c) => {
+  const id = c.req.param("id");
+  const purchaseId = parseInt(c.req.param("purchaseId"), 10);
+  const db = drizzle(c.env.DB);
+  try {
+    await revokeAdminPurchase(db, { userId: id, purchaseId });
+    return c.redirect(`/admin/users/${id}?ok=revoked`);
+  } catch (err) {
+    const message = encodeURIComponent((err as Error).message || "Přístup se nepodařilo odebrat.");
+    return c.redirect(`/admin/users/${id}?err=${message}`);
+  }
+});
+
+admin.post("/admin/users/:id/purchases/:purchaseId/extend", async (c) => {
+  const id = c.req.param("id");
+  const purchaseId = parseInt(c.req.param("purchaseId"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const expiresOn = String(body.expiresOn ?? "");
+  try {
+    const expiresAt = parseAdminGrantExpiresAt(expiresOn);
+    await extendAdminPurchase(db, { userId: id, purchaseId, expiresAt });
+    return c.redirect(`/admin/users/${id}?ok=extended`);
+  } catch (err) {
+    const message = encodeURIComponent((err as Error).message || "Platnost se nepodařilo upravit.");
+    return c.redirect(`/admin/users/${id}?err=${message}`);
   }
 });
 
