@@ -357,20 +357,24 @@ export const WatchPage: FC<WatchProps> = ({
                 }
               }
 
-              player.on('ready', function () {
-                buttons.forEach(function (button) {
-                  button.addEventListener('click', function () {
-                    var start = parseInt(button.getAttribute('data-chapter-start') || '0', 10);
-                    player.setCurrentTime(start);
-                    player.play();
-                    setActive(start);
-                  });
+              buttons.forEach(function (button) {
+                button.addEventListener('click', function () {
+                  var start = parseInt(button.getAttribute('data-chapter-start') || '0', 10);
+                  player.setCurrentTime(start);
+                  player.play();
+                  setActive(start);
                 });
+              });
 
-                player.on('timeupdate', function (event) {
-                  var data = event && event.data ? event.data : event;
-                  var seconds = data && typeof data.seconds === 'number' ? data.seconds : 0;
-                  setActive(seconds);
+              player.on('timeupdate', function (event) {
+                var data = event && event.data ? event.data : event;
+                var seconds = data && typeof data.seconds === 'number' ? data.seconds : 0;
+                setActive(seconds);
+              });
+
+              player.on('ready', function () {
+                player.getCurrentTime(function (seconds) {
+                  setActive(typeof seconds === 'number' ? seconds : 0);
                 });
               });
             })();

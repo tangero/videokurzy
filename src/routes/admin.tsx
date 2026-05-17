@@ -10,6 +10,7 @@ import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml } from "../lib/email";
 import { createAdminUser } from "../lib/admin-users";
 import {
+  AdminNav,
   AdminCoursesList,
   AdminCourseForm,
   AdminCourseDetail,
@@ -25,10 +26,9 @@ const AdminUserForm: FC<{
   values?: { email?: string; name?: string; role?: string; access?: string };
 }> = ({ error, values }) => (
   <div class="max-w-2xl mx-auto px-4 py-8">
-    <a href="/admin" class="text-sm text-blue-600 hover:underline">
-      ← zpět na admin
-    </a>
-    <h1 class="text-2xl font-bold mt-4 mb-2">Nový uživatel</h1>
+    <h1 class="text-2xl font-bold mb-6">Admin</h1>
+    <AdminNav active="/admin/users/new" />
+    <h2 class="text-xl font-bold mb-2">Nový uživatel</h2>
     <p class="text-sm text-gray-600 mb-6">
       Uživatel se zakládá bez hesla. Přístup získá přes magic link na přihlašovací stránce.
     </p>
@@ -183,6 +183,7 @@ admin.get("/admin", async (c) => {
     <Layout title="Admin" user={currentUser}>
       <div class="max-w-4xl mx-auto px-4 py-8">
         <h1 class="text-2xl font-bold mb-6">Admin</h1>
+        <AdminNav active="/admin" />
         {userCreated && (
           <div class="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
             Uživatel {userCreated} byl založen. Přihlásí se přes magic link na /login.
@@ -206,7 +207,7 @@ admin.get("/admin", async (c) => {
         </div>
 
         {/* Users */}
-        <div class="flex items-center justify-between gap-4 mb-4">
+        <div id="users" class="flex items-center justify-between gap-4 mb-4">
           <h2 class="text-xl font-bold">Uživatelé</h2>
           <a href="/admin/users/new" class="text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
             Přidat uživatele

@@ -33,14 +33,15 @@ type Lesson = {
 
 // ─── Navigation ───────────────────────────────────────────────────
 
-function AdminCoursesNav({ active }: { active: string }) {
+export function AdminNav({ active }: { active: string }) {
   const links = [
     { href: "/admin", label: "Přehled" },
+    { href: "/admin#users", label: "Uživatelé" },
     { href: "/admin/courses", label: "Kurzy" },
     { href: "/admin/settings", label: "Nastavení" },
   ];
   return (
-    <nav class="flex gap-1 mb-8 border-b border-gray-200 pb-2">
+    <nav class="flex flex-wrap items-center gap-1 mb-8 border-b border-gray-200 pb-2">
       {links.map((l) => (
         <a
           href={l.href}
@@ -53,6 +54,16 @@ function AdminCoursesNav({ active }: { active: string }) {
           {l.label}
         </a>
       ))}
+      <a
+        href="/admin/users/new"
+        class={`sm:ml-auto px-4 py-2 rounded-lg text-sm font-medium no-underline transition-colors ${
+          active === "/admin/users/new"
+            ? "bg-gray-900 text-white"
+            : "bg-gray-900 text-white hover:bg-gray-700"
+        }`}
+      >
+        Přidat uživatele
+      </a>
     </nav>
   );
 }
@@ -63,7 +74,7 @@ export function AdminCoursesList({ courses }: { courses: Course[] }) {
   return (
     <section class="max-w-5xl mx-auto px-4 py-8">
       <h1 class="text-2xl font-bold mb-6">Admin</h1>
-      <AdminCoursesNav active="/admin/courses" />
+      <AdminNav active="/admin/courses" />
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold">Kurzy</h2>
         <a
@@ -764,11 +775,7 @@ export function AdminSettingsForm({
   return (
     <section class="max-w-3xl mx-auto px-4 py-8">
       <h1 class="text-2xl font-bold mb-6">Admin</h1>
-      <nav class="flex gap-1 mb-8 border-b border-gray-200 pb-2">
-        <a href="/admin" class="px-4 py-2 rounded-t-lg text-sm font-medium no-underline text-gray-600 hover:bg-gray-100">Přehled</a>
-        <a href="/admin/courses" class="px-4 py-2 rounded-t-lg text-sm font-medium no-underline text-gray-600 hover:bg-gray-100">Kurzy</a>
-        <a href="/admin/settings" class="px-4 py-2 rounded-t-lg text-sm font-medium no-underline bg-indigo-600 text-white">Nastavení</a>
-      </nav>
+      <AdminNav active="/admin/settings" />
 
       {saved && (
         <div class="mb-6 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg text-sm">

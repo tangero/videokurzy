@@ -67,5 +67,12 @@ describe("GET /watch/:slug chapters", () => {
     expect(html).toContain("next-lessons-panel");
     expect(html).toContain("Další epizody");
     expect(html).toContain("Navazujici epizoda");
+    expect(html).toContain("player.setCurrentTime(start)");
+
+    const clickHandlerIndex = html.indexOf("button.addEventListener('click'");
+    const readyHandlerIndex = html.indexOf("player.on('ready'");
+    expect(clickHandlerIndex).toBeGreaterThan(-1);
+    expect(readyHandlerIndex).toBeGreaterThan(-1);
+    expect(clickHandlerIndex).toBeLessThan(readyHandlerIndex);
   });
 });
