@@ -4,7 +4,7 @@
 
 **Goal:** Rozšířit Better Auth ve videokurzy o multi-email identity, interní API pro konzumenty (vibecoding-site přes Cloudflare Service Binding), audit logování, cross-subdoménové session cookies a OIDC Provider plugin pro budoucí cross-domain konzumenty.
 
-**Architecture:** Videokurzy Worker na `kurz.vibecoding.cz` zůstává Better Auth master s D1 `videokurzy-db`. Přidá dvě nová rozhraní: (1) **internal API** `/internal/auth/*` chráněné shared secretem pro service-binding volání z CF Workerů ve stejném ekosystému, (2) **OIDC Provider** endpointy pro budoucí externí konzumenty (marigold.cz). Cookies získají `Domain=.vibecoding.cz` pro sdílení přes subdomény. Multi-email model umožňuje uživateli přidávat verified sekundární e-maily, které slouží jako záložní kanál pro magic link.
+**Architecture:** Videokurzy Worker na `kurzy.vibecoding.cz` zůstává Better Auth master s D1 `videokurzy-db`. Přidá dvě nová rozhraní: (1) **internal API** `/internal/auth/*` chráněné shared secretem pro service-binding volání z CF Workerů ve stejném ekosystému, (2) **OIDC Provider** endpointy pro budoucí externí konzumenty (marigold.cz). Cookies získají `Domain=.vibecoding.cz` pro sdílení přes subdomény. Multi-email model umožňuje uživateli přidávat verified sekundární e-maily, které slouží jako záložní kanál pro magic link.
 
 **Tech Stack:** Hono 4.x, Better Auth 1.6.5 + magic-link + (nově) oidc-provider plugin, Drizzle ORM 0.45.2, Cloudflare D1, KV (rate-limit), Resend (email), Vitest + @cloudflare/vitest-pool-workers (nově pro testing).
 
@@ -16,7 +16,7 @@
 
 - Pracujeme na `main` branchi, pushujeme přímo (není otevřen release flow). Pokud existuje stagingové prostředí, nasazení na staging proběhne před produkcí (manuálně, mimo scope tohoto plánu).
 - Všechny migrace aplikujeme **lokálně** (`db:migrate`) nejdřív a testujeme lokálně. Na produkci (`db:migrate:prod`) až po zelených testech.
-- `BETTER_AUTH_URL` v produkci je `https://kurz.vibecoding.cz`. V dev `http://localhost:8787`.
+- `BETTER_AUTH_URL` v produkci je `https://kurzy.vibecoding.cz`. V dev `http://localhost:8787`.
 - `AUTH_INTERNAL_SECRET` je nový env var (secret) sdílený s vibecoding-site. Musí být vygenerován před Task 4.
 - Pro testování používáme `@cloudflare/vitest-pool-workers`, který běží v reálném CF runtime s miniflare.
 
@@ -758,7 +758,7 @@ import { isAllowedCallback } from "../../src/lib/callback-allowlist";
 describe("isAllowedCallback", () => {
   it.each([
     ["https://vibecoding.cz/auth/verify", true],
-    ["https://kurz.vibecoding.cz/auth/verify", true],
+    ["https://kurzy.vibecoding.cz/auth/verify", true],
     ["https://any.sub.vibecoding.cz/x", true],
     ["http://localhost:4321/auth/verify", true],
     ["http://localhost/foo", true],
@@ -1653,7 +1653,7 @@ OIDC endpointy.
 ## Env vars
 
 - `BETTER_AUTH_SECRET` — podpisový klíč Better Auth sessions
-- `BETTER_AUTH_URL` — veřejná URL Workeru (`https://kurz.vibecoding.cz` v prod)
+- `BETTER_AUTH_URL` — veřejná URL Workeru (`https://kurzy.vibecoding.cz` v prod)
 - `AUTH_INTERNAL_SECRET` — shared secret mezi Workery (rotovatelný, 32+ znaků)
 - `RESEND_API_KEY` — pro odesílání magic linků
 - `COOKIE_DOMAIN` — `.vibecoding.cz` v prod, unset v dev
@@ -1743,7 +1743,7 @@ Zavře recovery banner na 30 dní.
 
 ## OIDC Provider (pro externí konzumenty)
 
-Discovery: `https://kurz.vibecoding.cz/api/auth/.well-known/openid-configuration`.
+Discovery: `https://kurzy.vibecoding.cz/api/auth/.well-known/openid-configuration`.
 Registrace klienta: manuálně v D1 (tabulka `oidc_client`) — admin UI odloženo.
 
 ## Deploy
@@ -1848,10 +1848,10 @@ npm run deploy
 
 ```bash
 # Production discovery
-curl -i https://kurz.vibecoding.cz/api/auth/.well-known/openid-configuration
+curl -i https://kurzy.vibecoding.cz/api/auth/.well-known/openid-configuration
 
 # Production internal (403 bez secret)
-curl -i -X POST https://kurz.vibecoding.cz/internal/auth/magic-link \
+curl -i -X POST https://kurzy.vibecoding.cz/internal/auth/magic-link \
   -H "Content-Type: application/json" \
   -d '{}'
 # očekáváno: 403

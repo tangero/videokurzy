@@ -21,6 +21,28 @@ const internal = new Hono<{ Bindings: Env }>();
 
 internal.use("/internal/*", requireInternalSecret);
 
+async function validateMagicLinkToken(
+  env: Env,
+  token: string,
+): Promise<"valid" | "invalid"> {
+  const row = await env.DB.prepare(
+    "SELECT expiresAt FROM verification WHERE identifier = ?",
+  )
+    .bind(token)
+    .first<{ expiresAt: number }>();
+
+  if (!row) return "invalid";
+
+  if (Number(row.expiresAt) < Date.now()) {
+    await env.DB.prepare("DELETE FROM verification WHERE identifier = ?")
+      .bind(token)
+      .run();
+    return "invalid";
+  }
+
+  return "valid";
+}
+
 internal.post("/internal/auth/magic-link", async (c) => {
   const body = await c.req
     .json<{ email?: string; callbackUrl?: string }>()
@@ -68,6 +90,16 @@ internal.post("/internal/auth/verify-token", async (c) => {
     .catch(() => ({}) as { token?: string });
   if (!body.token) {
     return c.json({ error: "token required" }, 400);
+  }
+
+  if ((await validateMagicLinkToken(c.env, body.token)) === "invalid") {
+    const correlationId = crypto.randomUUID();
+    console.warn(JSON.stringify({
+      scope: "internal/verify-token",
+      event: "invalid_or_expired_token",
+      correlationId,
+    }));
+    return c.json({ error: "invalid_token", correlationId }, 401);
   }
 
   const auth = createAuth(c.env, c.executionCtx);
@@ -184,6 +216,16 @@ internal.post("/internal/auth/verify-add-email", async (c) => {
     .catch(() => ({}) as { token?: string; userId?: string });
   if (!body.token || !body.userId) {
     return c.json({ error: "token and userId required" }, 400);
+  }
+
+  if ((await validateMagicLinkToken(c.env, body.token)) === "invalid") {
+    const correlationId = crypto.randomUUID();
+    console.warn(JSON.stringify({
+      scope: "internal/verify-add-email",
+      event: "invalid_or_expired_token",
+      correlationId,
+    }));
+    return c.json({ error: "invalid_token", correlationId }, 401);
   }
 
   const auth = createAuth(c.env, c.executionCtx);

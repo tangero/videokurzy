@@ -1,4 +1,4 @@
-# PRD v2: Videokurz platforma — kurz.vibecoding.cz
+# PRD v2: Videokurz platforma — kurzy.vibecoding.cz
 
 > Verze 2.1 | 7. dubna 2026
 > Tento dokument je kanonický zdroj pravdy pro AI coding agenty pracující na projektu.
@@ -8,7 +8,7 @@
 ## 1. Vize a kontext
 
 ### Co to je
-Distribuční platforma pro placené videokurzy o vibe codingu. Subdoména kurz.vibecoding.cz, součást ekosystému vibecoding.cz. Zároveň technologické demo schopností vibe codingu — edge-first architektura bez JS frameworku.
+Distribuční platforma pro placené videokurzy o vibe codingu. Subdoména kurzy.vibecoding.cz, součást ekosystému vibecoding.cz. Zároveň technologické demo schopností vibe codingu — edge-first architektura bez JS frameworku.
 
 ### Pricing model
 Jedno roční předplatné = přístup ke všem kurzům na platformě. Žádné per-course platby.
@@ -17,7 +17,7 @@ Jedno roční předplatné = přístup ke všem kurzům na platformě. Žádné 
 
 ### Content hierarchy
 ```
-Platforma (kurz.vibecoding.cz)
+Platforma (kurzy.vibecoding.cz)
   └── Kurz (např. "Claude Code s Patrickem", "Zavádíme AI do firem")
         └── Modul (např. "Začínáme", "Stavíme aplikaci")
               └── Epizoda (konkrétní téma, krátké video)
@@ -82,7 +82,7 @@ Patrick Zandl je uznávaný autor a lektor v české tech komunitě. Má 6 000 o
 Feature: Landing page
   Scenario: Návštěvník vidí obsah kurzu
     Given jsem nepřihlášený návštěvník
-    When otevřu kurz.vibecoding.cz
+    When otevřu kurzy.vibecoding.cz
     Then vidím hero sekci s názvem kurzu a popisem
     And vidím seznam modulů a epizod s označením "zdarma" u free epizod
     And vidím ceník (jednotlivec 2 000 Kč/rok, firma 15 000 Kč/rok)
@@ -321,7 +321,7 @@ Všechny emaily: brandované HTML, logo vibecoding.cz, jeden jasný CTA, odesíl
 ## 6. Information Architecture
 
 ```
-kurz.vibecoding.cz
+kurzy.vibecoding.cz
 ├── / .......................... Landing page (veřejná)
 │   ├── Hero + popis kurzu
 │   ├── Obsah kurzu (moduly + epizody)
@@ -477,7 +477,7 @@ Platba odemyká přístup k celé platformě (všechny kurzy). Žádný courseId
 
 ### Video ochrana
 - Bunny Stream signed embed URLs, 4h expiry
-- Referer check (kurz.vibecoding.cz)
+- Referer check (kurzy.vibecoding.cz)
 - Žádné download tlačítko (UI only)
 - Watermark: odloženo na v2
 

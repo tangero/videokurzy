@@ -38,6 +38,44 @@ describe("POST /internal/auth/verify-token", () => {
     expect(body.error).toBe("invalid_token");
   });
 
+  it("401 with expired token", async () => {
+    await env.DB.prepare(
+      "INSERT INTO verification (id, identifier, value, expiresAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+      .bind(
+        "expired-token-row",
+        "expired-token",
+        JSON.stringify({ email: "expired@example.com", attempt: 0 }),
+        Date.now() - 60_000,
+        Date.now() - 120_000,
+        Date.now() - 120_000,
+      )
+      .run();
+
+    const res = await SELF.fetch(
+      "https://test.local/internal/auth/verify-token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Secret": env.AUTH_INTERNAL_SECRET,
+        },
+        body: JSON.stringify({ token: "expired-token" }),
+      },
+    );
+
+    expect(res.status).toBe(401);
+    const body = await res.json<{ error: string; correlationId?: string }>();
+    expect(body.error).toBe("invalid_token");
+
+    const row = await env.DB.prepare(
+      "SELECT id FROM verification WHERE identifier = ?",
+    )
+      .bind("expired-token")
+      .first();
+    expect(row).toBeNull();
+  });
+
   it("403 without internal secret", async () => {
     const res = await SELF.fetch(
       "https://test.local/internal/auth/verify-token",

@@ -1,7 +1,7 @@
-# PRD: Videokurz platforma — kurz.vibecoding.cz
+# PRD: Videokurz platforma — kurzy.vibecoding.cz
 
 ## Co to je
-Distribuční platforma pro placený videokurz "Claude Code s Patrickem". Součást ekosystému vibecoding.cz. Běží na Cloudflare Workers jako samostatný worker na subdoméně kurz.vibecoding.cz. Zároveň technologické demo vibe codingu — edge-first architektura bez JS frameworku.
+Distribuční platforma pro placený videokurz "Claude Code s Patrickem". Součást ekosystému vibecoding.cz. Běží na Cloudflare Workers jako samostatný worker na subdoméně kurzy.vibecoding.cz. Zároveň technologické demo vibe codingu — edge-first architektura bez JS frameworku.
 
 ## Pro koho
 - **B2C:** Jednotlivci (neprogramátoři, začínající vibe codeři), kteří si koupí roční přístup.
@@ -211,7 +211,7 @@ Epizody s `isFree = true` jsou přístupné všem bez přihlášení.
 
 ## Ochrana obsahu
 - Bunny Stream signed URLs s 4h expirací
-- Referer check (video jen z kurz.vibecoding.cz)
+- Referer check (video jen z kurzy.vibecoding.cz)
 - Žádné download tlačítko (UI only, ne skutečná ochrana)
 
 ## Co musí MVP umět

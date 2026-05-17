@@ -86,4 +86,45 @@ describe("POST /internal/auth/verify-add-email", () => {
     );
     expect(res.status).toBe(401);
   });
+
+  it("401 with expired token and deletes it", async () => {
+    await env.DB.prepare(
+      "INSERT INTO verification (id, identifier, value, expiresAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+      .bind(
+        "expired-add-email-token-row",
+        "expired-add-email-token",
+        JSON.stringify({ email: "expired-add@example.com", attempt: 0 }),
+        Date.now() - 60_000,
+        Date.now() - 120_000,
+        Date.now() - 120_000,
+      )
+      .run();
+
+    const res = await SELF.fetch(
+      "https://test.local/internal/auth/verify-add-email",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Secret": env.AUTH_INTERNAL_SECRET,
+        },
+        body: JSON.stringify({
+          token: "expired-add-email-token",
+          userId: "user-1",
+        }),
+      },
+    );
+
+    expect(res.status).toBe(401);
+    const body = await res.json<{ error: string; correlationId?: string }>();
+    expect(body.error).toBe("invalid_token");
+
+    const row = await env.DB.prepare(
+      "SELECT id FROM verification WHERE identifier = ?",
+    )
+      .bind("expired-add-email-token")
+      .first();
+    expect(row).toBeNull();
+  });
 });

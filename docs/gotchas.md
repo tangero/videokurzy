@@ -17,21 +17,35 @@
   corruption at DB level. No additional safeguard needed for single-user
   self-service flows.
 
-## Better Auth `magicLinkVerify` unhandled rejection
+## Better Auth `magicLinkVerify` invalid-token behavior
 
 `auth.api.magicLinkVerify` on invalid/expired tokens throws an internal
-`APIError` with `statusCode: 302` (redirect to error page). Even with
-`asResponse: true` this surfaces in vitest as an "Unhandled Rejection" log
-line — the error is still correctly caught by our try/catch and returns 401
-to the caller. Tests pass.
+`APIError` with `statusCode: 302` (redirect to error page). Even when route
+code catches it, Vitest can report it as an unhandled rejection.
+
+Current mitigation: `/internal/auth/verify-token` and
+`/internal/auth/verify-add-email` prevalidate the raw magic-link token in the
+Better Auth `verification` table before calling `magicLinkVerify`. Missing or
+expired tokens return `401 invalid_token` directly; expired rows are deleted.
+Valid tokens still go through Better Auth so session creation stays owned by
+the library.
 
 Affected endpoints:
 - `/internal/auth/verify-token` (Task 7)
 - `/internal/auth/verify-add-email` (Task 10)
 
-**Impact:** Log noise in tests; no functional impact. Production traffic
-works correctly.
+**Impact:** Avoids test-runner failures for invalid/expired token cases and
+keeps production behavior explicit.
 
-**Follow-up:** If this becomes noisy in production logs, consider detecting
-the redirect status before it throws by parsing `result.status === 302`
-before reading `result.headers`. Or file upstream issue with better-auth.
+**Follow-up:** If Better Auth switches magic-link token storage away from
+plain identifiers, update the prevalidation helper in `src/routes/internal.tsx`
+to use the same token hashing strategy.
+
+## OIDC provider prototype
+
+The current `better-auth/plugins/oidc-provider` plugin is deprecated and
+expects Better Auth OAuth provider tables such as `oauthApplication`,
+`oauthAccessToken`, and `oauthConsent`. Our historical `oidc_client` table is
+not consumed by that plugin. Discovery metadata works, but external OIDC
+client onboarding is not production-ready until the auth module is migrated to
+the current Better Auth OAuth provider plugin and matching schema.

@@ -1,15 +1,16 @@
 # Auth master — internal API reference
 
 Videokurzy Worker serves as the Better Auth master for the entire
-`*.vibecoding.cz` ecosystem. External consumers (other domains) can use
-the OIDC endpoints.
+`*.vibecoding.cz` ecosystem. External consumers (other domains) are a
+separate OAuth/OIDC milestone; the current OIDC endpoint only exposes
+discovery metadata.
 
 ## Env vars
 
 | Name | Purpose | Example |
 |---|---|---|
 | `BETTER_AUTH_SECRET` | Better Auth session signing key (32+ chars) | `openssl rand -hex 32` |
-| `BETTER_AUTH_URL` | Public Worker URL | `https://kurz.vibecoding.cz` |
+| `BETTER_AUTH_URL` | Public Worker URL | `https://kurzy.vibecoding.cz` |
 | `AUTH_INTERNAL_SECRET` | Shared secret for service-binding callers | `openssl rand -hex 32` |
 | `RESEND_API_KEY` | Resend API key for magic link emails | `re_...` |
 | `COOKIE_DOMAIN` | Cookie Domain attribute (prod only) | `.vibecoding.cz` |
@@ -129,15 +130,15 @@ IP). Adjust in `auth.ts` `rateLimit` block.
 
 ## OIDC Provider (for external consumers)
 
-Discovery: `https://kurz.vibecoding.cz/api/auth/.well-known/openid-configuration`
+Discovery: `https://kurzy.vibecoding.cz/api/auth/.well-known/openid-configuration`
 
-Registration of OIDC clients: manually insert into D1 table `oidc_client`:
-
-```bash
-wrangler d1 execute videokurzy-db --remote --command "INSERT INTO oidc_client (id, secretHash, name, redirectUris, allowedScopes, createdAt) VALUES ('<client_id>', '<hashed_secret>', 'Client Name', '[\"https://marigold.cz/oauth/callback\"]', 'openid profile email', <unix_ms>)"
-```
-
-(Admin UI for client registration is out of scope for MVP.)
+Status: prototype only. The current `better-auth/plugins/oidc-provider`
+plugin is deprecated and expects Better Auth OAuth provider tables such as
+`oauthApplication`, `oauthAccessToken`, and `oauthConsent`. The local
+`oidc_client` table was created during the first auth-master plan, but the
+plugin does not read it. Do not onboard external OIDC clients until this is
+reworked against the current Better Auth OAuth provider plugin and matching
+schema.
 
 ## Testing
 
@@ -157,6 +158,6 @@ See TODO in `wrangler.toml`.
 
 ## Related docs
 
-- `docs/gotchas.md` — known quirks (unhandled rejection in magicLinkVerify,
-  unverified email sentinel, etc.)
+- `docs/gotchas.md` — known quirks (magic-link token prevalidation,
+  unverified email sentinel, OIDC prototype status, etc.)
 - Plan: `docs/superpowers/plans/2026-04-19-auth-master.md`
