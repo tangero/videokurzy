@@ -13,7 +13,7 @@ interface LayoutProps {
 // Cloudflare Web Analytics site tag — vlož sem, jakmile bude site v CF
 // dashboardu vytvořen. Token je veřejný (jde do HTML), takže není potřeba
 // secret. Když je prázdný, beacon se nerenderuje (např. v testech / lokálně).
-const CF_BEACON_TOKEN = "";
+const CF_BEACON_TOKEN = "0396ab4335a74119a48286a21afca710";
 
 const HamburgerIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
