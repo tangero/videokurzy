@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 
-const BUNNY_EMBED_BASE = "https://iframe.mediadelivery.net/embed";
+const BUNNY_EMBED_BASE = "https://player.mediadelivery.net/embed";
 
 export function generateSignedEmbedUrl(
   libraryId: string,
