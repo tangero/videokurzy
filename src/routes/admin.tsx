@@ -22,6 +22,13 @@ import {
 } from "../lib/admin-users";
 import { AdminUsersList, AdminUserDetailView } from "../views/admin-users";
 import {
+  triggerTranscribe,
+  fetchBunnyVideo,
+  fetchCaptionVtt,
+  hasCzechCaption,
+  vttToPlainText,
+} from "../lib/transcribe";
+import {
   AdminNav,
   AdminCoursesList,
   AdminCourseForm,
@@ -722,6 +729,104 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
     thumbnailFileName: data.thumbnailFileName,
     status: data.status,
   });
+});
+
+// ─── Transcribe AI ────────────────────────────────────────────────
+
+admin.post("/admin/api/lessons/:id/transcribe", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const [row] = await db
+    .select({
+      id: lesson.id,
+      bunnyVideoId: lesson.bunnyVideoId,
+      moduleId: lesson.moduleId,
+    })
+    .from(lesson)
+    .where(eq(lesson.id, id))
+    .limit(1);
+  if (!row) return c.text("Not found", 404);
+  if (!row.bunnyVideoId) {
+    return c.json({ error: "Lekce nemá přiřazené Bunny video." }, 400);
+  }
+
+  try {
+    await triggerTranscribe(c.env, row.bunnyVideoId, { sourceLanguage: "cs", force: true });
+    await db
+      .update(lesson)
+      .set({ transcribeStatus: "pending", transcribedAt: null })
+      .where(eq(lesson.id, id));
+    return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
+  } catch (err) {
+    await db
+      .update(lesson)
+      .set({ transcribeStatus: "error" })
+      .where(eq(lesson.id, id));
+    const message = (err as Error).message || "Transkripci se nepodařilo spustit.";
+    return c.html(
+      <Layout title="Transkripce selhala" user={c.get("user")!}>
+        <div class="max-w-2xl mx-auto px-4 py-8">
+          <h1 class="text-2xl font-bold mb-4">Transkripci se nepodařilo spustit</h1>
+          <p class="text-red-700 mb-4">{message}</p>
+          <a href={`/admin/lessons/${id}/edit`} class="text-indigo-600 hover:underline">
+            ← Zpět na lekci
+          </a>
+        </div>
+      </Layout>,
+      502,
+    );
+  }
+});
+
+admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const [row] = await db
+    .select({ id: lesson.id, bunnyVideoId: lesson.bunnyVideoId })
+    .from(lesson)
+    .where(eq(lesson.id, id))
+    .limit(1);
+  if (!row) return c.text("Not found", 404);
+  if (!row.bunnyVideoId) {
+    return c.json({ error: "Lekce nemá přiřazené Bunny video." }, 400);
+  }
+
+  try {
+    const video = await fetchBunnyVideo(c.env, row.bunnyVideoId);
+    if (!hasCzechCaption(video)) {
+      // Caption ještě není hotový — zůstaneme v pending.
+      return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
+    }
+    const vtt = await fetchCaptionVtt(c.env, row.bunnyVideoId, "cs");
+    const text = vtt ? vttToPlainText(vtt) : null;
+    await db
+      .update(lesson)
+      .set({
+        transcribeStatus: "done",
+        transcribedAt: new Date(),
+        transcript: text,
+      })
+      .where(eq(lesson.id, id));
+    return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
+  } catch (err) {
+    await db
+      .update(lesson)
+      .set({ transcribeStatus: "error" })
+      .where(eq(lesson.id, id));
+    const message = (err as Error).message || "Stav se nepodařilo obnovit.";
+    return c.html(
+      <Layout title="Obnovení selhalo" user={c.get("user")!}>
+        <div class="max-w-2xl mx-auto px-4 py-8">
+          <h1 class="text-2xl font-bold mb-4">Obnovení stavu selhalo</h1>
+          <p class="text-red-700 mb-4">{message}</p>
+          <a href={`/admin/lessons/${id}/edit`} class="text-indigo-600 hover:underline">
+            ← Zpět na lekci
+          </a>
+        </div>
+      </Layout>,
+      502,
+    );
+  }
 });
 
 // ─── Courses CRUD ─────────────────────────────────────────────────

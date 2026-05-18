@@ -29,6 +29,9 @@ type Lesson = {
   chapters: string | null;
   moments: string | null;
   bodyMarkdown: string | null;
+  transcribeStatus?: "none" | "pending" | "done" | "error";
+  transcribedAt?: Date | null;
+  transcript?: string | null;
 };
 
 // ─── Navigation ───────────────────────────────────────────────────
@@ -361,6 +364,138 @@ export function AdminModuleForm({
 
 // ─── Lesson form (new + edit) ─────────────────────────────────────
 
+function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
+  const status = les.transcribeStatus ?? "none";
+  const minutes = Math.max(1, Math.ceil(les.durationSeconds / 60));
+  const estPrice = (minutes * 0.10).toFixed(2);
+
+  return (
+    <section
+      id="transkripce"
+      class="border border-indigo-100 bg-indigo-50/30 rounded-lg p-4 space-y-3"
+    >
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Transkripce</h3>
+          <p class="text-xs text-gray-500">
+            Automatický český přepis přes Bunny Transcribe AI (~$0.10 / min).
+          </p>
+        </div>
+        <span
+          class={`px-2 py-1 rounded-full text-xs font-medium ${
+            status === "done"
+              ? "bg-emerald-100 text-emerald-800"
+              : status === "pending"
+                ? "bg-yellow-100 text-yellow-800"
+                : status === "error"
+                  ? "bg-red-100 text-red-800"
+                  : "bg-gray-100 text-gray-700"
+          }`}
+        >
+          {status === "done" && "hotovo"}
+          {status === "pending" && "probíhá"}
+          {status === "error" && "chyba"}
+          {status === "none" && "neproběhla"}
+        </span>
+      </div>
+
+      {!les.bunnyVideoId && (
+        <p class="text-xs text-gray-500 italic">
+          Nejprve přiřaď Bunny Video ID, pak ulož lekci a poté lze spustit transkripci.
+        </p>
+      )}
+
+      {les.bunnyVideoId && status === "none" && (
+        <form method="post" action={`/admin/api/lessons/${les.id}/transcribe`}>
+          <button
+            type="submit"
+            class="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"
+            onclick={`return confirm('Spustit transkripci pro ${minutes} min videa? Odhad ceny: $${estPrice}.');`}
+          >
+            Spustit transkripci
+          </button>
+          <span class="ml-2 text-xs text-gray-500">
+            ~{minutes} min · ${estPrice}
+          </span>
+        </form>
+      )}
+
+      {les.bunnyVideoId && status === "pending" && (
+        <div class="flex items-center gap-3 flex-wrap">
+          <form method="post" action={`/admin/api/lessons/${les.id}/transcribe/refresh`}>
+            <button
+              type="submit"
+              class="bg-gray-900 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700"
+            >
+              Obnovit stav
+            </button>
+          </form>
+          <span class="text-xs text-gray-600">
+            Bunny zpracovává video. Krátká videa do 5 min, delší 10–20 min. Po dokončení klikni „Obnovit stav".
+          </span>
+        </div>
+      )}
+
+      {les.bunnyVideoId && status === "error" && (
+        <div class="space-y-2">
+          <p class="text-xs text-red-700">
+            Při transkripci došlo k chybě. Zkus to znovu.
+          </p>
+          <form method="post" action={`/admin/api/lessons/${les.id}/transcribe`}>
+            <button
+              type="submit"
+              class="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"
+            >
+              Spustit znovu
+            </button>
+          </form>
+        </div>
+      )}
+
+      {les.bunnyVideoId && status === "done" && (
+        <div class="space-y-2">
+          <p class="text-xs text-gray-500">
+            Hotovo {les.transcribedAt ? les.transcribedAt.toLocaleDateString("cs-CZ") : ""}. Titulky
+            jsou v playeru jako CC track.
+            {!les.transcript && (
+              <span class="ml-1 text-amber-700">
+                Text se nepodařilo stáhnout — chybí BUNNY_PULL_ZONE.
+              </span>
+            )}
+          </p>
+          {les.transcript && (
+            <details class="text-sm">
+              <summary class="cursor-pointer text-indigo-600 hover:underline">
+                Zobrazit přepis ({les.transcript.length.toLocaleString("cs-CZ")} znaků)
+              </summary>
+              <div class="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap bg-white border rounded p-3 text-xs leading-relaxed">
+                {les.transcript}
+              </div>
+            </details>
+          )}
+          <div class="flex gap-2">
+            <form method="post" action={`/admin/api/lessons/${les.id}/transcribe/refresh`}>
+              <button type="submit" class="text-xs text-indigo-600 hover:underline">
+                Znovu načíst text z Bunny
+              </button>
+            </form>
+            <span class="text-xs text-gray-400">·</span>
+            <form
+              method="post"
+              action={`/admin/api/lessons/${les.id}/transcribe`}
+              onsubmit={`return confirm('Přepsat existující transkript? Cena: $${estPrice}.');`}
+            >
+              <button type="submit" class="text-xs text-indigo-600 hover:underline">
+                Spustit transkripci znovu
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function AdminLessonForm({
   courseId,
   moduleId,
@@ -434,6 +569,7 @@ export function AdminLessonForm({
           </div>
           <div id="bunny-status" class="text-xs mt-1 text-gray-400 hidden"></div>
         </div>
+        {isEdit && les && <TranscribeSection lesson={les} />}
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Délka</label>
           <div class="flex items-center gap-2">

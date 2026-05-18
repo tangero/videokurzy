@@ -13,6 +13,7 @@ export interface Env {
   BUNNY_API_KEY: string;
   BUNNY_LIBRARY_ID: string;
   BUNNY_TOKEN_KEY: string;
+  BUNNY_PULL_ZONE?: string;
   FIO_API_TOKEN: string;
   COOKIE_DOMAIN?: string;
 }

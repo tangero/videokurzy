@@ -46,6 +46,11 @@ export const lesson = sqliteTable("lesson", {
   chapters: text("chapters"),
   moments: text("moments"),
   bodyMarkdown: text("bodyMarkdown"),
+  transcribeStatus: text("transcribeStatus", { enum: ["none", "pending", "done", "error"] })
+    .notNull()
+    .default("none"),
+  transcribedAt: integer("transcribedAt", { mode: "timestamp" }),
+  transcript: text("transcript"),
 });
 
 export const progress = sqliteTable(
