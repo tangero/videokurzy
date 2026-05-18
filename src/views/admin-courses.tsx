@@ -410,6 +410,12 @@ function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
         <div class="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-800">
           <div class="font-medium mb-1">Chyba:</div>
           <code class="block whitespace-pre-wrap break-all font-mono">{les.transcribeError}</code>
+          {les.transcribeError.includes("Missing transcription language settings") && (
+            <p class="mt-2 text-red-900">
+              <strong>Řešení:</strong> v Bunny dashboardu otevři Stream → tvoje library → Settings →
+              Transcribing a zapni „Enable Transcribing" s českým jazykem (cs).
+            </p>
+          )}
         </div>
       )}
 
@@ -418,12 +424,14 @@ function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
           <p class="text-xs text-gray-500">
             Hotovo {les.transcribedAt ? les.transcribedAt.toLocaleDateString("cs-CZ") : ""}. Titulky
             jsou v playeru jako CC track.
-            {!les.transcript && (
-              <span class="ml-1 text-amber-700">
-                Text se nepodařilo stáhnout — chybí BUNNY_PULL_ZONE.
-              </span>
-            )}
           </p>
+          {!les.transcript && (
+            <p class="text-xs text-amber-700">
+              Text se nepodařilo stáhnout z CDN (pravděpodobně Pull Zone Token Authentication).
+              Pokud chceš text v adminu, nastav <code class="bg-amber-50 px-1">BUNNY_PULL_ZONE_TOKEN</code>{" "}
+              v Cloudflare secrets (Pull Zone → Security → Authentication Key v Bunny).
+            </p>
+          )}
           {les.transcript && (
             <details class="text-sm">
               <summary class="cursor-pointer text-indigo-600 hover:underline">

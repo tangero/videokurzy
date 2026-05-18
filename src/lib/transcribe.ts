@@ -2,6 +2,7 @@
 // Docs: https://docs.bunny.net/api-reference/stream/manage-videos/transcribe-video
 //       https://docs.bunny.net/stream/transcribing
 
+import { createHash } from "node:crypto";
 import type { Env } from "../types";
 
 const BUNNY_API_BASE = "https://video.bunnycdn.com";
@@ -32,14 +33,14 @@ export async function triggerTranscribe(
   );
   if (opts.force) url.searchParams.set("force", "true");
 
-  const body = {
-    sourceLanguage,
-    targetLanguages: opts.targetLanguages ?? [],
-    generateTitle: false,
-    generateDescription: false,
-    generateChapters: false,
-    generateMoments: false,
-  };
+  // Minimální body: pošleme jen sourceLanguage. targetLanguages necháme prázdné
+  // jen pokud uživatel chce překlady. Bunny vyžaduje, aby měla knihovna zapnutý
+  // EnableTranscribing v Library Settings (jinak vrátí 400
+  // "Missing transcription language settings").
+  const body: Record<string, unknown> = { sourceLanguage };
+  if (opts.targetLanguages && opts.targetLanguages.length > 0) {
+    body.targetLanguages = opts.targetLanguages;
+  }
 
   const res = await fetch(url, {
     method: "POST",
@@ -71,7 +72,28 @@ export async function fetchBunnyVideo(env: Env, videoId: string): Promise<BunnyV
   return (await res.json()) as BunnyVideo;
 }
 
-/** Stáhne VTT soubor pro daný jazyk z pull zone a vrátí jeho obsah. */
+/**
+ * Podepíše URL pomocí Bunny CDN Basic Token Authentication.
+ * token = base64-url(MD5(security_key + path + expires))
+ */
+function signPullZoneUrl(path: string, securityKey: string, expirySeconds: number): string {
+  const expires = Math.floor(Date.now() / 1000) + expirySeconds;
+  const hashable = `${securityKey}${path}${expires}`;
+  const token = createHash("md5")
+    .update(hashable)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+  return `${path}?token=${token}&expires=${expires}`;
+}
+
+/**
+ * Stáhne VTT soubor pro daný jazyk z pull zone a vrátí jeho obsah.
+ * Pokud má pull zone zapnutou Basic Token Authentication, použij
+ * BUNNY_PULL_ZONE_TOKEN. Vrací null, pokud se soubor nepodaří získat
+ * (pull zone neexistuje, 404, 403 a podobně).
+ */
 export async function fetchCaptionVtt(
   env: Env,
   videoId: string,
@@ -79,9 +101,16 @@ export async function fetchCaptionVtt(
 ): Promise<string | null> {
   if (!env.BUNNY_PULL_ZONE) return null;
   const host = env.BUNNY_PULL_ZONE.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  const url = `https://${host}/${videoId}/captions/${srclang}.vtt`;
+  const path = `/${videoId}/captions/${srclang}.vtt`;
+  const signedPath = env.BUNNY_PULL_ZONE_TOKEN
+    ? signPullZoneUrl(path, env.BUNNY_PULL_ZONE_TOKEN, 300)
+    : path;
+  const url = `https://${host}${signedPath}`;
   const res = await fetch(url);
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.error(`fetchCaptionVtt ${res.status} for ${path} (signed=${!!env.BUNNY_PULL_ZONE_TOKEN})`);
+    return null;
+  }
   return await res.text();
 }
 
