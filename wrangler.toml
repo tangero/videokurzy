@@ -48,6 +48,7 @@ BETTER_AUTH_URL = "http://localhost:8787"
 RESEND_API_KEY = "test-resend-key"
 # NOTE: COOKIE_DOMAIN intentionally unset in test env → host-only cookies, matches dev behavior.
 
-[env.production]
-[env.production.vars]
-COOKIE_DOMAIN = ".vibecoding.cz"
+# [env.production] section was removed: deploys now go to the default
+# `videokurzy` worker (the one bound to kurzy.vibecoding.cz). Production-only
+# vars/secrets (COOKIE_DOMAIN, BUNNY_PULL_ZONE, ...) are set directly on the
+# `videokurzy` worker via the Cloudflare dashboard.

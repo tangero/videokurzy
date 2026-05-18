@@ -8,7 +8,7 @@
     "dev:css": "tailwindcss -i src/styles/input.css -o public/styles.css --watch",
     "build": "npm run build:css && wrangler deploy --dry-run",
     "build:css": "tailwindcss -i src/styles/input.css -o public/styles.css --minify",
-    "deploy": "npm run build:css && wrangler deploy --env production",
+    "deploy": "npm run build:css && wrangler deploy",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply videokurzy-db --local",
     "db:migrate:prod": "wrangler d1 migrations apply videokurzy-db --remote",
