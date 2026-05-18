@@ -793,23 +793,48 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
 
   try {
     const video = await fetchBunnyVideo(c.env, row.bunnyVideoId);
+    const captionsSummary = (video.captions ?? [])
+      .map((c) => c.srclang)
+      .join(",");
     if (!hasCzechCaption(video)) {
       // Caption v Bunny ještě není — pokud admin nezapnul transkripci přes nás,
       // status nech v 'none', ať uvidí 'Spustit transkripci'. Pokud byl pending,
-      // nech ho v pending.
+      // nech ho v pending. Zatím poznamenáme diagnostiku.
+      await db
+        .update(lesson)
+        .set({
+          transcribeError: captionsSummary
+            ? `Bunny zatím nemá český caption track. Dostupné jazyky: ${captionsSummary}`
+            : "Bunny zatím nemá žádné caption tracky — transkripce stále probíhá.",
+        })
+        .where(eq(lesson.id, id));
       return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
     }
-    const vtt = await fetchCaptionVtt(c.env, row.bunnyVideoId, "cs");
-    const text = vtt ? vttToPlainText(vtt) : null;
-    await db
-      .update(lesson)
-      .set({
-        transcribeStatus: "done",
-        transcribedAt: new Date(),
-        transcript: text,
-        transcribeError: null,
-      })
-      .where(eq(lesson.id, id));
+    const result = await fetchCaptionVtt(c.env, row.bunnyVideoId, "cs");
+    if (result.kind === "ok") {
+      await db
+        .update(lesson)
+        .set({
+          transcribeStatus: "done",
+          transcribedAt: new Date(),
+          transcript: vttToPlainText(result.vtt),
+          transcribeError: null,
+        })
+        .where(eq(lesson.id, id));
+    } else {
+      const diag = result.kind === "no-pull-zone"
+        ? "Captions u Bunny existují, ale BUNNY_PULL_ZONE secret není nastavený."
+        : `Captions u Bunny existují (${captionsSummary}), ale CDN vrátil HTTP ${result.status} na ${result.url}. Soubor se možná teprve generuje, zkus za 5 minut. Pokud trvá déle, zkontroluj cestu k VTT.`;
+      await db
+        .update(lesson)
+        .set({
+          transcribeStatus: "done",
+          transcribedAt: new Date(),
+          transcript: null,
+          transcribeError: diag,
+        })
+        .where(eq(lesson.id, id));
+    }
     return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
   } catch (err) {
     const message = (err as Error).message || "Stav se nepodařilo obnovit.";

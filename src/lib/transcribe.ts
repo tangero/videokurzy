@@ -88,6 +88,11 @@ function signPullZoneUrl(path: string, securityKey: string, expirySeconds: numbe
   return `${path}?token=${token}&expires=${expires}`;
 }
 
+export type FetchVttResult =
+  | { kind: "ok"; vtt: string }
+  | { kind: "no-pull-zone" }
+  | { kind: "fetch-failed"; status: number; url: string };
+
 /**
  * Stáhne VTT soubor pro daný jazyk z pull zone a vrátí jeho obsah.
  *
@@ -102,29 +107,23 @@ export async function fetchCaptionVtt(
   env: Env,
   videoId: string,
   srclang: string,
-): Promise<string | null> {
-  if (!env.BUNNY_PULL_ZONE) return null;
+): Promise<FetchVttResult> {
+  if (!env.BUNNY_PULL_ZONE) return { kind: "no-pull-zone" };
   const host = env.BUNNY_PULL_ZONE.replace(/^https?:\/\//, "").replace(/\/$/, "");
   const path = `/${videoId}/captions/${srclang}.vtt`;
   const signedPath = env.BUNNY_PULL_ZONE_TOKEN
     ? signPullZoneUrl(path, env.BUNNY_PULL_ZONE_TOKEN, 300)
     : path;
   const url = `https://${host}${signedPath}`;
-  // Referer musí být v Bunny pull zone „Allowed referrers" seznamu.
-  // Fallback na produkční doménu, pokud BETTER_AUTH_URL ukazuje na localhost
-  // nebo není dostupné v daném environmentu.
   const authUrl = env.BETTER_AUTH_URL?.replace(/\/$/, "") ?? "";
   const referer = authUrl && !authUrl.includes("localhost")
     ? `${authUrl}/`
     : "https://kurzy.vibecoding.cz/";
   const res = await fetch(url, { headers: { Referer: referer } });
   if (!res.ok) {
-    console.error(
-      `fetchCaptionVtt ${res.status} for ${path} (signed=${!!env.BUNNY_PULL_ZONE_TOKEN}, referer=${referer})`,
-    );
-    return null;
+    return { kind: "fetch-failed", status: res.status, url };
   }
-  return await res.text();
+  return { kind: "ok", vtt: await res.text() };
 }
 
 /**

@@ -425,13 +425,11 @@ function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
             Hotovo {les.transcribedAt ? les.transcribedAt.toLocaleDateString("cs-CZ") : ""}. Titulky
             jsou v playeru jako CC track.
           </p>
-          {!les.transcript && (
-            <p class="text-xs text-amber-700">
-              Text se nepodařilo stáhnout z CDN. Zkontroluj v Bunny pull zone settings
-              „Referrers" whitelist — musí obsahovat doménu, ze které posíláme request
-              (např. <code class="bg-amber-50 px-1">kurzy.vibecoding.cz</code>). Případně dočasně
-              vypni „Block direct url file access" v Stream → Security → General.
-            </p>
+          {!les.transcript && les.transcribeError && (
+            <div class="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+              <div class="font-medium mb-1">Diagnostika stahování textu:</div>
+              <code class="block whitespace-pre-wrap break-all font-mono">{les.transcribeError}</code>
+            </div>
           )}
           {les.transcript && (
             <details class="text-sm">
