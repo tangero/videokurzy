@@ -6,13 +6,18 @@ import { purchase, organization } from "../db/schema";
  * Check if user has platform-wide access (any active purchase or org domain).
  * One subscription = access to all courses.
  * Pending purchases (FIO před potvrzením platby) NEDOSTÁVAJÍ access.
+ *
+ * Admins always have access — bypass paywall pro správu obsahu, testování
+ * a reakce na uživatelské problémy.
  */
 export async function hasAccess(
-  userId: string,
-  userEmail: string,
+  user: { id: string; email: string; role: string },
   db: DrizzleD1Database
 ): Promise<boolean> {
-  const email = userEmail.toLowerCase();
+  if (user.role === "admin") return true;
+
+  const email = user.email.toLowerCase();
+  const userId = user.id;
 
   const activePurchase = await db
     .select({ id: purchase.id })

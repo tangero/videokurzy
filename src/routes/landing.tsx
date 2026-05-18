@@ -58,15 +58,8 @@ landing.get("/", async (c) => {
     );
   }
 
-  // Zjisti přístup přihlášeného uživatele
-  let userHasAccess = false;
-  if (user) {
-    if (user.role === "admin") {
-      userHasAccess = true;
-    } else {
-      userHasAccess = await hasAccess(user.id, user.email, db);
-    }
-  }
+  // Zjisti přístup přihlášeného uživatele (admin bypass je v hasAccess).
+  const userHasAccess = user ? await hasAccess(user, db) : false;
 
   // Načti ceny a výhody z DB, fallback na config hodnoty
   const configRows = await db.select().from(siteConfig);

@@ -80,7 +80,7 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
 
   const totalCount = modules.length;
   const completedCount = completedSet.size;
-  const hasPaidAccess = user.role === "admin" || await hasAccess(user.id, user.email, db);
+  const hasPaidAccess = await hasAccess(user, db);
   const settingsRows = await db.select().from(siteConfig);
   const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
   const priceIndividual = parseInt(settings.price_individual ?? String(PRICE_INDIVIDUAL), 10);

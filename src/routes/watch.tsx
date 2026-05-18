@@ -80,12 +80,12 @@ watch.get("/watch/:slug", async (c) => {
     }
 
     // Platform-wide access check (no courseId needed). Admins bypass paywall.
-    hasPaidAccess = user.role === "admin" || await hasAccess(user.id, user.email, db);
+    hasPaidAccess = await hasAccess(user, db);
     if (!hasPaidAccess) {
       return c.redirect("/#cenik");
     }
   } else if (user) {
-    hasPaidAccess = user.role === "admin" || await hasAccess(user.id, user.email, db);
+    hasPaidAccess = await hasAccess(user, db);
   }
 
   const embedUrl = found.bunnyVideoId
