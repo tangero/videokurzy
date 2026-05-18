@@ -79,13 +79,13 @@ watch.get("/watch/:slug", async (c) => {
       return c.redirect("/login");
     }
 
-    // Platform-wide access check (no courseId needed)
-    hasPaidAccess = await hasAccess(user.id, user.email, db);
+    // Platform-wide access check (no courseId needed). Admins bypass paywall.
+    hasPaidAccess = user.role === "admin" || await hasAccess(user.id, user.email, db);
     if (!hasPaidAccess) {
       return c.redirect("/#cenik");
     }
   } else if (user) {
-    hasPaidAccess = await hasAccess(user.id, user.email, db);
+    hasPaidAccess = user.role === "admin" || await hasAccess(user.id, user.email, db);
   }
 
   const embedUrl = found.bunnyVideoId

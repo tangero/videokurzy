@@ -59,8 +59,8 @@ progressRoutes.post("/api/progress/:lessonId", requireAuth, async (c) => {
 
         if (nextInModule) return; // not the last free lesson
 
-        const canAccess = await hasAccess(user.id, user.email, db);
-        if (canAccess) return; // already has purchase
+        const canAccess = user.role === "admin" || await hasAccess(user.id, user.email, db);
+        if (canAccess) return; // already has access (purchase or admin)
 
         await sendResendEvent(
           c.env.RESEND_API_KEY,
