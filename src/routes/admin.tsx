@@ -25,7 +25,7 @@ import {
   triggerTranscribe,
   fetchBunnyVideo,
   fetchCaptionVtt,
-  hasCzechCaption,
+  findCzechCaption,
   vttToPlainText,
 } from "../lib/transcribe";
 import {
@@ -796,10 +796,8 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
     const captionsSummary = (video.captions ?? [])
       .map((c) => c.srclang)
       .join(",");
-    if (!hasCzechCaption(video)) {
-      // Caption v Bunny ještě není — pokud admin nezapnul transkripci přes nás,
-      // status nech v 'none', ať uvidí 'Spustit transkripci'. Pokud byl pending,
-      // nech ho v pending. Zatím poznamenáme diagnostiku.
+    const czechCaption = findCzechCaption(video);
+    if (!czechCaption) {
       await db
         .update(lesson)
         .set({
@@ -810,7 +808,7 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
         .where(eq(lesson.id, id));
       return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
     }
-    const result = await fetchCaptionVtt(c.env, row.bunnyVideoId, "cs");
+    const result = await fetchCaptionVtt(c.env, row.bunnyVideoId, czechCaption.srclang);
     if (result.kind === "ok") {
       await db
         .update(lesson)

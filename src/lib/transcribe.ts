@@ -168,8 +168,19 @@ export function vttToPlainText(vtt: string): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** Zjistí, zda má video český caption track. */
+/**
+ * Najde český caption track. Bunny ukládá auto-generované titulky pod kódem
+ * `cs-auto`, ručně přidané pod `cs`. Preferujeme ruční verzi, ale akceptujeme
+ * obojí. Vrátí přesný srclang řetězec, který je potřeba pro URL k VTT.
+ */
+export function findCzechCaption(video: BunnyVideo): BunnyCaption | null {
+  if (!video.captions) return null;
+  const cs = video.captions.find((c) => c.srclang.toLowerCase() === "cs");
+  if (cs) return cs;
+  return video.captions.find((c) => c.srclang.toLowerCase().startsWith("cs")) ?? null;
+}
+
+/** Backward-compat: existuje aspoň nějaký český caption track? */
 export function hasCzechCaption(video: BunnyVideo): boolean {
-  if (!video.captions) return false;
-  return video.captions.some((c) => c.srclang.toLowerCase().startsWith("cs"));
+  return findCzechCaption(video) !== null;
 }
