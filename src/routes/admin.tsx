@@ -1088,12 +1088,14 @@ admin.get("/admin/lessons/:id/edit", async (c) => {
 
   if (!row) return c.text("Not found", 404);
 
+  const saved = c.req.query("saved") === "1";
   return c.html(
     <Layout title="Upravit epizodu" user={currentUser}>
       <AdminLessonForm
         courseId={row.courseId}
         moduleId={row.lesson.moduleId}
         lesson={row.lesson}
+        saved={saved}
       />
     </Layout>
   );
@@ -1131,7 +1133,7 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
     .where(eq(lesson.id, id));
 
   await c.env.KV.delete("cache:catalog");
-  return c.redirect(`/admin/courses/${row.courseId}`);
+  return c.redirect(`/admin/lessons/${id}/edit?saved=1`);
 });
 
 admin.post("/admin/lessons/:id/delete", async (c) => {

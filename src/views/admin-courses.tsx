@@ -500,10 +500,12 @@ export function AdminLessonForm({
   courseId,
   moduleId,
   lesson: les,
+  saved,
 }: {
   courseId: number;
   moduleId: number;
   lesson?: Lesson;
+  saved?: boolean;
 }) {
   const isEdit = !!les;
   return (
@@ -517,6 +519,11 @@ export function AdminLessonForm({
       <h1 class="text-2xl font-bold mb-6 mt-2">
         {isEdit ? "Upravit epizodu" : "Nová epizoda"}
       </h1>
+      {saved && (
+        <div class="mb-6 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg text-sm">
+          Změny uloženy.
+        </div>
+      )}
       <form method="post" class="space-y-4" id="lesson-form">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Název</label>
@@ -569,7 +576,6 @@ export function AdminLessonForm({
           </div>
           <div id="bunny-status" class="text-xs mt-1 text-gray-400 hidden"></div>
         </div>
-        {isEdit && les && <TranscribeSection lesson={les} />}
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Délka</label>
           <div class="flex items-center gap-2">
@@ -817,6 +823,11 @@ export function AdminLessonForm({
           });
         })();
       ` }} />
+      {isEdit && les && (
+        <div class="mt-8 pt-6 border-t border-gray-200">
+          <TranscribeSection lesson={les} />
+        </div>
+      )}
       {isEdit && (
         <div class="mt-8 pt-6 border-t border-gray-200">
           <form method="post" action={`/admin/lessons/${les!.id}/delete`}>
