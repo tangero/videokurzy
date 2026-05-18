@@ -10,6 +10,11 @@ interface LayoutProps {
 // do public/styles.css přes Tailwind CLI (scripts: dev:css / build:css).
 // Servírováno Cloudflare Workers assets bindingem (wrangler.toml [assets]).
 
+// Cloudflare Web Analytics site tag — vlož sem, jakmile bude site v CF
+// dashboardu vytvořen. Token je veřejný (jde do HTML), takže není potřeba
+// secret. Když je prázdný, beacon se nerenderuje (např. v testech / lokálně).
+const CF_BEACON_TOKEN = "";
+
 const HamburgerIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
     <line x1="3" y1="6" x2="21" y2="6" />
@@ -46,6 +51,13 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
         integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
         crossorigin="anonymous"
       ></script>
+      {CF_BEACON_TOKEN && (
+        <script
+          defer
+          src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon={`{"token": "${CF_BEACON_TOKEN}"}`}
+        ></script>
+      )}
     </head>
     <body class="page" hx-boost="true">
       <a class="skip-link" href="#main-content">přeskočit na obsah</a>
