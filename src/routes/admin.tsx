@@ -754,15 +754,15 @@ admin.post("/admin/api/lessons/:id/transcribe", async (c) => {
     await triggerTranscribe(c.env, row.bunnyVideoId, { sourceLanguage: "cs", force: true });
     await db
       .update(lesson)
-      .set({ transcribeStatus: "pending", transcribedAt: null })
+      .set({ transcribeStatus: "pending", transcribedAt: null, transcribeError: null })
       .where(eq(lesson.id, id));
     return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
   } catch (err) {
+    const message = (err as Error).message || "Transkripci se nepodařilo spustit.";
     await db
       .update(lesson)
-      .set({ transcribeStatus: "error" })
+      .set({ transcribeStatus: "error", transcribeError: message.slice(0, 1000) })
       .where(eq(lesson.id, id));
-    const message = (err as Error).message || "Transkripci se nepodařilo spustit.";
     return c.html(
       <Layout title="Transkripce selhala" user={c.get("user")!}>
         <div class="max-w-2xl mx-auto px-4 py-8">
@@ -794,7 +794,9 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
   try {
     const video = await fetchBunnyVideo(c.env, row.bunnyVideoId);
     if (!hasCzechCaption(video)) {
-      // Caption ještě není hotový — zůstaneme v pending.
+      // Caption v Bunny ještě není — pokud admin nezapnul transkripci přes nás,
+      // status nech v 'none', ať uvidí 'Spustit transkripci'. Pokud byl pending,
+      // nech ho v pending.
       return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
     }
     const vtt = await fetchCaptionVtt(c.env, row.bunnyVideoId, "cs");
@@ -805,15 +807,16 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
         transcribeStatus: "done",
         transcribedAt: new Date(),
         transcript: text,
+        transcribeError: null,
       })
       .where(eq(lesson.id, id));
     return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
   } catch (err) {
+    const message = (err as Error).message || "Stav se nepodařilo obnovit.";
     await db
       .update(lesson)
-      .set({ transcribeStatus: "error" })
+      .set({ transcribeStatus: "error", transcribeError: message.slice(0, 1000) })
       .where(eq(lesson.id, id));
-    const message = (err as Error).message || "Stav se nepodařilo obnovit.";
     return c.html(
       <Layout title="Obnovení selhalo" user={c.get("user")!}>
         <div class="max-w-2xl mx-auto px-4 py-8">

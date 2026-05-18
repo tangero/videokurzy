@@ -32,6 +32,7 @@ type Lesson = {
   transcribeStatus?: "none" | "pending" | "done" | "error";
   transcribedAt?: Date | null;
   transcript?: string | null;
+  transcribeError?: string | null;
 };
 
 // ─── Navigation ───────────────────────────────────────────────────
@@ -405,50 +406,10 @@ function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
         </p>
       )}
 
-      {les.bunnyVideoId && status === "none" && (
-        <form method="post" action={`/admin/api/lessons/${les.id}/transcribe`}>
-          <button
-            type="submit"
-            class="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"
-            onclick={`return confirm('Spustit transkripci pro ${minutes} min videa? Odhad ceny: $${estPrice}.');`}
-          >
-            Spustit transkripci
-          </button>
-          <span class="ml-2 text-xs text-gray-500">
-            ~{minutes} min · ${estPrice}
-          </span>
-        </form>
-      )}
-
-      {les.bunnyVideoId && status === "pending" && (
-        <div class="flex items-center gap-3 flex-wrap">
-          <form method="post" action={`/admin/api/lessons/${les.id}/transcribe/refresh`}>
-            <button
-              type="submit"
-              class="bg-gray-900 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700"
-            >
-              Obnovit stav
-            </button>
-          </form>
-          <span class="text-xs text-gray-600">
-            Bunny zpracovává video. Krátká videa do 5 min, delší 10–20 min. Po dokončení klikni „Obnovit stav".
-          </span>
-        </div>
-      )}
-
-      {les.bunnyVideoId && status === "error" && (
-        <div class="space-y-2">
-          <p class="text-xs text-red-700">
-            Při transkripci došlo k chybě. Zkus to znovu.
-          </p>
-          <form method="post" action={`/admin/api/lessons/${les.id}/transcribe`}>
-            <button
-              type="submit"
-              class="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"
-            >
-              Spustit znovu
-            </button>
-          </form>
+      {les.bunnyVideoId && status === "error" && les.transcribeError && (
+        <div class="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+          <div class="font-medium mb-1">Chyba:</div>
+          <code class="block whitespace-pre-wrap break-all font-mono">{les.transcribeError}</code>
         </div>
       )}
 
@@ -473,23 +434,52 @@ function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
               </div>
             </details>
           )}
-          <div class="flex gap-2">
-            <form method="post" action={`/admin/api/lessons/${les.id}/transcribe/refresh`}>
-              <button type="submit" class="text-xs text-indigo-600 hover:underline">
-                Znovu načíst text z Bunny
+        </div>
+      )}
+
+      {les.bunnyVideoId && status === "pending" && (
+        <p class="text-xs text-gray-600">
+          Bunny zpracovává video. Krátká videa &lt; 5 min, delší 10–20 min. Po dokončení klikni „Synchronizovat z Bunny" níže.
+        </p>
+      )}
+
+      {les.bunnyVideoId && (
+        <div class="flex flex-wrap items-center gap-2 pt-1">
+          {(status === "none" || status === "error") && (
+            <form method="post" action={`/admin/api/lessons/${les.id}/transcribe`}>
+              <button
+                type="submit"
+                class="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"
+                onclick={`return confirm('Spustit transkripci pro ${minutes} min videa? Odhad ceny: $${estPrice}.');`}
+              >
+                Spustit transkripci
               </button>
             </form>
-            <span class="text-xs text-gray-400">·</span>
+          )}
+          {status === "done" && (
             <form
               method="post"
               action={`/admin/api/lessons/${les.id}/transcribe`}
               onsubmit={`return confirm('Přepsat existující transkript? Cena: $${estPrice}.');`}
             >
-              <button type="submit" class="text-xs text-indigo-600 hover:underline">
-                Spustit transkripci znovu
+              <button
+                type="submit"
+                class="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"
+              >
+                Spustit znovu
               </button>
             </form>
-          </div>
+          )}
+          <form method="post" action={`/admin/api/lessons/${les.id}/transcribe/refresh`}>
+            <button
+              type="submit"
+              class="bg-gray-900 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700"
+              title="Zjistí aktuální stav z Bunny. Funguje i když transkripci spustíš v Bunny dashboardu."
+            >
+              Synchronizovat z Bunny
+            </button>
+          </form>
+          <span class="text-xs text-gray-500">~{minutes} min · ${estPrice}</span>
         </div>
       )}
     </section>
