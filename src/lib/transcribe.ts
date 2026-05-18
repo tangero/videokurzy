@@ -90,9 +90,13 @@ function signPullZoneUrl(path: string, securityKey: string, expirySeconds: numbe
 
 /**
  * Stáhne VTT soubor pro daný jazyk z pull zone a vrátí jeho obsah.
- * Pokud má pull zone zapnutou Basic Token Authentication, použij
- * BUNNY_PULL_ZONE_TOKEN. Vrací null, pokud se soubor nepodaří získat
- * (pull zone neexistuje, 404, 403 a podobně).
+ *
+ * Bunny pull zone má typicky zapnuté „Block direct url file access" —
+ * blokuje requesty bez Referer hlavičky. Posíláme proto Referer odvozený
+ * z BETTER_AUTH_URL, který by měl být v allowed-referers seznamu.
+ *
+ * Pokud má pull zone navíc CDN Token Authentication, použij volitelný
+ * BUNNY_PULL_ZONE_TOKEN — pak URL podepíšeme Basic MD5+base64.
  */
 export async function fetchCaptionVtt(
   env: Env,
@@ -106,9 +110,14 @@ export async function fetchCaptionVtt(
     ? signPullZoneUrl(path, env.BUNNY_PULL_ZONE_TOKEN, 300)
     : path;
   const url = `https://${host}${signedPath}`;
-  const res = await fetch(url);
+  const referer = env.BETTER_AUTH_URL?.replace(/\/$/, "") + "/" || undefined;
+  const res = await fetch(url, {
+    headers: referer ? { Referer: referer } : {},
+  });
   if (!res.ok) {
-    console.error(`fetchCaptionVtt ${res.status} for ${path} (signed=${!!env.BUNNY_PULL_ZONE_TOKEN})`);
+    console.error(
+      `fetchCaptionVtt ${res.status} for ${path} (signed=${!!env.BUNNY_PULL_ZONE_TOKEN}, referer=${referer})`,
+    );
     return null;
   }
   return await res.text();

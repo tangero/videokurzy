@@ -427,9 +427,10 @@ function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
           </p>
           {!les.transcript && (
             <p class="text-xs text-amber-700">
-              Text se nepodařilo stáhnout z CDN (pravděpodobně Pull Zone Token Authentication).
-              Pokud chceš text v adminu, nastav <code class="bg-amber-50 px-1">BUNNY_PULL_ZONE_TOKEN</code>{" "}
-              v Cloudflare secrets (Pull Zone → Security → Authentication Key v Bunny).
+              Text se nepodařilo stáhnout z CDN. Zkontroluj v Bunny pull zone settings
+              „Referrers" whitelist — musí obsahovat doménu, ze které posíláme request
+              (např. <code class="bg-amber-50 px-1">kurzy.vibecoding.cz</code>). Případně dočasně
+              vypni „Block direct url file access" v Stream → Security → General.
             </p>
           )}
           {les.transcript && (
