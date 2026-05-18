@@ -110,10 +110,14 @@ export async function fetchCaptionVtt(
     ? signPullZoneUrl(path, env.BUNNY_PULL_ZONE_TOKEN, 300)
     : path;
   const url = `https://${host}${signedPath}`;
-  const referer = env.BETTER_AUTH_URL?.replace(/\/$/, "") + "/" || undefined;
-  const res = await fetch(url, {
-    headers: referer ? { Referer: referer } : {},
-  });
+  // Referer musí být v Bunny pull zone „Allowed referrers" seznamu.
+  // Fallback na produkční doménu, pokud BETTER_AUTH_URL ukazuje na localhost
+  // nebo není dostupné v daném environmentu.
+  const authUrl = env.BETTER_AUTH_URL?.replace(/\/$/, "") ?? "";
+  const referer = authUrl && !authUrl.includes("localhost")
+    ? `${authUrl}/`
+    : "https://kurzy.vibecoding.cz/";
+  const res = await fetch(url, { headers: { Referer: referer } });
   if (!res.ok) {
     console.error(
       `fetchCaptionVtt ${res.status} for ${path} (signed=${!!env.BUNNY_PULL_ZONE_TOKEN}, referer=${referer})`,
