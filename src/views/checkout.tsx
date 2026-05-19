@@ -64,7 +64,7 @@ export const CheckoutSelect: FC<{
           </div>
         )}
 
-        <form method="post" class="space-y-5">
+        <form method="post" hx-boost="false" class="space-y-5">
           <div>
             <label for="email" class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
             <input
@@ -143,11 +143,13 @@ export const CheckoutSelect: FC<{
 
           <button
             type="submit"
-            class={`w-full font-semibold px-6 py-3 rounded-lg text-white transition-colors ${
-              isOrg ? "bg-amber-600 hover:bg-amber-700" : "bg-indigo-600 hover:bg-indigo-700"
+            class={`w-full font-bold px-6 py-4 rounded-xl text-white text-lg shadow-lg transition-all active:scale-95 ${
+              isOrg
+                ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 shadow-amber-200"
+                : "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 shadow-indigo-200"
             }`}
           >
-            Pokračovat — {finalFormatted} Kč
+            Objednat — {finalFormatted} Kč
           </button>
         </form>
 
