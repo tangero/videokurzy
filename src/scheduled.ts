@@ -123,29 +123,36 @@ export async function scanFioPayments(
         ),
       }).catch((err) => console.error(`[cron] email send failed for ${p.email}:`, err));
 
-      // Vystavit fakturu ve Fakturoidu (best-effort — nezablokuje matching).
+      // Vystavit fakturu ve Fakturoidu. Awaitujeme úmyslně — fire-and-forget by
+      // worker po skončení handleru zabil a fakturoidInvoiceId by se neuložil,
+      // i když by Fakturoid stihl fakturu vytvořit (orphan invoice).
       const domain = p.type === "organization" ? p.email.split("@")[1] : null;
-      exportPurchaseInvoice(env, {
-        email: p.email,
-        type: p.type as "individual" | "organization",
-        domain,
-        amount: expectedAmount,
-        variableSymbol: p.variableSymbol,
-      }, { sendEmail: true })
-        .then(async (res) => {
-          if (res.ok && res.invoiceId) {
-            await db
-              .update(purchase)
-              .set({
-                fakturoidInvoiceId: res.invoiceId,
-                fakturoidSubjectId: res.subjectId ?? null,
-              })
-              .where(eq(purchase.id, p.id));
-          } else if (!res.ok) {
-            console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
-          }
-        })
-        .catch((err) => console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err));
+      try {
+        const res = await exportPurchaseInvoice(
+          env,
+          {
+            email: p.email,
+            type: p.type as "individual" | "organization",
+            domain,
+            amount: expectedAmount,
+            variableSymbol: p.variableSymbol,
+          },
+          { sendEmail: true },
+        );
+        if (res.ok && res.invoiceId) {
+          await db
+            .update(purchase)
+            .set({
+              fakturoidInvoiceId: res.invoiceId,
+              fakturoidSubjectId: res.subjectId ?? null,
+            })
+            .where(eq(purchase.id, p.id));
+        } else if (!res.ok) {
+          console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
+        }
+      } catch (err) {
+        console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err);
+      }
 
       matched++;
     } catch (err) {

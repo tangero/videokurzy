@@ -30,7 +30,13 @@ import {
 } from "../lib/transcribe";
 import { countDiscountedActivePurchases } from "../lib/discount";
 import { scanFioPayments } from "../scheduled";
-import { exportPurchaseInvoice, fetchInvoice, markInvoicePaid } from "../lib/fakturoid";
+import {
+  exportPurchaseInvoice,
+  fetchInvoice,
+  findSubjectByEmail,
+  listSubjectInvoices,
+  markInvoicePaid,
+} from "../lib/fakturoid";
 import Stripe from "stripe";
 import {
   AdminNav,
@@ -430,6 +436,20 @@ admin.get("/admin", async (c) => {
                 onclick="return confirm('Označit všechny Vystavené/Odeslané Fakturoid faktury jako Zaplacené?');"
               >
                 Označit nezaplacené faktury jako zaplacené
+              </button>
+            </form>
+            <form
+              method="post"
+              action="/admin/api/purchases/link-orphan-invoices"
+              hx-boost="false"
+            >
+              <button
+                type="submit"
+                class="text-xs text-indigo-600 hover:underline"
+                title="Pro každý aktivní purchase bez fakturoidInvoiceId dohledá fakturu ve Fakturoidu podle emailu+částky, naváže ji a označí zaplacenou."
+                onclick="return confirm('Dohledat osiřelé Fakturoid faktury a navázat je na purchase rows?');"
+              >
+                Dohledat osiřelé faktury
               </button>
             </form>
           </div>
@@ -949,6 +969,80 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
 });
 
 // ─── FIO manual scan ─────────────────────────────────────────────
+
+/**
+ * Pro každý aktivní purchase BEZ fakturoidInvoiceId zkusí dohledat osiřelou
+ * fakturu ve Fakturoidu: najde subject podle e-mailu, projde jeho faktury,
+ * vybere nejnovější s odpovídající částkou. Pokud najde, naváže fakturu do DB
+ * a označí ji jako zaplacenou. Důvod: dřívější verze scanFioPayments dělala
+ * fire-and-forget volání Fakturoidu, takže worker zabil promise než stihl
+ * uložit fakturoidInvoiceId, ačkoli Fakturoid fakturu vytvořil.
+ */
+admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
+  const db = drizzle(c.env.DB);
+  const candidates = await db
+    .select()
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.status, "active"),
+        // fakturoidInvoiceId IS NULL
+      ),
+    );
+
+  let linked = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  // Načti aktuální ceny pro výpočet expected amountu u FIO purchases.
+  const cfgRows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
+  const priceIndividual = parseInt(cfg.price_individual ?? "2000", 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? "15000", 10);
+
+  for (const p of candidates) {
+    if (p.fakturoidInvoiceId) { skipped++; continue; }
+
+    // Vypočítej, kolik měli zaplatit (pro match v Fakturoid invoices).
+    const fullPrice = p.type === "organization" ? priceOrganization : priceIndividual;
+    const discountFactor = (100 - (p.discountPercent ?? 0)) / 100;
+    const expectedAmount = Math.floor(fullPrice * discountFactor);
+
+    const subject = await findSubjectByEmail(c.env, p.email);
+    if (!subject) { skipped++; continue; }
+
+    const invoices = await listSubjectInvoices(c.env, subject.id);
+    if (invoices.length === 0) { skipped++; continue; }
+
+    // Vyber nejnovější fakturu s přesně odpovídající celkovou částkou.
+    const match = invoices.find((inv) => Math.round(inv.total) === expectedAmount);
+    if (!match) {
+      errors.push(`${p.email}: žádná faktura subjektu nemá total = ${expectedAmount} Kč`);
+      continue;
+    }
+
+    try {
+      await db
+        .update(purchase)
+        .set({ fakturoidInvoiceId: match.id, fakturoidSubjectId: subject.id })
+        .where(eq(purchase.id, p.id));
+
+      if (match.status !== "paid") {
+        const result = await markInvoicePaid(c.env, match.id, expectedAmount);
+        if (!result.ok) {
+          errors.push(`${p.email}: linked ale mark_paid: ${result.error}`);
+        }
+      }
+      linked++;
+    } catch (err) {
+      errors.push(`${p.email}: ${(err as Error).message}`);
+    }
+  }
+
+  const summary = `Navázáno: ${linked}, přeskočeno: ${skipped}` +
+    (errors.length > 0 ? `, chyby: ${errors.slice(0, 5).join(" | ")}` : "");
+  return c.redirect(`/admin?invoiceFill=${encodeURIComponent(summary)}`);
+});
 
 /**
  * Projde všechny purchase rows s fakturoidInvoiceId a u každé faktury ve stavu

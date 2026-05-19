@@ -218,6 +218,49 @@ export async function markInvoicePaid(
   }
 }
 
+/**
+ * Najde subject podle e-mailu. Vrací první match (Fakturoid full-text search).
+ * Vrací null pokud nic.
+ */
+export async function findSubjectByEmail(
+  env: FakturoidEnv,
+  email: string,
+): Promise<{ id: number; name: string; email?: string } | null> {
+  try {
+    const results = (await apiRequest(
+      env,
+      "GET",
+      `subjects/search.json?query=${encodeURIComponent(email)}`,
+    )) as Array<{ id: number; name: string; email?: string }> | null;
+    if (!results?.length) return null;
+    const exact = results.find((s) => s.email?.toLowerCase() === email.toLowerCase());
+    return exact ?? results[0];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Vypíše faktury subjektu seřazené od nejnovější. Užitečné pro dohledání
+ * osiřelé faktury, která se vytvořila v Fakturoidu ale fakturoidInvoiceId se
+ * neuložil do naší DB (např. kvůli zabitým promises ve worker isolatu).
+ */
+export async function listSubjectInvoices(
+  env: FakturoidEnv,
+  subjectId: number,
+): Promise<Array<{ id: number; status: string; total: number; issued_on: string }>> {
+  try {
+    const results = (await apiRequest(
+      env,
+      "GET",
+      `invoices.json?subject_id=${subjectId}`,
+    )) as Array<{ id: number; status: string; total: number; issued_on: string }> | null;
+    return results ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** Načte detail faktury (status, čísla, lines). */
 export async function fetchInvoice(
   env: FakturoidEnv,
