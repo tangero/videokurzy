@@ -59,7 +59,7 @@ export const CheckoutSelect: FC<{
           {hasDiscount ? (
             <>
               <strong>{finalFormatted} Kč</strong>
-              <span class="ml-2 text-gray-400 line-through">{originalFormatted} Kč</span>
+              <span class="ml-2 text-gray-500 line-through" aria-hidden="true">{originalFormatted} Kč</span>
               <span class="ml-2 inline-block px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">
                 {discountLabel || `Sleva ${discountPercent} %`}
               </span>
