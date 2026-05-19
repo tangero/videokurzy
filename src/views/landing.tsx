@@ -57,7 +57,6 @@ function fmtTotalDuration(seconds: number): string {
 
 const TESTIMONIALS = [
   { body: "Konečně česky, strukturovaně a od někoho, komu věřím. Za měsíc jsem postavil interní tool, na který jsme měsíce čekali na IT.", name: "Marek K.", role: "Projektový manažer", initials: "MK" },
-  { body: "Nasadili jsme firemní licenci pro 40 lidí. Lidi se sami hlásí, že chtějí Claude Code zkusit na svoje projekty.", name: "Jana H.", role: "L&D, Česká pojišťovna", initials: "JH" },
   { body: "Patrick nenatáčí Silicon Valley hype. Je to pragmatický průvodce pro lidi, kteří chtějí mít hotovo.", name: "Tomáš V.", role: "Junior developer", initials: "TV" },
   { body: "Modul o designu mi zachránil projekt. Do té doby jsem měl výstup „funguje, ale vypadá to jako test\".", name: "Lenka D.", role: "Produktová manažerka", initials: "LD" },
 ];

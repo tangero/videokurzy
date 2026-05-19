@@ -976,17 +976,27 @@ export function AdminSettingsForm({
 
         {/* Zaváděcí sleva */}
         <div class="rounded-lg border border-amber-200 bg-amber-50/40 p-4 space-y-3">
-          <div class="flex items-center justify-between flex-wrap gap-2">
-            <h2 class="text-lg font-semibold">Zaváděcí sleva</h2>
-            <label class="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                name="discount_active"
-                checked={discount.active}
-              />
-              <span>Aktivní</span>
-            </label>
-          </div>
+          <h2 class="text-lg font-semibold">Zaváděcí sleva</h2>
+          <label
+            class={`flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer ${
+              discount.active
+                ? "border-emerald-300 bg-emerald-50"
+                : "border-gray-300 bg-white"
+            }`}
+          >
+            <input
+              type="checkbox"
+              name="discount_active"
+              checked={discount.active}
+              class="h-4 w-4"
+            />
+            <span class="text-sm">
+              <strong>Sleva je aktivní</strong>
+              <span class="block text-xs text-gray-500">
+                Bez zaškrtnutí nic nezobrazuje, i kdyby ostatní pole byla vyplněná.
+              </span>
+            </span>
+          </label>
           <div class="grid grid-cols-2 gap-4">
             <label class="block">
               <span class="block text-sm font-medium text-gray-700 mb-1">Sleva</span>
