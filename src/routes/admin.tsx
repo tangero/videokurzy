@@ -241,6 +241,45 @@ admin.get("/admin", async (c) => {
     .select({ count: sql<number>`count(*)` })
     .from(purchase)
     .where(eq(purchase.status, "pending"));
+
+  // Skutečně zaplacené peníze: sečteme reálné platby (kind='paid') ve stavu
+  // active i expired (obě představují přijatou platbu v minulosti). Pending
+  // a refunded vynecháváme — pending nedorazil, refunded byl vrácen.
+  // Částka se počítá z aktuálního site_config × (1 - discount/100); historické
+  // změny ceny nezohledňujeme, protože v purchase amountPaid neukládáme.
+  const settingsRows = await db.select().from(siteConfig);
+  const settingsMap = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+  const priceIndividualNow = parseInt(
+    settingsMap.price_individual ?? "2000",
+    10,
+  );
+  const priceOrganizationNow = parseInt(
+    settingsMap.price_organization ?? "15000",
+    10,
+  );
+  const paidRows = await db
+    .select({
+      type: purchase.type,
+      discountPercent: purchase.discountPercent,
+      status: purchase.status,
+    })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.kind, "paid"),
+        or(eq(purchase.status, "active"), eq(purchase.status, "expired")),
+      ),
+    );
+  let totalRevenueCzk = 0;
+  let revenueActiveCzk = 0;
+  for (const r of paidRows) {
+    const base = r.type === "organization" ? priceOrganizationNow : priceIndividualNow;
+    const pct = Math.max(0, Math.min(100, r.discountPercent || 0));
+    const amount = Math.round(base * (1 - pct / 100));
+    totalRevenueCzk += amount;
+    if (r.status === "active") revenueActiveCzk += amount;
+  }
+  const formatCzk = (v: number) => `${v.toLocaleString("cs-CZ")} Kč`;
   const recentUsers = await db
     .select({
       id: user.id,
@@ -381,20 +420,22 @@ admin.get("/admin", async (c) => {
           </div>
           <div
             class="bg-white p-4 rounded-lg border"
-            title="Všechny řádky v tabulce purchase bez ohledu na stav: aktivní zaplacené, admin granty zdarma, pending čekající na platbu i historické (expired/refunded)."
+            title="Součet reálných plateb (kind='paid') v stavu active + expired. Pending a refunded se nepočítají. Částka se odvíjí z aktuálního ceníku v Nastavení × (1 − sleva); historické změny cen se nezohledňují, protože v purchase neukládáme částku přímo."
           >
-            <p class="text-sm text-gray-500">Nákupy (celkem řádků)</p>
-            <p class="text-2xl font-bold">{purchaseCount.count}</p>
+            <p class="text-sm text-gray-500">Zaplaceno celkem</p>
+            <p class="text-2xl font-bold text-emerald-700">{formatCzk(totalRevenueCzk)}</p>
             <p class="text-xs text-gray-500 mt-1">
-              <strong class="text-emerald-700">{purchasePaidCount.count}</strong> zaplaceno
-              {" · "}
-              <strong class="text-indigo-700">{purchaseGrantCount.count}</strong> grant zdarma
-              {purchasePendingCount.count > 0 && (
-                <> · <strong class="text-yellow-700">{purchasePendingCount.count}</strong> čeká na platbu</>
-              )}
+              z toho aktivní <strong>{formatCzk(revenueActiveCzk)}</strong>
             </p>
             <p class="text-xs text-gray-400 mt-0.5">
-              zbytek tvoří expired/refunded historie
+              {purchasePaidCount.count + " "}
+              aktivních ·{" "}
+              <span title="Komplimentární přístupy (kind='comp') — nepočítají se do peněz">
+                <strong class="text-indigo-700">{purchaseGrantCount.count}</strong> grant
+              </span>
+              {purchasePendingCount.count > 0 && (
+                <> · <strong class="text-yellow-700">{purchasePendingCount.count}</strong> čeká</>
+              )}
             </p>
           </div>
           <div class="bg-white p-4 rounded-lg border">

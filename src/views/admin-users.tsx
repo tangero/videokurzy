@@ -13,14 +13,25 @@ function accessBadge(
   access: AdminUserListItem["activeAccess"],
   expiresAt: Date | null,
   source: AdminUserListItem["accessSource"],
+  role: string,
 ) {
+  if (role === "admin") {
+    return (
+      <span
+        class="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700"
+        title="Plný přístup z titulu role administrátora — purchase řádek se neeviduje."
+      >
+        admin
+      </span>
+    );
+  }
   if (!access) {
     return (
       <span
         class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600"
-        title="Bez aktivního přístupu — jen registrace, nebo grant zdarma od admina."
+        title="Bez aktivního přístupu — jen registrace, vidí jen ukázkové lekce."
       >
-        bez licence
+        zdarma
       </span>
     );
   }
@@ -143,7 +154,7 @@ export function AdminUsersList({
                     {u.role}
                   </span>
                 </td>
-                <td class="px-4 py-2">{accessBadge(u.activeAccess, u.accessExpiresAt, u.accessSource)}</td>
+                <td class="px-4 py-2">{accessBadge(u.activeAccess, u.accessExpiresAt, u.accessSource, u.role)}</td>
                 <td class="px-4 py-2 text-gray-500">{formatDate(u.createdAt)}</td>
                 <td class="px-4 py-2 text-right">
                   <a href={`/admin/users/${u.id}`} class="text-indigo-600 hover:underline text-xs">

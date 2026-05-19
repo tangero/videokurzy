@@ -1,4 +1,4 @@
-import { and, eq, gt, like, lt, or } from "drizzle-orm";
+import { and, eq, gt, lt, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { purchase } from "../db/schema";
 import { FIO_RENEWAL_REMINDER_DAYS } from "../config/payment";
@@ -18,8 +18,10 @@ const TEMPLATE_BY_DAYS: Record<number, (url: string) => string> = {
 /**
  * Najde aktivní FIO purchases, jejichž expiresAt spadá do okna
  * [now + daysLeft - 12h, now + daysLeft + 12h] pro některé z daysLeft hodnot (21,14,7,1).
- * Zahrnuje i časově omezené licence založené adminem (`admin_grant_*`), aby po expiraci
- * přešly do stejného obnovovacího režimu jako běžný placený přístup.
+ * Zahrnuje i časově omezené licence založené adminem (`kind='comp'`), aby po expiraci
+ * přešly do stejného obnovovacího režimu jako běžný placený přístup. Staff řádky
+ * (`kind='staff'`) — pokud nějaké historické existují — by neměly chodit upomínky,
+ * protože admin přístup je dán rolí.
  * Pro každou odešle odpovídající renewal reminder email.
  */
 export async function sendRenewalReminders(
@@ -42,8 +44,8 @@ export async function sendRenewalReminders(
         and(
           eq(purchase.status, "active"),
           or(
-            eq(purchase.paymentMethod, "fio"),
-            like(purchase.stripePaymentId, "admin_grant_%")
+            and(eq(purchase.paymentMethod, "fio"), eq(purchase.kind, "paid")),
+            eq(purchase.kind, "comp")
           ),
           gt(purchase.expiresAt, windowStart),
           lt(purchase.expiresAt, windowEnd)

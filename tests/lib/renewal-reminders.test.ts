@@ -10,14 +10,16 @@ describe("sendRenewalReminders", () => {
     vi.restoreAllMocks();
   });
 
-  it("sends reminders for expiring admin grants", async () => {
+  it("sends reminders for expiring comp grants", async () => {
     const db = drizzle(env.DB);
     await db.insert(purchase).values({
       email: "admin-grant@example.cz",
       type: "individual",
       paymentMethod: "stripe",
-      stripePaymentId: "admin_grant_test",
+      stripePaymentId: null,
       status: "active",
+      kind: "comp",
+      grantedBy: "patrick@vibecoding.cz",
       expiresAt: new Date("2026-05-31T10:00:00.000Z"),
       createdAt: new Date("2026-05-01T10:00:00.000Z"),
     });
