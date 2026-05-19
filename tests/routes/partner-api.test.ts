@@ -44,6 +44,16 @@ async function clearPurchases() {
   await env.DB.prepare("DELETE FROM purchase").run();
 }
 
+async function clearSiteConfig() {
+  await env.DB.prepare("DELETE FROM site_config WHERE key IN ('price_individual', 'price_organization')").run();
+}
+
+async function setPrices(individual: number, organization: number) {
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO site_config (key, value) VALUES ('price_individual', ?), ('price_organization', ?)"
+  ).bind(String(individual), String(organization)).run();
+}
+
 describe("partner-api /api/partner/health", () => {
   it("403 without key", async () => {
     const res = await SELF.fetch("https://test.local/api/partner/health");
@@ -64,6 +74,7 @@ describe("partner-api /api/partner/health", () => {
 describe("partner-api /api/partner/purchases", () => {
   beforeEach(async () => {
     await clearPurchases();
+    await clearSiteConfig();
   });
 
   it("403 without key", async () => {
@@ -131,6 +142,24 @@ describe("partner-api /api/partner/purchases", () => {
     expect(body.stats.total_revenue).toBe(2000); // jen active se počítá
   });
 
+  it("uses prices from site_config when set", async () => {
+    await setPrices(3500, 25000);
+    await seedPurchase({ id: 50, type: "individual", status: "active", discountPercent: 0, variableSymbol: "33000050" });
+    await seedPurchase({ id: 51, type: "organization", status: "active", discountPercent: 10, variableSymbol: "33000051" });
+
+    const res = await SELF.fetch("https://test.local/api/partner/purchases", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    const body = await res.json<any>();
+    const ind = body.items.find((i: any) => i.id === 50);
+    const org = body.items.find((i: any) => i.id === 51);
+    expect(ind.base_price).toBe(3500);
+    expect(ind.amount).toBe(3500);
+    expect(org.base_price).toBe(25000);
+    expect(org.amount).toBe(22500); // 25000 * 0.9
+    expect(body.stats.total_revenue).toBe(3500 + 22500);
+  });
+
   it("filters by status", async () => {
     await seedPurchase({ id: 10, status: "active", variableSymbol: "33000010" });
     await seedPurchase({ id: 11, status: "pending", variableSymbol: "33000011" });
@@ -190,6 +219,7 @@ describe("partner-api /api/partner/purchases", () => {
 describe("partner-api /api/partner/purchases/:id", () => {
   beforeEach(async () => {
     await clearPurchases();
+    await clearSiteConfig();
   });
 
   it("403 without key", async () => {

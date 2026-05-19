@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { and, desc, eq, like, or, sql } from "drizzle-orm";
-import { purchase } from "../db/schema";
+import { purchase, siteConfig } from "../db/schema";
 import { user } from "../db/auth-schema";
 import { requirePartnerKey } from "../middleware/partner-auth";
 import {
@@ -9,6 +9,7 @@ import {
   PRICE_ORGANIZATION,
 } from "../config/payment";
 import type { Env } from "../types";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 /**
  * Partner-API for cross-worker integration with vibecoding-site admin.
@@ -26,12 +27,32 @@ partner.use("/api/partner/*", requirePartnerKey);
 const VALID_STATUSES = ["pending", "active", "expired", "refunded"] as const;
 type PurchaseStatus = (typeof VALID_STATUSES)[number];
 
-function basePrice(type: string): number {
-  return type === "organization" ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL;
+interface Prices {
+  individual: number;
+  organization: number;
 }
 
-function computeAmount(type: string, discountPercent: number): number {
-  const base = basePrice(type);
+/**
+ * Načte aktuální ceny ze `siteConfig` (admin je tam mění). Fallback na
+ * konstanty z `config/payment.ts`. Pro historické objednávky to znamená,
+ * že zobrazená částka odpovídá AKTUÁLNÍMU ceníku — historie cen není
+ * v DB uložená.
+ */
+async function loadPrices(db: DrizzleD1Database): Promise<Prices> {
+  const rows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    individual: parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10),
+    organization: parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10),
+  };
+}
+
+function basePrice(type: string, prices: Prices): number {
+  return type === "organization" ? prices.organization : prices.individual;
+}
+
+function computeAmount(type: string, discountPercent: number, prices: Prices): number {
+  const base = basePrice(type, prices);
   const pct = Math.max(0, Math.min(100, discountPercent || 0));
   return Math.round(base * (1 - pct / 100));
 }
@@ -55,7 +76,7 @@ interface PurchaseRow {
   userName: string | null;
 }
 
-function serializePurchase(row: PurchaseRow) {
+function serializePurchase(row: PurchaseRow, prices: Prices) {
   return {
     id: row.id,
     email: row.email,
@@ -67,8 +88,8 @@ function serializePurchase(row: PurchaseRow) {
     fio_transaction_id: row.fioTransactionId,
     stripe_payment_id: row.stripePaymentId,
     status: row.status,
-    base_price: basePrice(row.type),
-    amount: computeAmount(row.type, row.discountPercent),
+    base_price: basePrice(row.type, prices),
+    amount: computeAmount(row.type, row.discountPercent, prices),
     discount_percent: row.discountPercent,
     discount_code: row.discountCode,
     fakturoid_invoice_id: row.fakturoidInvoiceId,
@@ -84,6 +105,7 @@ partner.get("/api/partner/health", (c) => {
 
 partner.get("/api/partner/purchases", async (c) => {
   const db = drizzle(c.env.DB);
+  const prices = await loadPrices(db);
 
   const url = new URL(c.req.url);
   const statusParam = url.searchParams.get("status") ?? "all";
@@ -168,13 +190,13 @@ partner.get("/api/partner/purchases", async (c) => {
     if (s.status === "pending") pending++;
     else if (s.status === "active") {
       active++;
-      totalRevenue += computeAmount(s.type, s.discountPercent);
+      totalRevenue += computeAmount(s.type, s.discountPercent, prices);
     } else if (s.status === "expired") expired++;
     else if (s.status === "refunded") refunded++;
   }
 
   return c.json({
-    items: rows.map(serializePurchase),
+    items: rows.map((r) => serializePurchase(r, prices)),
     total,
     page,
     pages: Math.max(1, Math.ceil(total / limit)),
@@ -196,6 +218,7 @@ partner.get("/api/partner/purchases/:id", async (c) => {
     return c.json({ error: "invalid_id" }, 400);
   }
   const db = drizzle(c.env.DB);
+  const prices = await loadPrices(db);
   const [row] = (await db
     .select({
       id: purchase.id,
@@ -223,7 +246,7 @@ partner.get("/api/partner/purchases/:id", async (c) => {
   if (!row) {
     return c.json({ error: "not_found" }, 404);
   }
-  return c.json({ purchase: serializePurchase(row) });
+  return c.json({ purchase: serializePurchase(row, prices) });
 });
 
 export default partner;
