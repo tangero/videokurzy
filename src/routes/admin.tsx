@@ -268,9 +268,14 @@ admin.get("/admin", async (c) => {
             Založeno: {userCreated}. Přihlášení probíhá přes magic link na /login.
           </div>
         )}
+        {c.req.query("fioScan") && (
+          <div class="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+            <strong>FIO scan:</strong> {c.req.query("fioScan")}
+          </div>
+        )}
 
         {/* Stats */}
-        <div class="grid grid-cols-3 gap-4 mb-8">
+        <div class="grid grid-cols-3 gap-4 mb-4">
           <div class="bg-white p-4 rounded-lg border">
             <p class="text-sm text-gray-500">Uživatelé</p>
             <p class="text-2xl font-bold">{userCount.count}</p>
@@ -284,6 +289,17 @@ admin.get("/admin", async (c) => {
             <p class="text-2xl font-bold">{orgs.length}</p>
           </div>
         </div>
+
+        {/* FIO manual scan */}
+        <form method="post" action="/admin/api/fio/scan" class="mb-8">
+          <button
+            type="submit"
+            class="text-sm bg-white border border-gray-300 px-3 py-2 rounded hover:bg-gray-50"
+            title="Stáhne aktuální FIO transakce a spáruje s pending objednávkami. Stejné běží denně v 3:00 UTC."
+          >
+            Spustit FIO scan
+          </button>
+        </form>
 
         {/* Users */}
         <div id="users" class="flex items-center justify-between gap-4 mb-4">
@@ -739,9 +755,11 @@ admin.post("/admin/api/fio/scan", async (c) => {
   try {
     const db = drizzle(c.env.DB);
     const result = await scanFioPayments(db, c.env);
-    return c.json({ ok: true, ...result });
+    const summary = `spárováno ${result.matched}, nezískáno ${result.skipped}` +
+      (result.errors.length ? `, chyby: ${result.errors.join(" | ")}` : "");
+    return c.redirect(`/admin?fioScan=${encodeURIComponent(summary)}`);
   } catch (err) {
-    return c.json({ ok: false, error: (err as Error).message }, 500);
+    return c.redirect(`/admin?fioScan=${encodeURIComponent("chyba: " + (err as Error).message)}`);
   }
 });
 
