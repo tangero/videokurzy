@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { user } from "../db/schema";
@@ -157,21 +157,33 @@ export async function listAdminUsers(
   if (rows.length === 0) return { rows: [], total };
 
   const ids = rows.map((r) => r.id);
+  const emails = rows.map((r) => r.email);
+  // Pokud purchase nemá nastavený userId (linkPurchasesToUser nedoběhl), zachyť
+  // ho přes email match. Tím nevypadne uživatel, který má active purchase
+  // s nepřiřazeným userId.
   const activePurchases = await db
     .select({
       userId: purchase.userId,
+      email: purchase.email,
       type: purchase.type,
       expiresAt: purchase.expiresAt,
     })
     .from(purchase)
-    .where(and(eq(purchase.status, "active"), inArray(purchase.userId, ids)));
+    .where(
+      and(
+        eq(purchase.status, "active"),
+        or(inArray(purchase.userId, ids), inArray(purchase.email, emails)),
+      ),
+    );
 
+  const emailToId = new Map(rows.map((r) => [r.email.toLowerCase(), r.id]));
   const activeByUser = new Map<string, { type: AdminAccess; expiresAt: Date }>();
   for (const p of activePurchases) {
-    if (!p.userId) continue;
-    const prev = activeByUser.get(p.userId);
+    const userId = p.userId ?? emailToId.get(p.email.toLowerCase()) ?? null;
+    if (!userId) continue;
+    const prev = activeByUser.get(userId);
     if (!prev || prev.expiresAt < p.expiresAt) {
-      activeByUser.set(p.userId, { type: p.type as AdminAccess, expiresAt: p.expiresAt });
+      activeByUser.set(userId, { type: p.type as AdminAccess, expiresAt: p.expiresAt });
     }
   }
 

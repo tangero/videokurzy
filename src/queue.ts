@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { purchase, organization } from "./db/schema";
+import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
 import type { Env } from "./types";
 
@@ -56,6 +56,16 @@ async function handleCheckoutCompleted(
   const discountPercent = Math.max(0, Math.min(100, parseInt(metadata.discountPercent ?? "0", 10) || 0));
   const discountCode = metadata.discountCode || null;
 
+  // Pokud uživatel s tímto emailem už existuje (přihlásil se přes magic link
+  // dřív, než webhook dorazil), navaž purchase rovnou na jeho userId.
+  // Jinak se purchase uloží s userId=null a navazuje se v auth user.create hooku.
+  const existingUser = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, customerEmail.toLowerCase()))
+    .limit(1);
+  const userId = existingUser[0]?.id ?? null;
+
   if (metadata.type === "individual") {
     // Idempotent insert — UNIQUE on stripePaymentId
     // Platform-wide access, no courseId needed
@@ -63,7 +73,7 @@ async function handleCheckoutCompleted(
       .insert(purchase)
       .values({
         email: customerEmail.toLowerCase(),
-        userId: null,
+        userId,
         type: "individual",
         stripePaymentId: sessionId,
         stripeSubscriptionId: subscriptionId ?? null,
@@ -107,7 +117,7 @@ async function handleCheckoutCompleted(
       .insert(purchase)
       .values({
         email: customerEmail.toLowerCase(),
-        userId: null,
+        userId,
         type: "organization",
         stripePaymentId: sessionId,
         stripeSubscriptionId: subscriptionId ?? null,

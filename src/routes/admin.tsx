@@ -29,6 +29,7 @@ import {
   vttToPlainText,
 } from "../lib/transcribe";
 import { countDiscountedActivePurchases } from "../lib/discount";
+import { scanFioPayments } from "../scheduled";
 import {
   AdminNav,
   AdminCoursesList,
@@ -730,6 +731,18 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
     thumbnailFileName: data.thumbnailFileName,
     status: data.status,
   });
+});
+
+// ─── FIO manual scan ─────────────────────────────────────────────
+
+admin.post("/admin/api/fio/scan", async (c) => {
+  try {
+    const db = drizzle(c.env.DB);
+    const result = await scanFioPayments(db, c.env);
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    return c.json({ ok: false, error: (err as Error).message }, 500);
+  }
 });
 
 // ─── Transcribe AI ────────────────────────────────────────────────

@@ -1,7 +1,16 @@
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, lt } from "drizzle-orm";
-import { purchase } from "./db/schema";
+import { purchase, siteConfig } from "./db/schema";
 import { sendRenewalReminders } from "./lib/renewal-reminders";
+import { fetchFioTransactions, matchPayment } from "./lib/fio";
+import { sendEmail, purchaseConfirmedHtml } from "./lib/email";
+import { applyDiscount } from "./lib/discount";
+import {
+  ACCESS_DURATION_DAYS,
+  FIO_LOOKBACK_DAYS,
+  PRICE_INDIVIDUAL,
+  PRICE_ORGANIZATION,
+} from "./config/payment";
 import type { Env } from "./types";
 
 /**
@@ -21,6 +30,13 @@ export async function handleScheduled(
   const now = new Date();
 
   try {
+    const result = await scanFioPayments(db, env);
+    console.log(`[cron] FIO scan: matched=${result.matched}, skipped=${result.skipped}`);
+  } catch (err) {
+    console.error("[cron] scanFioPayments failed:", err);
+  }
+
+  try {
     const expiredCount = await expirePendingFioOrders(db, now);
     console.log(`[cron] expired ${expiredCount} pending FIO orders at ${event.scheduledTime}`);
   } catch (err) {
@@ -33,6 +49,86 @@ export async function handleScheduled(
   } catch (err) {
     console.error("[cron] sendRenewalReminders failed:", err);
   }
+}
+
+/**
+ * Načte FIO transakce za posledních FIO_LOOKBACK_DAYS, projde pending FIO
+ * objednávky a každou se pokusí spárovat. Při shodě nastaví status=active,
+ * uloží transactionId, pošle confirmation email.
+ *
+ * Vrací { matched, skipped }.
+ */
+export async function scanFioPayments(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+): Promise<{ matched: number; skipped: number; errors: string[] }> {
+  const pending = await db
+    .select()
+    .from(purchase)
+    .where(and(eq(purchase.status, "pending"), eq(purchase.paymentMethod, "fio")));
+
+  if (pending.length === 0) {
+    return { matched: 0, skipped: 0, errors: [] };
+  }
+
+  const fio = await fetchFioTransactions(env.FIO_API_TOKEN, FIO_LOOKBACK_DAYS);
+  if (!fio.ok) {
+    return {
+      matched: 0,
+      skipped: pending.length,
+      errors: [`FIO fetch failed: ${fio.status} ${fio.error}`],
+    };
+  }
+
+  // Načti aktuální ceny z site_config.
+  const cfgRows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
+  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
+
+  // Aby jeden FIO převod nepárovaly dvě objednávky, držíme set transaction ID,
+  // které už byly použité na páry v tomto běhu.
+  const used = new Set<number>();
+  let matched = 0;
+  const errors: string[] = [];
+
+  for (const p of pending) {
+    if (!p.variableSymbol) continue;
+    const fullExpected = p.type === "organization" ? priceOrganization : priceIndividual;
+    const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
+    const result = matchPayment(fio.transactions, p.variableSymbol, expectedAmount, used);
+    if (!result.found || !result.transaction) continue;
+
+    used.add(result.transaction.id);
+    const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
+    try {
+      await db
+        .update(purchase)
+        .set({
+          status: "active",
+          expiresAt: newExpiresAt,
+          fioTransactionId: String(result.transaction.id),
+        })
+        .where(eq(purchase.id, p.id));
+
+      // Email s magic linkem ke kurzu — nečekáme na něj, ať jeden výpadek
+      // Resendu nezablokuje další pářování.
+      sendEmail(env, {
+        to: p.email,
+        subject: "Platba přijata — přihlaste se do kurzu",
+        html: purchaseConfirmedHtml(
+          `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
+          p.type as "individual" | "organization",
+        ),
+      }).catch((err) => console.error(`[cron] email send failed for ${p.email}:`, err));
+
+      matched++;
+    } catch (err) {
+      errors.push(`update purchase ${p.id} failed: ${(err as Error).message}`);
+    }
+  }
+
+  return { matched, skipped: pending.length - matched, errors };
 }
 
 /** Přepne všechny pending FIO objednávky s expiresAt < now na status `expired`. */
