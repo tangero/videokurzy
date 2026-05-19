@@ -226,6 +226,30 @@ admin.get("/admin", async (c) => {
   const [purchaseCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase);
+  // Rozpad pro karty: zaplacené = active s reálnou platbou (ne admin grant),
+  // admin granty = active s prefixem admin_grant_, pending = čekající na FIO/Stripe.
+  const [purchasePaidCount] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.status, "active"),
+        sql`(${purchase.stripePaymentId} IS NULL OR ${purchase.stripePaymentId} NOT LIKE 'admin_grant_%')`,
+      ),
+    );
+  const [purchaseGrantCount] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.status, "active"),
+        sql`${purchase.stripePaymentId} LIKE 'admin_grant_%'`,
+      ),
+    );
+  const [purchasePendingCount] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(purchase)
+    .where(eq(purchase.status, "pending"));
   const recentUsers = await db
     .select({
       id: user.id,
@@ -355,13 +379,24 @@ admin.get("/admin", async (c) => {
 
         {/* Stats */}
         <div class="grid grid-cols-3 gap-4 mb-4">
-          <div class="bg-white p-4 rounded-lg border">
+          <div
+            class="bg-white p-4 rounded-lg border"
+            title="Všichni řádky v tabulce user — magic link signupy, admin granty i zaplacení uživatelé."
+          >
             <p class="text-sm text-gray-500">Uživatelé</p>
             <p class="text-2xl font-bold">{userCount.count}</p>
+            <p class="text-xs text-gray-500 mt-1">vč. registrací bez nákupu</p>
           </div>
-          <div class="bg-white p-4 rounded-lg border">
+          <div
+            class="bg-white p-4 rounded-lg border"
+            title="Záznamy v tabulce purchase. Zaplaceno = active s reálnou platbou; granty = admin přístupy zdarma; čeká = pending na FIO/Stripe."
+          >
             <p class="text-sm text-gray-500">Nákupy</p>
             <p class="text-2xl font-bold">{purchaseCount.count}</p>
+            <p class="text-xs text-gray-500 mt-1">
+              {purchasePaidCount.count} zaplaceno · {purchaseGrantCount.count} grant
+              {purchasePendingCount.count > 0 && <> · {purchasePendingCount.count} čeká</>}
+            </p>
           </div>
           <div class="bg-white p-4 rounded-lg border">
             <p class="text-sm text-gray-500">Organizace</p>
@@ -473,9 +508,9 @@ admin.get("/admin", async (c) => {
                 let statusBadge: { label: string; cls: string; detail: string };
                 if (!p) {
                   statusBadge = {
-                    label: "jen registrace",
+                    label: "zdarma",
                     cls: "bg-gray-100 text-gray-700",
-                    detail: "magic link login, žádná objednávka",
+                    detail: "bez licence (magic link nebo grant zdarma)",
                   };
                 } else if (p.status === "pending" && p.paymentMethod === "fio") {
                   statusBadge = {
@@ -491,11 +526,17 @@ admin.get("/admin", async (c) => {
                   else if (isAdminGrant) detail += " · grant od admina";
                   else if (p.paymentMethod === "stripe") detail += " · Stripe";
                   else if (p.paymentMethod === "fio") detail += " · FIO";
-                  statusBadge = {
-                    label: "zaplaceno",
-                    cls: "bg-emerald-100 text-emerald-800",
-                    detail,
-                  };
+                  statusBadge = isAdminGrant
+                    ? {
+                        label: "zdarma (grant)",
+                        cls: "bg-indigo-100 text-indigo-800",
+                        detail,
+                      }
+                    : {
+                        label: "zaplaceno",
+                        cls: "bg-emerald-100 text-emerald-800",
+                        detail,
+                      };
                 } else {
                   statusBadge = {
                     label: p.status,
