@@ -293,13 +293,14 @@ export const LandingPage: FC<LandingProps> = ({
                     {fmtPrice(priceIndividual)}
                   </span>
                 </div>
-                {discount.slotsLeft <= URGENCY_THRESHOLD && (
-                  <div
-                    style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
-                  >
-                    🔥 {fmtRemainingOrders(discount.slotsLeft)}
-                  </div>
-                )}
+                <div
+                  style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
+                >
+                  🔥 {discount.label || `Sleva ${discount.percent} %`}
+                  {discount.slotsLeft <= URGENCY_THRESHOLD && (
+                    <> — {fmtRemainingOrders(discount.slotsLeft)}</>
+                  )}
+                </div>
               </>
             ) : (
               <div class="price-number">
@@ -342,13 +343,14 @@ export const LandingPage: FC<LandingProps> = ({
                     {fmtPrice(priceOrganization)}
                   </span>
                 </div>
-                {discount.slotsLeft <= URGENCY_THRESHOLD && (
-                  <div
-                    style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
-                  >
-                    🔥 {fmtRemainingOrders(discount.slotsLeft)}
-                  </div>
-                )}
+                <div
+                  style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
+                >
+                  🔥 {discount.label || `Sleva ${discount.percent} %`}
+                  {discount.slotsLeft <= URGENCY_THRESHOLD && (
+                    <> — {fmtRemainingOrders(discount.slotsLeft)}</>
+                  )}
+                </div>
               </>
             ) : (
               <div class="price-number">
