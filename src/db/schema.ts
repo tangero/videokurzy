@@ -96,6 +96,9 @@ export const purchase = sqliteTable("purchase", {
   kind: text("kind", { enum: ["paid", "comp", "staff"] }).notNull().default("paid"),
   compReason: text("compReason"),
   grantedBy: text("grantedBy"),
+  // Skutečně přijatá částka v Kč. Stripe = amount_total / 100, FIO = tx.amount.
+  // Granty (comp/staff) a pending = 0.
+  amountPaid: integer("amountPaid").notNull().default(0),
 });
 
 // ─── Relations ────────────────────────────────────────────────────

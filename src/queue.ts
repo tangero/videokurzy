@@ -87,6 +87,7 @@ async function handleCheckoutCompleted(
         createdAt: new Date(),
         discountPercent,
         discountCode,
+        amountPaid: paidAmountCzk,
       })
       .onConflictDoNothing();
 
@@ -141,6 +142,7 @@ async function handleCheckoutCompleted(
         createdAt: new Date(),
         discountPercent,
         discountCode,
+        amountPaid: paidAmountCzk,
       })
       .onConflictDoNothing();
 

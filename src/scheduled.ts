@@ -109,6 +109,7 @@ export async function scanFioPayments(
           status: "active",
           expiresAt: newExpiresAt,
           fioTransactionId: String(result.transaction.id),
+          amountPaid: result.transaction.amount,
         })
         .where(eq(purchase.id, p.id));
 

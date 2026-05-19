@@ -17,6 +17,7 @@ async function seedPurchase(opts: {
   kind?: "paid" | "comp" | "staff";
   compReason?: string | null;
   grantedBy?: string | null;
+  amountPaid?: number;
 } = {}) {
   const createdAt = opts.createdAt ?? new Date("2026-05-01T10:00:00Z");
   const expiresAt = opts.expiresAt ?? new Date("2027-05-01T10:00:00Z");
@@ -25,8 +26,8 @@ async function seedPurchase(opts: {
       id, email, userId, type, paymentMethod, variableSymbol, fioTransactionId,
       stripePaymentId, stripeSubscriptionId, status, expiresAt, createdAt,
       discountPercent, discountCode, fakturoidInvoiceId, fakturoidSubjectId,
-      kind, compReason, grantedBy
-    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)
+      kind, compReason, grantedBy, amountPaid
+    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)
   `;
   await env.DB.prepare(sql)
     .bind(
@@ -43,6 +44,7 @@ async function seedPurchase(opts: {
       opts.kind ?? "paid",
       opts.compReason ?? null,
       opts.grantedBy ?? null,
+      opts.amountPaid ?? 0,
     )
     .run();
 }
@@ -105,7 +107,7 @@ describe("partner-api /api/partner/purchases", () => {
     });
   });
 
-  it("lists purchases newest-first with computed amount", async () => {
+  it("lists purchases newest-first with actual amountPaid", async () => {
     await seedPurchase({
       id: 1,
       email: "a@example.com",
@@ -113,6 +115,7 @@ describe("partner-api /api/partner/purchases", () => {
       status: "active",
       variableSymbol: "33000001",
       createdAt: new Date("2026-05-01T10:00:00Z"),
+      amountPaid: 2000,
     });
     await seedPurchase({
       id: 2,
@@ -123,6 +126,7 @@ describe("partner-api /api/partner/purchases", () => {
       discountPercent: 20,
       createdAt: new Date("2026-05-02T10:00:00Z"),
       fakturoidInvoiceId: 999,
+      amountPaid: 0, // pending ještě nezaplaceno
     });
 
     const res = await SELF.fetch("https://test.local/api/partner/purchases", {
@@ -137,22 +141,23 @@ describe("partner-api /api/partner/purchases", () => {
     expect(body.items[0].type).toBe("organization");
     expect(body.items[0].discount_percent).toBe(20);
     expect(body.items[0].base_price).toBe(15000);
-    expect(body.items[0].amount).toBe(12000); // 15000 * 0.8
+    // amount = amountPaid (pending = 0, ještě nepřišlo na účet)
+    expect(body.items[0].amount).toBe(0);
     expect(body.items[0].fakturoid_invoice_id).toBe(999);
 
     expect(body.items[1].id).toBe(1);
     expect(body.items[1].base_price).toBe(2000);
-    expect(body.items[1].amount).toBe(2000);
+    expect(body.items[1].amount).toBe(2000); // skutečně zaplaceno
 
     expect(body.stats.pending).toBe(1);
     expect(body.stats.active).toBe(1);
-    expect(body.stats.total_revenue).toBe(2000); // jen active se počítá
+    expect(body.stats.total_revenue).toBe(2000); // jen reálně přijaté peníze
   });
 
-  it("uses prices from site_config when set", async () => {
+  it("base_price reflects site_config; amount drží skutečnou platbu", async () => {
     await setPrices(3500, 25000);
-    await seedPurchase({ id: 50, type: "individual", status: "active", discountPercent: 0, variableSymbol: "33000050" });
-    await seedPurchase({ id: 51, type: "organization", status: "active", discountPercent: 10, variableSymbol: "33000051" });
+    await seedPurchase({ id: 50, type: "individual", status: "active", discountPercent: 0, variableSymbol: "33000050", amountPaid: 3500 });
+    await seedPurchase({ id: 51, type: "organization", status: "active", discountPercent: 10, variableSymbol: "33000051", amountPaid: 22500 });
 
     const res = await SELF.fetch("https://test.local/api/partner/purchases", {
       headers: { "X-Partner-Key": PARTNER_KEY },
@@ -163,7 +168,7 @@ describe("partner-api /api/partner/purchases", () => {
     expect(ind.base_price).toBe(3500);
     expect(ind.amount).toBe(3500);
     expect(org.base_price).toBe(25000);
-    expect(org.amount).toBe(22500); // 25000 * 0.9
+    expect(org.amount).toBe(22500);
     expect(body.stats.total_revenue).toBe(3500 + 22500);
   });
 
@@ -203,7 +208,7 @@ describe("partner-api /api/partner/purchases", () => {
   });
 
   it("excludes staff rows by default and excludes them from revenue/stats", async () => {
-    await seedPurchase({ id: 200, email: "paid@x.cz", status: "active", kind: "paid", variableSymbol: "33000200" });
+    await seedPurchase({ id: 200, email: "paid@x.cz", status: "active", kind: "paid", variableSymbol: "33000200", amountPaid: 2000 });
     await seedPurchase({ id: 201, email: "comp@x.cz", status: "active", kind: "comp", variableSymbol: "33000201", grantedBy: "patrick@vibecoding.cz" });
     await seedPurchase({ id: 202, email: "admin@x.cz", status: "active", kind: "staff", variableSymbol: "33000202" });
 
@@ -335,6 +340,7 @@ describe("partner-api /api/partner/purchases/:id", () => {
       paymentMethod: "stripe",
       variableSymbol: null,
       discountPercent: 10,
+      amountPaid: 13500,
     });
     const res = await SELF.fetch("https://test.local/api/partner/purchases/42", {
       headers: { "X-Partner-Key": PARTNER_KEY },
@@ -348,7 +354,7 @@ describe("partner-api /api/partner/purchases/:id", () => {
       payment_method: "stripe",
       status: "active",
       base_price: 15000,
-      amount: 13500, // 15000 * 0.9
+      amount: 13500, // skutečně přijatá platba
       discount_percent: 10,
     });
   });

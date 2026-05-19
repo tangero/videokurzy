@@ -78,6 +78,7 @@ interface PurchaseRow {
   kind: PurchaseKind;
   compReason: string | null;
   grantedBy: string | null;
+  amountPaid: number;
   userName: string | null;
 }
 
@@ -98,9 +99,8 @@ function serializePurchase(row: PurchaseRow, prices: Prices) {
     comp_reason: row.compReason,
     granted_by: row.grantedBy,
     base_price: basePrice(row.type, prices),
-    // Granty (comp/staff) nemají reálnou částku — vracíme 0, ať se omylem
-    // nezapočítají do revenue v konzumentu.
-    amount: isPaid ? computeAmount(row.type, row.discountPercent, prices) : 0,
+    // Skutečně přijatá částka v Kč. Granty (comp/staff) i pending mají 0.
+    amount: isPaid ? (row.amountPaid || 0) : 0,
     discount_percent: row.discountPercent,
     discount_code: row.discountCode,
     fakturoid_invoice_id: row.fakturoidInvoiceId,
@@ -176,6 +176,7 @@ partner.get("/api/partner/purchases", async (c) => {
       kind: purchase.kind,
       compReason: purchase.compReason,
       grantedBy: purchase.grantedBy,
+      amountPaid: purchase.amountPaid,
       userName: user.name,
     })
     .from(purchase)
@@ -200,6 +201,7 @@ partner.get("/api/partner/purchases", async (c) => {
       type: purchase.type,
       discountPercent: purchase.discountPercent,
       kind: purchase.kind,
+      amountPaid: purchase.amountPaid,
     })
     .from(purchase)
     .where(ne(purchase.kind, "staff"))) as Array<{
@@ -207,6 +209,7 @@ partner.get("/api/partner/purchases", async (c) => {
       type: "individual" | "organization";
       discountPercent: number;
       kind: PurchaseKind;
+      amountPaid: number;
     }>;
 
   let pending = 0;
@@ -220,7 +223,8 @@ partner.get("/api/partner/purchases", async (c) => {
     else if (s.status === "active") {
       if (s.kind === "paid") {
         activePaid++;
-        totalRevenue += computeAmount(s.type, s.discountPercent, prices);
+        // Skutečně přijatá částka, ne dopočet z ceníku.
+        totalRevenue += s.amountPaid || 0;
       } else {
         // comp (staff je vyfiltrován výše)
         activeComp++;
@@ -277,6 +281,7 @@ partner.get("/api/partner/purchases/:id", async (c) => {
       kind: purchase.kind,
       compReason: purchase.compReason,
       grantedBy: purchase.grantedBy,
+      amountPaid: purchase.amountPaid,
       userName: user.name,
     })
     .from(purchase)
