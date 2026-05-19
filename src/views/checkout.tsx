@@ -64,7 +64,7 @@ export const CheckoutSelect: FC<{
           </div>
         )}
 
-        <form method="post" class="space-y-5">
+        <form method="post" hx-boost="false" class="space-y-5">
           <div>
             <label for="email" class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
             <input
