@@ -842,6 +842,48 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
 
 // ─── FIO manual scan ─────────────────────────────────────────────
 
+// Diagnostické volání FIO API — zkusí 3 varianty a vrátí, co každá vrátila.
+// Pomáhá rozlišit: invalid token (FIO 500 prázdné body), token bez oprávnění,
+// rate limit (409), rozsah dat (různá odpověď podle from/to), apod.
+admin.get("/admin/api/fio/diagnose", async (c) => {
+  const token = c.env.FIO_API_TOKEN;
+  if (!token || token.length < 10) {
+    return c.json({ error: "FIO_API_TOKEN nenastaven nebo příliš krátký", tokenLength: token?.length ?? 0 });
+  }
+
+  const tokenHint = `${token.slice(0, 4)}...${token.slice(-4)} (délka ${token.length})`;
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+  const twentyEightAgo = new Date(Date.now() - 28 * 86400 * 1000).toISOString().slice(0, 10);
+
+  async function tryEndpoint(name: string, path: string) {
+    try {
+      const res = await fetch(`https://fioapi.fio.cz${path}`);
+      const body = await res.text().catch(() => "");
+      return {
+        name,
+        url: path,
+        status: res.status,
+        ok: res.ok,
+        bodyHead: body.slice(0, 600),
+        bodyLength: body.length,
+      };
+    } catch (err) {
+      return { name, url: path, error: (err as Error).message };
+    }
+  }
+
+  const last = await tryEndpoint("last", `/v1/rest/last/${token}/transactions.json`);
+  // FIO rate-limituje 1/min, mezi voláními počkáme — ale 3 volání během několika sekund
+  // často FIO toleruje. Pokud uvidíme 409, víme co to znamená.
+  await new Promise((r) => setTimeout(r, 1000));
+  const week = await tryEndpoint("periods 7d", `/v1/rest/periods/${token}/${weekAgo}/${today}/transactions.json`);
+  await new Promise((r) => setTimeout(r, 1000));
+  const month = await tryEndpoint("periods 28d", `/v1/rest/periods/${token}/${twentyEightAgo}/${today}/transactions.json`);
+
+  return c.json({ tokenHint, tests: [last, week, month] }, 200, { "Cache-Control": "no-store" });
+});
+
 admin.post("/admin/api/fio/scan", async (c) => {
   try {
     const db = drizzle(c.env.DB);
