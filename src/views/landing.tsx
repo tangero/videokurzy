@@ -100,6 +100,20 @@ function fmtPrice(czk: number): string {
   return czk.toLocaleString("cs-CZ") + " Kč";
 }
 
+/**
+ * Český plurál pro „zbývá X objedná*". 1 → poslední objednávka,
+ * 2–4 → zbývají N objednávky, 5+ → zbývá N objednávek.
+ */
+function fmtRemainingOrders(n: number): string {
+  if (n <= 0) return "vyprodáno";
+  if (n === 1) return "zbývá poslední objednávka";
+  if (n >= 2 && n <= 4) return `zbývají ${n} objednávky`;
+  return `zbývá ${n} objednávek`;
+}
+
+/** Práh, od kterého se začíná zobrazovat urgency badge u slevy. */
+const URGENCY_THRESHOLD = 25;
+
 export const LandingPage: FC<LandingProps> = ({
   user,
   modules = [],
@@ -279,11 +293,13 @@ export const LandingPage: FC<LandingProps> = ({
                     {fmtPrice(priceIndividual)}
                   </span>
                 </div>
-                <div
-                  style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
-                >
-                  🔥 {discount.label || `Sleva ${discount.percent} %`} — zbývá {discount.slotsLeft} / {discount.slotsTotal} slotů
-                </div>
+                {discount.slotsLeft <= URGENCY_THRESHOLD && (
+                  <div
+                    style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
+                  >
+                    🔥 {fmtRemainingOrders(discount.slotsLeft)}
+                  </div>
+                )}
               </>
             ) : (
               <div class="price-number">
@@ -326,11 +342,13 @@ export const LandingPage: FC<LandingProps> = ({
                     {fmtPrice(priceOrganization)}
                   </span>
                 </div>
-                <div
-                  style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
-                >
-                  🔥 {discount.label || `Sleva ${discount.percent} %`} — zbývá {discount.slotsLeft} / {discount.slotsTotal} slotů
-                </div>
+                {discount.slotsLeft <= URGENCY_THRESHOLD && (
+                  <div
+                    style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
+                  >
+                    🔥 {fmtRemainingOrders(discount.slotsLeft)}
+                  </div>
+                )}
               </>
             ) : (
               <div class="price-number">
@@ -394,6 +412,11 @@ export const LandingPage: FC<LandingProps> = ({
         </div>
         <div class="bio">
           <div class="bio-photo">
+            <img
+              src="https://www.vibecoding.cz/images/patrick-zandl.jpeg"
+              alt="Patrick Zandl"
+              loading="lazy"
+            />
             <span>patrick@vibecoding.cz</span>
           </div>
           <div>
