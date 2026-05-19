@@ -5,6 +5,7 @@ import { sendRenewalReminders } from "./lib/renewal-reminders";
 import { fetchFioTransactions, matchPayment } from "./lib/fio";
 import { sendEmail, purchaseConfirmedHtml } from "./lib/email";
 import { applyDiscount } from "./lib/discount";
+import { exportPurchaseInvoice } from "./lib/fakturoid";
 import {
   ACCESS_DURATION_DAYS,
   FIO_LOOKBACK_DAYS,
@@ -121,6 +122,30 @@ export async function scanFioPayments(
           p.type as "individual" | "organization",
         ),
       }).catch((err) => console.error(`[cron] email send failed for ${p.email}:`, err));
+
+      // Vystavit fakturu ve Fakturoidu (best-effort — nezablokuje matching).
+      const domain = p.type === "organization" ? p.email.split("@")[1] : null;
+      exportPurchaseInvoice(env, {
+        email: p.email,
+        type: p.type as "individual" | "organization",
+        domain,
+        amount: expectedAmount,
+        variableSymbol: p.variableSymbol,
+      }, { sendEmail: true })
+        .then(async (res) => {
+          if (res.ok && res.invoiceId) {
+            await db
+              .update(purchase)
+              .set({
+                fakturoidInvoiceId: res.invoiceId,
+                fakturoidSubjectId: res.subjectId ?? null,
+              })
+              .where(eq(purchase.id, p.id));
+          } else if (!res.ok) {
+            console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
+          }
+        })
+        .catch((err) => console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err));
 
       matched++;
     } catch (err) {

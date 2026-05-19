@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
+import { exportPurchaseInvoice } from "./lib/fakturoid";
 import type { Env } from "./types";
 
 interface WebhookMessage {
@@ -66,6 +67,10 @@ async function handleCheckoutCompleted(
     .limit(1);
   const userId = existingUser[0]?.id ?? null;
 
+  // Skutečně zaplacená částka v Kč (Stripe sends cents).
+  const amountTotalCents = Number(data.amount_total ?? 0);
+  const paidAmountCzk = amountTotalCents > 0 ? Math.round(amountTotalCents / 100) : 0;
+
   if (metadata.type === "individual") {
     // Idempotent insert — UNIQUE on stripePaymentId
     // Platform-wide access, no courseId needed
@@ -92,6 +97,16 @@ async function handleCheckoutCompleted(
       customerEmail.toLowerCase(),
       { type: "individual" }
     );
+
+    if (paidAmountCzk > 0) {
+      await issueFakturoidInvoice(db, env, {
+        sessionId,
+        email: customerEmail.toLowerCase(),
+        type: "individual",
+        domain: null,
+        amount: paidAmountCzk,
+      });
+    }
   } else if (metadata.type === "organization") {
     const customFields = data.custom_fields as
       | Array<{ key: string; text?: { value: string } }>
@@ -136,6 +151,60 @@ async function handleCheckoutCompleted(
       customerEmail.toLowerCase(),
       { type: "organization", domain }
     );
+
+    if (paidAmountCzk > 0) {
+      await issueFakturoidInvoice(db, env, {
+        sessionId,
+        email: customerEmail.toLowerCase(),
+        type: "organization",
+        domain,
+        amount: paidAmountCzk,
+      });
+    }
+  }
+}
+
+/**
+ * Best-effort vystavení Fakturoid faktury pro Stripe nákup. Neselhává hlavní
+ * webhook, když Fakturoid není dosažitelný — uloží invoice ID zpět do
+ * `purchase` (lookup podle stripePaymentId) jakmile odpověď přijde.
+ */
+async function issueFakturoidInvoice(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  opts: {
+    sessionId: string;
+    email: string;
+    type: "individual" | "organization";
+    domain: string | null;
+    amount: number;
+  },
+): Promise<void> {
+  try {
+    const res = await exportPurchaseInvoice(
+      env,
+      {
+        email: opts.email,
+        type: opts.type,
+        domain: opts.domain,
+        amount: opts.amount,
+        variableSymbol: null,
+      },
+      { sendEmail: true },
+    );
+    if (res.ok && res.invoiceId) {
+      await db
+        .update(purchase)
+        .set({
+          fakturoidInvoiceId: res.invoiceId,
+          fakturoidSubjectId: res.subjectId ?? null,
+        })
+        .where(eq(purchase.stripePaymentId, opts.sessionId));
+    } else if (!res.ok) {
+      console.error(`[stripe] Fakturoid invoice failed for ${opts.email}:`, res.error);
+    }
+  } catch (err) {
+    console.error(`[stripe] Fakturoid threw for ${opts.email}:`, err);
   }
 }
 

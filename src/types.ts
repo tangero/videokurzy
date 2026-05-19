@@ -15,6 +15,8 @@ export interface Env {
   BUNNY_TOKEN_KEY: string;
   BUNNY_PULL_ZONE?: string;
   BUNNY_PULL_ZONE_TOKEN?: string;
+  FAKTUROID_CLIENT_ID?: string;
+  FAKTUROID_CLIENT_SECRET?: string;
   FIO_API_TOKEN: string;
   COOKIE_DOMAIN?: string;
 }

@@ -88,6 +88,8 @@ export const purchase = sqliteTable("purchase", {
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   discountPercent: integer("discountPercent").notNull().default(0),
   discountCode: text("discountCode"),
+  fakturoidInvoiceId: integer("fakturoidInvoiceId"),
+  fakturoidSubjectId: integer("fakturoidSubjectId"),
 });
 
 // ─── Relations ────────────────────────────────────────────────────
