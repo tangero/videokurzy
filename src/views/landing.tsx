@@ -1,6 +1,24 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 
+type DiscountStageView =
+  | { kind: "off" }
+  | {
+      kind: "auto";
+      percent: number;
+      label: string;
+      slotsTotal: number;
+      slotsLeft: number;
+      slotsUsed: number;
+      codeActive: boolean;
+    }
+  | {
+      kind: "code-only";
+      percent: number;
+      label: string;
+      codeExpiresAt: Date | null;
+    };
+
 interface LandingProps {
   user?: { name: string | null; email: string; role?: string } | null;
   modules?: Array<{
@@ -20,6 +38,7 @@ interface LandingProps {
   priceOrganization?: number;
   benefitsIndividual?: string[];
   benefitsOrganization?: string[];
+  discount?: DiscountStageView;
 }
 
 function fmtDuration(seconds: number): string {
@@ -90,12 +109,21 @@ export const LandingPage: FC<LandingProps> = ({
   priceOrganization = 15000,
   benefitsIndividual = [],
   benefitsOrganization = [],
+  discount = { kind: "off" },
 }) => {
   const allLessons = modules.flatMap((m) => m.lessons);
   const totalSeconds = allLessons.reduce((s, l) => s + l.durationSeconds, 0);
   const lessonCount = allLessons.length;
   const freeCount = allLessons.filter((l) => l.isFree).length;
   const canAccessAll = userHasAccess;
+  const showAutoDiscount = discount.kind === "auto";
+  const showCodeHint = discount.kind === "code-only";
+  const discountedIndividual = showAutoDiscount
+    ? Math.floor((priceIndividual * (100 - discount.percent)) / 100)
+    : priceIndividual;
+  const discountedOrganization = showAutoDiscount
+    ? Math.floor((priceOrganization * (100 - discount.percent)) / 100)
+    : priceOrganization;
   return (
   <Layout user={user}>
     <div class="container">
@@ -241,9 +269,28 @@ export const LandingPage: FC<LandingProps> = ({
               <span class="pill">pro jednotlivce</span>
               <h3 style="margin-top:10px">Osobní předplatné</h3>
             </div>
-            <div class="price-number">
-              {fmtPrice(priceIndividual)}<small>/ rok</small>
-            </div>
+            {showAutoDiscount ? (
+              <>
+                <div
+                  style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"
+                  class="price-number"
+                >
+                  <span>{fmtPrice(discountedIndividual)}<small>/ rok</small></span>
+                  <span style="font-size:0.55em;color:var(--muted);text-decoration:line-through;font-weight:400">
+                    {fmtPrice(priceIndividual)}
+                  </span>
+                </div>
+                <div
+                  style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
+                >
+                  🔥 {discount.label || `Sleva ${discount.percent} %`} — zbývá {discount.slotsLeft} / {discount.slotsTotal} slotů
+                </div>
+              </>
+            ) : (
+              <div class="price-number">
+                {fmtPrice(priceIndividual)}<small>/ rok</small>
+              </div>
+            )}
             <ul class="price-features">
               {benefitsIndividual.map((b) => (
                 <li>
@@ -253,20 +300,44 @@ export const LandingPage: FC<LandingProps> = ({
               ))}
             </ul>
             <a href="/checkout/individual" class="btn btn-block btn-lg" style="text-decoration:none">
-              koupit za {fmtPrice(priceIndividual)}
+              koupit za {fmtPrice(showAutoDiscount ? discountedIndividual : priceIndividual)}
             </a>
             <div class="mono muted" style="text-align:center">
               platba kartou nebo převodem
             </div>
+            {showCodeHint && (
+              <div class="mono muted" style="text-align:center;font-size:0.75rem">
+                💌 Máte zaváděcí kód? Vlož ho v košíku.
+              </div>
+            )}
           </div>
           <div class="price-card">
             <div>
               <span class="pill pill-ghost">pro firmy</span>
               <h3 style="margin-top:10px">Firemní licence</h3>
             </div>
-            <div class="price-number">
-              {fmtPrice(priceOrganization)}<small>/ rok</small>
-            </div>
+            {showAutoDiscount ? (
+              <>
+                <div
+                  style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"
+                  class="price-number"
+                >
+                  <span>{fmtPrice(discountedOrganization)}<small>/ rok</small></span>
+                  <span style="font-size:0.55em;color:var(--muted);text-decoration:line-through;font-weight:400">
+                    {fmtPrice(priceOrganization)}
+                  </span>
+                </div>
+                <div
+                  style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:0.78rem;font-weight:600;margin-top:-4px;margin-bottom:8px"
+                >
+                  🔥 {discount.label || `Sleva ${discount.percent} %`} — zbývá {discount.slotsLeft} / {discount.slotsTotal} slotů
+                </div>
+              </>
+            ) : (
+              <div class="price-number">
+                {fmtPrice(priceOrganization)}<small>/ rok</small>
+              </div>
+            )}
             <ul class="price-features">
               {benefitsOrganization.map((b) => (
                 <li>
@@ -281,6 +352,11 @@ export const LandingPage: FC<LandingProps> = ({
             <div class="mono muted" style="text-align:center">
               platba kartou nebo převodem, aktivace do 24&nbsp;h po&nbsp;schválení
             </div>
+            {showCodeHint && (
+              <div class="mono muted" style="text-align:center;font-size:0.75rem">
+                💌 Máte zaváděcí kód? Vlož ho v košíku.
+              </div>
+            )}
           </div>
         </div>
       </section>

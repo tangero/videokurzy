@@ -903,19 +903,42 @@ export function adminFormatDuration(seconds: number): string {
 
 // ─── Settings form ────────────────────────────────────────────────
 
+type DiscountSettingsView = {
+  active: boolean;
+  percent: number;
+  limit: number;
+  code: string;
+  codeExpiresAt: Date | null;
+  label: string;
+};
+
 export function AdminSettingsForm({
   priceIndividual,
   priceOrganization,
   benefitsIndividual,
   benefitsOrganization,
+  discount,
+  slotsUsed,
   saved,
 }: {
   priceIndividual: number;
   priceOrganization: number;
   benefitsIndividual: string[];
   benefitsOrganization: string[];
+  discount: DiscountSettingsView;
+  slotsUsed: number;
   saved?: boolean;
 }) {
+  const codeExpiresOn = discount.codeExpiresAt
+    ? discount.codeExpiresAt.toISOString().slice(0, 10)
+    : "";
+  const slotsLeft = Math.max(0, discount.limit - slotsUsed);
+  const discountedIndividual = discount.percent > 0
+    ? Math.floor((priceIndividual * (100 - discount.percent)) / 100)
+    : priceIndividual;
+  const discountedOrganization = discount.percent > 0
+    ? Math.floor((priceOrganization * (100 - discount.percent)) / 100)
+    : priceOrganization;
   return (
     <section class="max-w-3xl mx-auto px-4 py-8">
       <h1 class="text-2xl font-bold mb-6">Admin</h1>
@@ -947,6 +970,99 @@ export function AdminSettingsForm({
                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" />
                 <span class="text-gray-500 text-sm whitespace-nowrap">Kč</span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Zaváděcí sleva */}
+        <div class="rounded-lg border border-amber-200 bg-amber-50/40 p-4 space-y-3">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <h2 class="text-lg font-semibold">Zaváděcí sleva</h2>
+            <label class="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="discount_active"
+                checked={discount.active}
+              />
+              <span>Aktivní</span>
+            </label>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <label class="block">
+              <span class="block text-sm font-medium text-gray-700 mb-1">Sleva</span>
+              <div class="flex items-center gap-2">
+                <input
+                  type="number"
+                  name="discount_percent"
+                  value={String(discount.percent)}
+                  min="0"
+                  max="100"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
+                <span class="text-gray-500 text-sm">%</span>
+              </div>
+            </label>
+            <label class="block">
+              <span class="block text-sm font-medium text-gray-700 mb-1">Limit slotů</span>
+              <input
+                type="number"
+                name="discount_limit"
+                value={String(discount.limit)}
+                min="0"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+          <label class="block">
+            <span class="block text-sm font-medium text-gray-700 mb-1">Popisek (badge)</span>
+            <input
+              type="text"
+              name="discount_label"
+              value={discount.label}
+              placeholder="Zaváděcí sleva"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+          <div class="grid grid-cols-2 gap-4">
+            <label class="block">
+              <span class="block text-sm font-medium text-gray-700 mb-1">Promo kód (volitelný)</span>
+              <input
+                type="text"
+                name="discount_code"
+                value={discount.code}
+                placeholder="prázdné = bez kódu"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono uppercase"
+              />
+            </label>
+            <label class="block">
+              <span class="block text-sm font-medium text-gray-700 mb-1">Kód platí do</span>
+              <input
+                type="date"
+                name="discount_code_expires_on"
+                value={codeExpiresOn}
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+          <div class="rounded border border-amber-300 bg-white p-3 text-xs space-y-1">
+            <div>
+              <strong>Využito:</strong> {slotsUsed} / {discount.limit} slotů
+              {slotsLeft > 0 ? (
+                <span class="text-emerald-700"> · zbývá {slotsLeft}</span>
+              ) : (
+                <span class="text-red-700"> · vyčerpáno</span>
+              )}
+            </div>
+            {discount.percent > 0 && (
+              <div class="text-gray-600">
+                Zlevněné ceny: individual {discountedIndividual.toLocaleString("cs-CZ")} Kč
+                (z {priceIndividual.toLocaleString("cs-CZ")}), organization{" "}
+                {discountedOrganization.toLocaleString("cs-CZ")} Kč
+                (z {priceOrganization.toLocaleString("cs-CZ")}).
+              </div>
+            )}
+            <div class="text-gray-500">
+              Po vyčerpání slotů sleva platí jen pro lidi s promo kódem (pokud je nastavený a nevypršel).
             </div>
           </div>
         </div>

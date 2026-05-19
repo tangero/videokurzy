@@ -28,6 +28,7 @@ import {
   findCzechCaption,
   vttToPlainText,
 } from "../lib/transcribe";
+import { countDiscountedActivePurchases } from "../lib/discount";
 import {
   AdminNav,
   AdminCoursesList,
@@ -1185,21 +1186,37 @@ admin.post("/admin/lessons/:id/delete", async (c) => {
 async function loadSettings(db: ReturnType<typeof drizzle>) {
   const rows = await db.select().from(siteConfig);
   const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const codeExpiresRaw = cfg.discount_code_expires_at ?? "";
+  const codeExpiresAt = codeExpiresRaw ? new Date(codeExpiresRaw) : null;
   return {
     priceIndividual: parseInt(cfg.price_individual ?? "2000", 10),
     priceOrganization: parseInt(cfg.price_organization ?? "15000", 10),
     benefitsIndividual: JSON.parse(cfg.benefits_individual ?? "[]") as string[],
     benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
+    discount: {
+      active: cfg.discount_active === "true",
+      percent: parseInt(cfg.discount_percent ?? "0", 10),
+      limit: parseInt(cfg.discount_limit ?? "0", 10),
+      code: cfg.discount_code ?? "",
+      codeExpiresAt: codeExpiresAt && !Number.isNaN(codeExpiresAt.getTime()) ? codeExpiresAt : null,
+      label: cfg.discount_label ?? "",
+    },
   };
+}
+
+export async function loadDiscountSettings(db: ReturnType<typeof drizzle>) {
+  const s = await loadSettings(db);
+  return s.discount;
 }
 
 admin.get("/admin/settings", async (c) => {
   const currentUser = c.get("user")!;
   const db = drizzle(c.env.DB);
   const settings = await loadSettings(db);
+  const slotsUsed = await countDiscountedActivePurchases(db);
   return c.html(
     <Layout title="Nastavení" user={currentUser}>
-      <AdminSettingsForm {...settings} />
+      <AdminSettingsForm {...settings} slotsUsed={slotsUsed} />
     </Layout>
   );
 });
@@ -1213,24 +1230,51 @@ admin.post("/admin/settings", async (c) => {
   const benefitsIndividual = String(body.benefits_individual ?? "[]");
   const benefitsOrganization = String(body.benefits_organization ?? "[]");
 
-  await Promise.all([
-    db.insert(siteConfig).values({ key: "price_individual", value: String(priceIndividual) })
-      .onConflictDoUpdate({ target: siteConfig.key, set: { value: String(priceIndividual) } }),
-    db.insert(siteConfig).values({ key: "price_organization", value: String(priceOrganization) })
-      .onConflictDoUpdate({ target: siteConfig.key, set: { value: String(priceOrganization) } }),
-    db.insert(siteConfig).values({ key: "benefits_individual", value: benefitsIndividual })
-      .onConflictDoUpdate({ target: siteConfig.key, set: { value: benefitsIndividual } }),
-    db.insert(siteConfig).values({ key: "benefits_organization", value: benefitsOrganization })
-      .onConflictDoUpdate({ target: siteConfig.key, set: { value: benefitsOrganization } }),
-  ]);
+  const discountActive = body.discount_active === "on";
+  const discountPercent = Math.max(0, Math.min(100, parseInt(String(body.discount_percent ?? "0"), 10) || 0));
+  const discountLimit = Math.max(0, parseInt(String(body.discount_limit ?? "0"), 10) || 0);
+  const discountCode = String(body.discount_code ?? "").trim();
+  const discountCodeExpiresOn = String(body.discount_code_expires_on ?? "").trim();
+  const discountCodeExpiresAt = discountCodeExpiresOn
+    ? new Date(`${discountCodeExpiresOn}T23:59:59.999Z`)
+    : null;
+  const discountLabel = String(body.discount_label ?? "").trim();
+
+  const updates: Array<[string, string]> = [
+    ["price_individual", String(priceIndividual)],
+    ["price_organization", String(priceOrganization)],
+    ["benefits_individual", benefitsIndividual],
+    ["benefits_organization", benefitsOrganization],
+    ["discount_active", discountActive ? "true" : "false"],
+    ["discount_percent", String(discountPercent)],
+    ["discount_limit", String(discountLimit)],
+    ["discount_code", discountCode],
+    [
+      "discount_code_expires_at",
+      discountCodeExpiresAt && !Number.isNaN(discountCodeExpiresAt.getTime())
+        ? discountCodeExpiresAt.toISOString()
+        : "",
+    ],
+    ["discount_label", discountLabel],
+  ];
+
+  await Promise.all(
+    updates.map(([key, value]) =>
+      db
+        .insert(siteConfig)
+        .values({ key, value })
+        .onConflictDoUpdate({ target: siteConfig.key, set: { value } }),
+    ),
+  );
 
   await c.env.KV.delete("cache:catalog");
 
   const currentUser = c.get("user")!;
   const settings = await loadSettings(db);
+  const slotsUsed = await countDiscountedActivePurchases(db);
   return c.html(
     <Layout title="Nastavení" user={currentUser}>
-      <AdminSettingsForm {...settings} saved />
+      <AdminSettingsForm {...settings} slotsUsed={slotsUsed} saved />
     </Layout>
   );
 });

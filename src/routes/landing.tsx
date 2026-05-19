@@ -6,6 +6,7 @@ import { LandingPage } from "../views/landing";
 import { course, module, lesson, siteConfig } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
+import { getDiscountState } from "../lib/discount";
 
 const landing = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -73,6 +74,18 @@ landing.get("/", async (c) => {
     cfg.benefits_organization ?? '["Neomezený počet zaměstnanců","Přístup podle emailové domény","Faktura v CZK, standardní daňový doklad","Přehled využití pro L&D oddělení"]'
   ) as string[];
 
+  const codeExpiresRaw = cfg.discount_code_expires_at ?? "";
+  const codeExpiresAt = codeExpiresRaw ? new Date(codeExpiresRaw) : null;
+  const discountSettings = {
+    active: cfg.discount_active === "true",
+    percent: parseInt(cfg.discount_percent ?? "0", 10),
+    limit: parseInt(cfg.discount_limit ?? "0", 10),
+    code: cfg.discount_code ?? "",
+    codeExpiresAt: codeExpiresAt && !Number.isNaN(codeExpiresAt.getTime()) ? codeExpiresAt : null,
+    label: cfg.discount_label ?? "",
+  };
+  const discountStage = await getDiscountState(db, discountSettings);
+
   return c.html(
     <LandingPage
       user={user}
@@ -82,6 +95,7 @@ landing.get("/", async (c) => {
       priceOrganization={priceOrganization}
       benefitsIndividual={benefitsIndividual}
       benefitsOrganization={benefitsOrganization}
+      discount={discountStage}
     />
   );
 });

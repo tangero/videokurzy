@@ -25,6 +25,13 @@ import {
   fetchFioTransactions,
   matchPayment,
 } from "../lib/fio";
+import {
+  applyDiscount,
+  getDiscountState,
+  resolveCheckoutDiscount,
+  type DiscountSettings,
+  type AppliedDiscount,
+} from "../lib/discount";
 import { generateQRSvg } from "../lib/qr";
 import { sendEmail, fioPendingHtml, purchaseConfirmedHtml, adminNewOrgHtml } from "../lib/email";
 import { Layout } from "../views/layout";
@@ -52,6 +59,21 @@ async function getPrices(db: ReturnType<typeof drizzle>) {
   };
 }
 
+async function getDiscountSettings(db: ReturnType<typeof drizzle>): Promise<DiscountSettings> {
+  const rows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const expiresRaw = cfg.discount_code_expires_at ?? "";
+  const expiresAt = expiresRaw ? new Date(expiresRaw) : null;
+  return {
+    active: cfg.discount_active === "true",
+    percent: parseInt(cfg.discount_percent ?? "0", 10),
+    limit: parseInt(cfg.discount_limit ?? "0", 10),
+    code: cfg.discount_code ?? "",
+    codeExpiresAt: expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : null,
+    label: cfg.discount_label ?? "",
+  };
+}
+
 function getStripe(secretKey: string) {
   return new Stripe(secretKey, { apiVersion: "2026-03-25.dahlia" });
 }
@@ -66,12 +88,10 @@ function emailDomain(email: string): string {
 
 // ─── B2C: /checkout/individual ───────────────────────────────────
 
-checkoutRoutes.get("/checkout/individual", (c) => {
-  return c.html(
-    <Layout title="Roční přístup — kurzy.vibecoding.cz">
-      <CheckoutSelect type="individual" />
-    </Layout>
-  );
+checkoutRoutes.get("/checkout/individual", async (c) => {
+  const db = drizzle(c.env.DB);
+  const view = await checkoutSelectView(db, "individual", {});
+  return c.html(<Layout title="Roční přístup — kurzy.vibecoding.cz">{view}</Layout>);
 });
 
 checkoutRoutes.post("/checkout/individual", async (c) => {
@@ -79,22 +99,27 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const email = String(form.get("email") ?? "").toLowerCase().trim();
   const paymentMethod = String(form.get("paymentMethod") ?? "stripe");
   const extendedDeadline = form.get("extendedDeadline") === "1";
+  const promoCode = String(form.get("promoCode") ?? "").trim();
 
   if (!email || !email.includes("@")) {
-    return c.html(
-      <Layout title="Roční přístup">
-        <CheckoutSelect type="individual" error="Zadejte platný email." prefillEmail={email} />
-      </Layout>,
-      400
-    );
+    const db = drizzle(c.env.DB);
+    const view = await checkoutSelectView(db, "individual", {
+      error: "Zadejte platný email.",
+      prefillEmail: email,
+      prefillCode: promoCode,
+    });
+    return c.html(<Layout title="Roční přístup">{view}</Layout>, 400);
   }
 
   const db = drizzle(c.env.DB);
   const prices = await getPrices(db);
+  const settings = await getDiscountSettings(db);
+  const discount = await resolveCheckoutDiscount(db, settings, promoCode || null);
+  const finalPrice = discount ? applyDiscount(prices.individual, discount.percent) : prices.individual;
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "individual", email, undefined, prices.individual);
+    return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, prices.individual);
+    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -102,12 +127,10 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
 
 // ─── B2B: /checkout/organization ─────────────────────────────────
 
-checkoutRoutes.get("/checkout/organization", (c) => {
-  return c.html(
-    <Layout title="Firemní licence — kurzy.vibecoding.cz">
-      <CheckoutSelect type="organization" />
-    </Layout>
-  );
+checkoutRoutes.get("/checkout/organization", async (c) => {
+  const db = drizzle(c.env.DB);
+  const view = await checkoutSelectView(db, "organization", {});
+  return c.html(<Layout title="Firemní licence — kurzy.vibecoding.cz">{view}</Layout>);
 });
 
 checkoutRoutes.post("/checkout/organization", async (c) => {
@@ -116,44 +139,72 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const domainRaw = String(form.get("domain") ?? "").toLowerCase().trim();
   const paymentMethod = String(form.get("paymentMethod") ?? "stripe");
   const extendedDeadline = form.get("extendedDeadline") === "1";
-
-  if (!email || !email.includes("@")) {
-    return c.html(
-      <Layout title="Firemní licence">
-        <CheckoutSelect type="organization" error="Zadejte platný email." prefillEmail={email} prefillDomain={domainRaw} />
-      </Layout>,
-      400
-    );
-  }
-
-  if (!domainRaw || !domainRaw.includes(".")) {
-    return c.html(
-      <Layout title="Firemní licence">
-        <CheckoutSelect type="organization" error="Zadejte platnou firemní doménu (např. firma.cz)." prefillEmail={email} prefillDomain={domainRaw} />
-      </Layout>,
-      400
-    );
-  }
-
-  if (isFreemailDomain(domainRaw)) {
-    return c.html(
-      <Layout title="Firemní licence">
-        <CheckoutSelect type="organization" error={FREEMAIL_REJECTION_MESSAGE} prefillEmail={email} prefillDomain={domainRaw} />
-      </Layout>,
-      400
-    );
-  }
+  const promoCode = String(form.get("promoCode") ?? "").trim();
 
   const db = drizzle(c.env.DB);
+  const renderError = async (msg: string) => {
+    const view = await checkoutSelectView(db, "organization", {
+      error: msg,
+      prefillEmail: email,
+      prefillDomain: domainRaw,
+      prefillCode: promoCode,
+    });
+    return c.html(<Layout title="Firemní licence">{view}</Layout>, 400);
+  };
+
+  if (!email || !email.includes("@")) return renderError("Zadejte platný email.");
+  if (!domainRaw || !domainRaw.includes(".")) return renderError("Zadejte platnou firemní doménu (např. firma.cz).");
+  if (isFreemailDomain(domainRaw)) return renderError(FREEMAIL_REJECTION_MESSAGE);
+
   const prices = await getPrices(db);
+  const settings = await getDiscountSettings(db);
+  const discount = await resolveCheckoutDiscount(db, settings, promoCode || null);
+  const finalPrice = discount ? applyDiscount(prices.organization, discount.percent) : prices.organization;
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "organization", email, domainRaw, prices.organization);
+    return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, prices.organization);
+    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount);
   }
 
   return c.text("Neznámý způsob platby.", 400);
 });
+
+// Sestaví view pro výběr platební metody s aktuální slevou.
+async function checkoutSelectView(
+  db: ReturnType<typeof drizzle>,
+  type: "individual" | "organization",
+  opts: {
+    error?: string;
+    prefillEmail?: string;
+    prefillDomain?: string;
+    prefillCode?: string;
+  },
+) {
+  const prices = await getPrices(db);
+  const settings = await getDiscountSettings(db);
+  const stage = await getDiscountState(db, settings);
+  const priceOriginal = type === "organization" ? prices.organization : prices.individual;
+  // Auto sleva ovlivňuje viditelnou cenu rovnou. Code-only stage ukáže input
+  // na kód, ale finální cena se vyhodnotí až při submitu.
+  const priceFinal = stage.kind === "auto"
+    ? applyDiscount(priceOriginal, stage.percent)
+    : priceOriginal;
+  const showCodeInput = (stage.kind === "auto" && stage.codeActive) || stage.kind === "code-only";
+  return (
+    <CheckoutSelect
+      type={type}
+      error={opts.error}
+      prefillEmail={opts.prefillEmail}
+      prefillDomain={opts.prefillDomain}
+      prefillCode={opts.prefillCode}
+      priceOriginal={priceOriginal}
+      priceFinal={priceFinal}
+      discountPercent={stage.kind === "auto" ? stage.percent : 0}
+      discountLabel={stage.kind === "auto" ? stage.label : undefined}
+      showCodeInput={showCodeInput}
+    />
+  );
+}
 
 // ─── Stripe startér (unified pro B2C + B2B) ─────────────────────
 
@@ -162,7 +213,8 @@ async function startStripeCheckout(
   type: "individual" | "organization",
   email: string,
   domain: string | undefined,
-  price: number
+  price: number,
+  discount: AppliedDiscount | null,
 ) {
   const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
   const isOrg = type === "organization";
@@ -201,6 +253,8 @@ async function startStripeCheckout(
     metadata: {
       type,
       ...(domain ? { prefillDomain: domain } : {}),
+      ...(discount ? { discountPercent: String(discount.percent) } : {}),
+      ...(discount?.code ? { discountCode: discount.code } : {}),
     },
   });
 
@@ -215,7 +269,8 @@ async function startFioCheckout(
   email: string,
   domain: string | undefined,
   extendedDeadline: boolean,
-  price: number
+  price: number,
+  discount: AppliedDiscount | null,
 ) {
   const db = drizzle(c.env.DB);
   const dueDays = extendedDeadline ? FIO_EXTENDED_DUE_DAYS : FIO_DEFAULT_DUE_DAYS;
@@ -277,6 +332,8 @@ async function startFioCheckout(
         status: "pending",
         expiresAt,
         createdAt,
+        discountPercent: discount?.percent ?? 0,
+        discountCode: discount?.code ?? null,
       });
       vs = candidate;
       break;
@@ -360,7 +417,8 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
   }
 
   const prices = await getPrices(db);
-  const price = p.type === "organization" ? prices.organization : prices.individual;
+  const fullPrice = p.type === "organization" ? prices.organization : prices.individual;
+  const price = applyDiscount(fullPrice, p.discountPercent ?? 0);
   const dueDays = Math.round((p.expiresAt.getTime() - p.createdAt.getTime()) / 86400000);
   const isExtended = dueDays > FIO_DEFAULT_DUE_DAYS;
   const spd = generateSPD(PAYMENT_IBAN, price, p.variableSymbol!, `Videokurz ${p.email}`);
@@ -431,7 +489,8 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   }
 
   const verifyPrices = await getPrices(db);
-  const expectedAmount = p.type === "organization" ? verifyPrices.organization : verifyPrices.individual;
+  const fullExpected = p.type === "organization" ? verifyPrices.organization : verifyPrices.individual;
+  const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
   const match = matchPayment(fioRes.transactions, p.variableSymbol!, expectedAmount);
 
   if (!match.found || !match.transaction) {

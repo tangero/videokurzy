@@ -86,6 +86,8 @@ export const purchase = sqliteTable("purchase", {
     .default("active"),
   expiresAt: integer("expiresAt", { mode: "timestamp" }).notNull(),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  discountPercent: integer("discountPercent").notNull().default(0),
+  discountCode: text("discountCode"),
 });
 
 // ─── Relations ────────────────────────────────────────────────────

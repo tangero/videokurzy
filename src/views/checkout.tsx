@@ -8,10 +8,30 @@ export const CheckoutSelect: FC<{
   error?: string;
   prefillEmail?: string;
   prefillDomain?: string;
-}> = ({ type, error, prefillEmail, prefillDomain }) => {
+  prefillCode?: string;
+  priceOriginal?: number;
+  priceFinal?: number;
+  discountPercent?: number;
+  discountLabel?: string;
+  showCodeInput?: boolean;
+}> = ({
+  type,
+  error,
+  prefillEmail,
+  prefillDomain,
+  prefillCode,
+  priceOriginal,
+  priceFinal,
+  discountPercent = 0,
+  discountLabel,
+  showCodeInput = false,
+}) => {
   const isOrg = type === "organization";
-  const price = isOrg ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL;
-  const priceFormatted = price.toLocaleString("cs-CZ");
+  const original = priceOriginal ?? (isOrg ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL);
+  const final = priceFinal ?? original;
+  const hasDiscount = discountPercent > 0 && final < original;
+  const originalFormatted = original.toLocaleString("cs-CZ");
+  const finalFormatted = final.toLocaleString("cs-CZ");
   const title = isOrg ? "Firemní licence" : "Roční přístup";
   const subtitle = isOrg
     ? "Všichni zaměstnanci s firemním emailem."
@@ -21,7 +41,22 @@ export const CheckoutSelect: FC<{
     <section class="max-w-md mx-auto px-4 py-16">
       <div class="bg-white border border-gray-200 rounded-xl p-8 shadow-sm">
         <h1 class="text-2xl font-bold text-gray-900 mb-1">{title}</h1>
-        <p class="text-gray-600 mb-6">{priceFormatted} Kč / rok — {subtitle}</p>
+        <p class="text-gray-600 mb-6">
+          {hasDiscount ? (
+            <>
+              <strong>{finalFormatted} Kč</strong>
+              <span class="ml-2 text-gray-400 line-through">{originalFormatted} Kč</span>
+              <span class="ml-2 inline-block px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">
+                {discountLabel || `Sleva ${discountPercent} %`}
+              </span>
+              <span class="block text-xs text-gray-500 mt-1">/ rok — {subtitle}</span>
+            </>
+          ) : (
+            <>
+              {originalFormatted} Kč / rok — {subtitle}
+            </>
+          )}
+        </p>
 
         {error && (
           <div class="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700">
@@ -89,13 +124,30 @@ export const CheckoutSelect: FC<{
             </span>
           </label>
 
+          {showCodeInput && (
+            <details open={!!prefillCode}>
+              <summary class="cursor-pointer text-sm text-indigo-600 hover:underline">
+                Mám zaváděcí kód
+              </summary>
+              <div class="mt-2">
+                <input
+                  type="text"
+                  name="promoCode"
+                  value={prefillCode ?? ""}
+                  placeholder="LAUNCH2026"
+                  class="w-full px-4 py-2 border border-gray-300 rounded-lg uppercase font-mono text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </details>
+          )}
+
           <button
             type="submit"
             class={`w-full font-semibold px-6 py-3 rounded-lg text-white transition-colors ${
               isOrg ? "bg-amber-600 hover:bg-amber-700" : "bg-indigo-600 hover:bg-indigo-700"
             }`}
           >
-            Pokračovat — {priceFormatted} Kč
+            Pokračovat — {finalFormatted} Kč
           </button>
         </form>
 

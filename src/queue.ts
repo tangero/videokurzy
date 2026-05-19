@@ -53,6 +53,9 @@ async function handleCheckoutCompleted(
 
   if (!metadata?.type || !customerEmail) return;
 
+  const discountPercent = Math.max(0, Math.min(100, parseInt(metadata.discountPercent ?? "0", 10) || 0));
+  const discountCode = metadata.discountCode || null;
+
   if (metadata.type === "individual") {
     // Idempotent insert — UNIQUE on stripePaymentId
     // Platform-wide access, no courseId needed
@@ -67,6 +70,8 @@ async function handleCheckoutCompleted(
         status: "active",
         expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
         createdAt: new Date(),
+        discountPercent,
+        discountCode,
       })
       .onConflictDoNothing();
 
@@ -94,6 +99,23 @@ async function handleCheckoutCompleted(
         stripeSubscriptionId: subscriptionId ?? "",
         status: "pending",
         createdAt: new Date(),
+      })
+      .onConflictDoNothing();
+
+    // Tracking purchase row pro slot counter a analytics. UNIQUE na stripePaymentId.
+    await db
+      .insert(purchase)
+      .values({
+        email: customerEmail.toLowerCase(),
+        userId: null,
+        type: "organization",
+        stripePaymentId: sessionId,
+        stripeSubscriptionId: subscriptionId ?? null,
+        status: "active",
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+        createdAt: new Date(),
+        discountPercent,
+        discountCode,
       })
       .onConflictDoNothing();
 
