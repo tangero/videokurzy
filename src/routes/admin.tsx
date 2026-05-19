@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { FC } from "hono/jsx";
-import { and, desc, eq, asc, or, sql } from "drizzle-orm";
+import { and, desc, eq, asc, inArray, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
@@ -228,7 +228,40 @@ admin.get("/admin", async (c) => {
     })
     .from(user)
     .orderBy(desc(user.createdAt))
-    .limit(8);
+    .limit(10);
+
+  // Pro každého recent usera dotáhni jeho nejnovější purchase (active i pending),
+  // ať admin hned vidí "zaplatil / čeká / jen registrace zdarma".
+  const recentUserEmails = recentUsers.map((u) => u.email.toLowerCase());
+  const recentUserPurchases = recentUserEmails.length > 0
+    ? await db
+        .select({
+          email: purchase.email,
+          type: purchase.type,
+          paymentMethod: purchase.paymentMethod,
+          status: purchase.status,
+          variableSymbol: purchase.variableSymbol,
+          createdAt: purchase.createdAt,
+          expiresAt: purchase.expiresAt,
+          stripePaymentId: purchase.stripePaymentId,
+        })
+        .from(purchase)
+        .where(inArray(purchase.email, recentUserEmails))
+        .orderBy(desc(purchase.createdAt))
+    : [];
+
+  // Pro každý email vyber nejrelevantnější purchase — preferuj active > pending > expired.
+  const purchaseByEmail = new Map<string, typeof recentUserPurchases[number]>();
+  for (const p of recentUserPurchases) {
+    const e = p.email.toLowerCase();
+    const prev = purchaseByEmail.get(e);
+    if (!prev) {
+      purchaseByEmail.set(e, p);
+      continue;
+    }
+    const rank = (s: string) => (s === "active" ? 3 : s === "pending" ? 2 : 1);
+    if (rank(p.status) > rank(prev.status)) purchaseByEmail.set(e, p);
+  }
   const orgs = await db.select().from(organization).orderBy(asc(organization.createdAt));
   const userCreated = c.req.query("userCreated");
 
@@ -264,15 +297,29 @@ admin.get("/admin", async (c) => {
         <h1 class="text-2xl font-bold mb-6">Admin</h1>
         <AdminNav active="/admin" />
         {userCreated && (
-          <div class="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-            Založeno: {userCreated}. Přihlášení probíhá přes magic link na /login.
+          <div class="mb-6 rounded-lg border-2 border-green-300 bg-green-50 px-5 py-4 text-sm text-green-900 shadow">
+            <div class="font-semibold mb-1">✓ Uživatel založen</div>
+            {userCreated}. Přihlášení probíhá přes magic link na /login.
           </div>
         )}
-        {c.req.query("fioScan") && (
-          <div class="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-            <strong>FIO scan:</strong> {c.req.query("fioScan")}
-          </div>
-        )}
+        {c.req.query("fioScan") && (() => {
+          const msg = c.req.query("fioScan") ?? "";
+          const isError = /chyba|error|failed/i.test(msg);
+          return (
+            <div
+              class={`mb-6 rounded-lg border-2 px-5 py-4 text-sm shadow ${
+                isError
+                  ? "border-red-300 bg-red-50 text-red-900"
+                  : "border-blue-300 bg-blue-50 text-blue-900"
+              }`}
+            >
+              <div class="font-semibold mb-1">
+                {isError ? "✕ FIO scan selhal" : "↻ FIO scan dokončen"}
+              </div>
+              <code class="block whitespace-pre-wrap break-all text-xs font-mono">{msg}</code>
+            </div>
+          );
+        })()}
 
         {/* Stats */}
         <div class="grid grid-cols-3 gap-4 mb-4">
@@ -290,8 +337,9 @@ admin.get("/admin", async (c) => {
           </div>
         </div>
 
-        {/* FIO manual scan */}
-        <form method="post" action="/admin/api/fio/scan" class="mb-8">
+        {/* FIO manual scan — hx-boost="false" obchází htmx interceptor, jinak
+           form submit projde jako AJAX a 303 redirect neproběhne čistě. */}
+        <form method="post" action="/admin/api/fio/scan" hx-boost="false" class="mb-8">
           <button
             type="submit"
             class="text-sm bg-white border border-gray-300 px-3 py-2 rounded hover:bg-gray-50"
@@ -318,37 +366,80 @@ admin.get("/admin", async (c) => {
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-2 text-left">E-mail</th>
-                <th class="px-4 py-2 text-left">Jméno</th>
                 <th class="px-4 py-2 text-left">Role</th>
+                <th class="px-4 py-2 text-left">Stav objednávky</th>
+                <th class="px-4 py-2 text-left">Detail</th>
                 <th class="px-4 py-2 text-left">Vytvořen</th>
               </tr>
             </thead>
             <tbody>
-              {recentUsers.map((u) => (
-                <tr class="border-t">
-                  <td class="px-4 py-2 font-medium">
-                    <a href={`/admin/users/${u.id}`} class="text-indigo-600 hover:underline no-underline">
-                      {u.email}
-                    </a>
-                  </td>
-                  <td class="px-4 py-2 text-gray-600">{u.name ?? "—"}</td>
-                  <td class="px-4 py-2">
-                    <span class={`px-2 py-1 rounded-full text-xs font-medium ${
-                      u.role === "admin"
-                        ? "bg-blue-100 text-blue-700"
-                        : "bg-gray-100 text-gray-700"
-                    }`}>
-                      {u.role}
-                    </span>
-                  </td>
-                  <td class="px-4 py-2 text-gray-500">
-                    {u.createdAt.toLocaleDateString("cs-CZ")}
-                  </td>
-                </tr>
-              ))}
+              {recentUsers.map((u) => {
+                const p = purchaseByEmail.get(u.email.toLowerCase());
+                let statusBadge: { label: string; cls: string; detail: string };
+                if (!p) {
+                  statusBadge = {
+                    label: "jen registrace",
+                    cls: "bg-gray-100 text-gray-700",
+                    detail: "magic link login, žádná objednávka",
+                  };
+                } else if (p.status === "pending" && p.paymentMethod === "fio") {
+                  statusBadge = {
+                    label: "čekáme na FIO",
+                    cls: "bg-yellow-100 text-yellow-800",
+                    detail: `VS ${p.variableSymbol ?? "—"} · ${p.type === "organization" ? "firemní" : "soukromá"}`,
+                  };
+                } else if (p.status === "active") {
+                  const isTestStripe = p.stripePaymentId?.startsWith("cs_test_");
+                  const isAdminGrant = p.stripePaymentId?.startsWith("admin_grant_");
+                  let detail = `${p.type === "organization" ? "firemní" : "soukromá"} do ${p.expiresAt.toLocaleDateString("cs-CZ")}`;
+                  if (isTestStripe) detail += " · ⚠ test mode";
+                  else if (isAdminGrant) detail += " · grant od admina";
+                  else if (p.paymentMethod === "stripe") detail += " · Stripe";
+                  else if (p.paymentMethod === "fio") detail += " · FIO";
+                  statusBadge = {
+                    label: "zaplaceno",
+                    cls: "bg-emerald-100 text-emerald-800",
+                    detail,
+                  };
+                } else {
+                  statusBadge = {
+                    label: p.status,
+                    cls: "bg-red-100 text-red-700",
+                    detail: p.paymentMethod,
+                  };
+                }
+                return (
+                  <tr class="border-t">
+                    <td class="px-4 py-2 font-medium">
+                      <a href={`/admin/users/${u.id}`} class="text-indigo-600 hover:underline no-underline">
+                        {u.email}
+                      </a>
+                      {u.name && <span class="block text-xs text-gray-500">{u.name}</span>}
+                    </td>
+                    <td class="px-4 py-2">
+                      <span class={`px-2 py-1 rounded-full text-xs font-medium ${
+                        u.role === "admin"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-gray-100 text-gray-700"
+                      }`}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td class="px-4 py-2">
+                      <span class={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge.cls}`}>
+                        {statusBadge.label}
+                      </span>
+                    </td>
+                    <td class="px-4 py-2 text-xs text-gray-600">{statusBadge.detail}</td>
+                    <td class="px-4 py-2 text-gray-500">
+                      {u.createdAt.toLocaleDateString("cs-CZ")}
+                    </td>
+                  </tr>
+                );
+              })}
               {recentUsers.length === 0 && (
                 <tr>
-                  <td colspan={4} class="px-4 py-4 text-gray-500 text-center">
+                  <td colspan={5} class="px-4 py-4 text-gray-500 text-center">
                     Zatím žádní uživatelé
                   </td>
                 </tr>

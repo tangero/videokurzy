@@ -132,7 +132,15 @@ export async function fetchFioTransactions(
   }
 
   if (!response.ok) {
-    return { ok: false, error: `FIO API error: ${response.status}`, status: 502 };
+    // FIO často vrací 500 i pro „validní" stavy (neplatný token, příliš
+    // velký rozsah, nedostupný účet). Vytáhneme tělo, ať admin vidí důvod.
+    const bodyText = await response.text().catch(() => "");
+    const detail = bodyText ? ` — ${bodyText.slice(0, 200).replace(/\s+/g, " ")}` : "";
+    return {
+      ok: false,
+      error: `FIO API ${response.status}${detail}`,
+      status: 502,
+    };
   }
 
   const data = (await response.json()) as FioApiResponse;
