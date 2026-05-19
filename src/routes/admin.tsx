@@ -30,7 +30,7 @@ import {
 } from "../lib/transcribe";
 import { countDiscountedActivePurchases } from "../lib/discount";
 import { scanFioPayments } from "../scheduled";
-import { exportPurchaseInvoice } from "../lib/fakturoid";
+import { exportPurchaseInvoice, fetchInvoice, markInvoicePaid } from "../lib/fakturoid";
 import Stripe from "stripe";
 import {
   AdminNav,
@@ -403,21 +403,36 @@ admin.get("/admin", async (c) => {
               </button>
             </form>
           </div>
-          <form
-            method="post"
-            action="/admin/api/purchases/issue-missing-invoices"
-            hx-boost="false"
-            class="mt-3 pt-3 border-t border-gray-100"
-          >
-            <button
-              type="submit"
-              class="text-xs text-indigo-600 hover:underline"
-              title="Pro každý aktivní Stripe nákup bez Fakturoid faktury stáhne reálnou částku z Stripe Checkout Session a vystaví fakturu zpětně."
-              onclick="return confirm('Vystavit chybějící Fakturoid faktury pro starší Stripe nákupy?');"
+          <div class="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-3">
+            <form
+              method="post"
+              action="/admin/api/purchases/issue-missing-invoices"
+              hx-boost="false"
             >
-              Dovystavit chybějící Fakturoid faktury
-            </button>
-          </form>
+              <button
+                type="submit"
+                class="text-xs text-indigo-600 hover:underline"
+                title="Pro každý aktivní Stripe nákup bez Fakturoid faktury stáhne reálnou částku ze Stripe Checkout Session a vystaví fakturu zpětně."
+                onclick="return confirm('Vystavit chybějící Fakturoid faktury pro starší Stripe nákupy?');"
+              >
+                Dovystavit chybějící Fakturoid faktury
+              </button>
+            </form>
+            <form
+              method="post"
+              action="/admin/api/purchases/mark-invoices-paid"
+              hx-boost="false"
+            >
+              <button
+                type="submit"
+                class="text-xs text-indigo-600 hover:underline"
+                title="Pro každou aktivní purchase s Fakturoid fakturou ve stavu Vystavená/Odeslaná zaeviduje platbu (zaplaceno dnes)."
+                onclick="return confirm('Označit všechny Vystavené/Odeslané Fakturoid faktury jako Zaplacené?');"
+              >
+                Označit nezaplacené faktury jako zaplacené
+              </button>
+            </form>
+          </div>
           {fioCooldownRemainingMs > 0 && (
             <script dangerouslySetInnerHTML={{ __html: `
               (function () {
@@ -934,6 +949,69 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
 });
 
 // ─── FIO manual scan ─────────────────────────────────────────────
+
+/**
+ * Projde všechny purchase rows s fakturoidInvoiceId a u každé faktury ve stavu
+ * Vystavená/Odeslaná označí platbu — tj. udělá z nich Zaplacenou. Slouží k
+ * jednorázové opravě faktur, které zůstaly v částečném stavu kvůli selhání
+ * předchozí verze createPaidInvoice (mark_as_sent / payments.json).
+ */
+admin.post("/admin/api/purchases/mark-invoices-paid", async (c) => {
+  const db = drizzle(c.env.DB);
+  const candidates = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.status, "active"));
+
+  const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
+  let marked = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const p of candidates) {
+    if (!p.fakturoidInvoiceId) { skipped++; continue; }
+
+    const invoice = await fetchInvoice(c.env, p.fakturoidInvoiceId);
+    if (!invoice) {
+      errors.push(`${p.email}: fakturu ${p.fakturoidInvoiceId} nelze načíst`);
+      continue;
+    }
+    if (invoice.status === "paid") { skipped++; continue; }
+
+    // Najdi reálnou částku — pro Stripe ze session, jinak vypočítej z purchase.
+    let amount: number | null = null;
+    if (p.stripePaymentId && p.stripePaymentId.startsWith("cs_live_")) {
+      try {
+        const session = await stripe.checkout.sessions.retrieve(p.stripePaymentId);
+        amount = session.amount_total ? Math.round(session.amount_total / 100) : null;
+      } catch (err) {
+        errors.push(`${p.email}: Stripe retrieve ${(err as Error).message}`);
+        continue;
+      }
+    } else {
+      // Fallback z line items na faktuře (Fakturoid uchovává unit_price).
+      const lines = invoice.lines as Array<{ unit_price?: number }> | undefined;
+      const firstPrice = lines?.[0]?.unit_price;
+      if (typeof firstPrice === "number") amount = firstPrice;
+    }
+
+    if (!amount || amount <= 0) {
+      errors.push(`${p.email}: nelze zjistit částku faktury`);
+      continue;
+    }
+
+    const result = await markInvoicePaid(c.env, p.fakturoidInvoiceId, amount);
+    if (result.ok) {
+      marked++;
+    } else {
+      errors.push(`${p.email}: ${result.error}`);
+    }
+  }
+
+  const summary = `Označeno jako zaplacených: ${marked}, přeskočeno: ${skipped}` +
+    (errors.length > 0 ? `, chyby: ${errors.slice(0, 5).join(" | ")}` : "");
+  return c.redirect(`/admin?invoiceFill=${encodeURIComponent(summary)}`);
+});
 
 /**
  * Jednorázové dovystavení Fakturoid faktur pro Stripe nákupy, které byly

@@ -169,11 +169,19 @@ async function createPaidInvoice(
   const noteParts: string[] = ["Neplaťte, faktura již byla uhrazena."];
   if (data.variableSymbol) noteParts.push(`VS: ${data.variableSymbol}`);
 
+  // Faktura se vystavuje atomicky jako Zaplacená — `paid_on` v request body
+  // znamená, že Fakturoid invoice rovnou zaeviduje jako zaplacenou, aniž bych
+  // musel řetězit další API volání (mark_as_sent + payments.json), která mohou
+  // selhat samostatně a nechat fakturu v částečném stavu.
+  const today = new Date().toISOString().split("T")[0];
   const invoice = (await apiRequest(env, "POST", "invoices.json", {
     subject_id: subjectId,
     payment_method: "bank",
     currency: "CZK",
     vat_price_mode: "without_vat",
+    issued_on: today,
+    taxable_fulfillment_due: today,
+    paid_on: today,
     lines: [
       {
         name: lineName,
@@ -185,25 +193,42 @@ async function createPaidInvoice(
     note: noteParts.join(" "),
   })) as FakturoidInvoice;
 
-  // mark_as_sent dává faktuře číslo a vytvoří PDF.
-  try {
-    await apiRequest(env, "POST", `invoices/${invoice.id}/fire.json?event=mark_as_sent`);
-  } catch (e) {
-    console.error("Fakturoid: fire mark_as_sent failed:", e);
-  }
+  return invoice;
+}
 
-  // Zaznamenat platbu — datem dnešní den.
+/**
+ * Označí existující fakturu jako Zaplacenou. Užitečné pro retroaktivní opravu
+ * starších faktur, které zůstaly ve stavu Vystavená/Odeslaná (např. když selhal
+ * původní `payments.json` POST).
+ */
+export async function markInvoicePaid(
+  env: FakturoidEnv,
+  invoiceId: number,
+  amount: number,
+): Promise<{ ok: boolean; error?: string }> {
   try {
-    await apiRequest(env, "POST", `invoices/${invoice.id}/payments.json`, {
+    await apiRequest(env, "POST", `invoices/${invoiceId}/payments.json`, {
       paid_on: new Date().toISOString().split("T")[0],
-      amount: data.amount,
+      amount,
       currency: "CZK",
     });
-  } catch (e) {
-    console.error("Fakturoid: record payment failed:", e);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
   }
+}
 
-  return invoice;
+/** Načte detail faktury (status, čísla, lines). */
+export async function fetchInvoice(
+  env: FakturoidEnv,
+  invoiceId: number,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return (await apiRequest(env, "GET", `invoices/${invoiceId}.json`)) as Record<string, unknown>;
+  } catch (err) {
+    console.error(`Fakturoid: fetchInvoice ${invoiceId} failed:`, err);
+    return null;
+  }
 }
 
 async function sendInvoiceEmail(
