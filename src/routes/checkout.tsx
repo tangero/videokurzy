@@ -6,6 +6,9 @@ import Stripe from "stripe";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { purchase, organization, siteConfig } from "../db/schema";
+import { lookupByIco, lookupByName } from "../lib/ares";
+import { generateProformaHtml } from "../lib/proforma";
+import { nextProformaNumber } from "../lib/proforma-sequence";
 import {
   PAYMENT_ACCOUNT,
   PAYMENT_IBAN,
@@ -86,6 +89,55 @@ function emailDomain(email: string): string {
   return email.toLowerCase().split("@")[1] ?? "";
 }
 
+// Firemní fakturační údaje z form data. Pole jsou volitelná; vrací null
+// pokud uživatel checkbox nezaškrtl nebo nevyplnil IČO.
+interface BillingData {
+  companyName: string | null;
+  companyIco: string | null;
+  companyDic: string | null;
+  companyAddress: string | null;
+  companyCity: string | null;
+  companyZip: string | null;
+  contactName: string | null;
+}
+
+function parseBilling(form: FormData): BillingData | null {
+  const enabled = form.get("billingEnabled") === "1";
+  const icoRaw = String(form.get("companyIco") ?? "").trim();
+  // Pokud user check zaškrtl ale IČO nedoplnil, neukládáme — bez IČO ZD nedává smysl.
+  if (!enabled || !icoRaw) return null;
+  const ico = icoRaw.replace(/\s/g, "");
+  const pick = (k: string) => {
+    const v = String(form.get(k) ?? "").trim();
+    return v.length > 0 ? v : null;
+  };
+  return {
+    companyName: pick("companyName"),
+    companyIco: ico,
+    companyDic: pick("companyDic"),
+    companyAddress: pick("companyAddress"),
+    companyCity: pick("companyCity"),
+    companyZip: pick("companyZip"),
+    contactName: pick("contactName"),
+  };
+}
+
+// Stripe metadata má 50 klíčů, 500 znaků na hodnotu, 40 znaků na klíč.
+// Firemní pole zploštíme s prefixem `b_` a oříznem dlouhých hodnot.
+function billingToStripeMetadata(b: BillingData | null): Record<string, string> {
+  if (!b) return {};
+  const out: Record<string, string> = {};
+  const set = (k: string, v: string | null) => { if (v) out[k] = v.slice(0, 500); };
+  set("b_name", b.companyName);
+  set("b_ico", b.companyIco);
+  set("b_dic", b.companyDic);
+  set("b_addr", b.companyAddress);
+  set("b_city", b.companyCity);
+  set("b_zip", b.companyZip);
+  set("b_contact", b.contactName);
+  return out;
+}
+
 // ─── B2C: /checkout/individual ───────────────────────────────────
 
 checkoutRoutes.get("/checkout/individual", async (c) => {
@@ -100,6 +152,7 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const paymentMethod = String(form.get("paymentMethod") ?? "stripe");
   const extendedDeadline = form.get("extendedDeadline") === "1";
   const promoCode = String(form.get("promoCode") ?? "").trim();
+  const billing = parseBilling(form);
 
   if (!email || !email.includes("@")) {
     const db = drizzle(c.env.DB);
@@ -107,6 +160,8 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
       error: "Zadejte platný email.",
       prefillEmail: email,
       prefillCode: promoCode,
+      prefillCompany: billingToPrefill(billing),
+      prefillBilling: !!billing,
     });
     return c.html(<Layout title="Roční přístup">{view}</Layout>, 400);
   }
@@ -117,9 +172,9 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const discount = await resolveCheckoutDiscount(db, settings, promoCode || null);
   const finalPrice = discount ? applyDiscount(prices.individual, discount.percent) : prices.individual;
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount);
+    return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount, billing);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount);
+    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount, billing);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -141,6 +196,7 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const extendedDeadline = form.get("extendedDeadline") === "1";
   const promoCode = String(form.get("promoCode") ?? "").trim();
 
+  const billing = parseBilling(form);
   const db = drizzle(c.env.DB);
   const renderError = async (msg: string) => {
     const view = await checkoutSelectView(db, "organization", {
@@ -148,6 +204,8 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
       prefillEmail: email,
       prefillDomain: domainRaw,
       prefillCode: promoCode,
+      prefillCompany: billingToPrefill(billing),
+      prefillBilling: !!billing,
     });
     return c.html(<Layout title="Firemní licence">{view}</Layout>, 400);
   };
@@ -161,13 +219,26 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const discount = await resolveCheckoutDiscount(db, settings, promoCode || null);
   const finalPrice = discount ? applyDiscount(prices.organization, discount.percent) : prices.organization;
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount);
+    return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount, billing);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount);
+    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount, billing);
   }
 
   return c.text("Neznámý způsob platby.", 400);
 });
+
+function billingToPrefill(b: BillingData | null) {
+  if (!b) return undefined;
+  return {
+    companyName: b.companyName ?? undefined,
+    companyIco: b.companyIco ?? undefined,
+    companyDic: b.companyDic ?? undefined,
+    companyAddress: b.companyAddress ?? undefined,
+    companyCity: b.companyCity ?? undefined,
+    companyZip: b.companyZip ?? undefined,
+    contactName: b.contactName ?? undefined,
+  };
+}
 
 // Sestaví view pro výběr platební metody s aktuální slevou.
 async function checkoutSelectView(
@@ -178,6 +249,16 @@ async function checkoutSelectView(
     prefillEmail?: string;
     prefillDomain?: string;
     prefillCode?: string;
+    prefillCompany?: {
+      companyName?: string;
+      companyIco?: string;
+      companyDic?: string;
+      companyAddress?: string;
+      companyCity?: string;
+      companyZip?: string;
+      contactName?: string;
+    };
+    prefillBilling?: boolean;
   },
 ) {
   const prices = await getPrices(db);
@@ -197,6 +278,8 @@ async function checkoutSelectView(
       prefillEmail={opts.prefillEmail}
       prefillDomain={opts.prefillDomain}
       prefillCode={opts.prefillCode}
+      prefillCompany={opts.prefillCompany}
+      prefillBilling={opts.prefillBilling}
       priceOriginal={priceOriginal}
       priceFinal={priceFinal}
       discountPercent={stage.kind === "auto" ? stage.percent : 0}
@@ -215,6 +298,7 @@ async function startStripeCheckout(
   domain: string | undefined,
   price: number,
   discount: AppliedDiscount | null,
+  billing: BillingData | null,
 ) {
   const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
   const isOrg = type === "organization";
@@ -255,6 +339,7 @@ async function startStripeCheckout(
       ...(domain ? { prefillDomain: domain } : {}),
       ...(discount ? { discountPercent: String(discount.percent) } : {}),
       ...(discount?.code ? { discountCode: discount.code } : {}),
+      ...billingToStripeMetadata(billing),
     },
   });
 
@@ -271,6 +356,7 @@ async function startFioCheckout(
   extendedDeadline: boolean,
   price: number,
   discount: AppliedDiscount | null,
+  billing: BillingData | null,
 ) {
   const db = drizzle(c.env.DB);
   const dueDays = extendedDeadline ? FIO_EXTENDED_DUE_DAYS : FIO_DEFAULT_DUE_DAYS;
@@ -295,6 +381,12 @@ async function startFioCheckout(
   if (existingPending.length > 0 && existingPending[0].vs) {
     return c.redirect(`/checkout/pay/${existingPending[0].vs}`, 303);
   }
+
+  // ZD číslo vygenerujeme jen pokud má smysl (uživatel vyplnil firmu).
+  // Sekvenci alokujeme jednou — když selže VS retry, použijeme stejné ZD číslo
+  // (alokace ze site_config už proběhla, nemá smysl plýtvat).
+  const proformaNumber = billing ? await nextProformaNumber(db, createdAt) : null;
+  const proformaIssuedAt = proformaNumber ? createdAt : null;
 
   // Generování VS s odolností proti TOCTOU: při UNIQUE violation opakuj s novým VS (max 5 pokusů).
   let vs: string | null = null;
@@ -334,6 +426,15 @@ async function startFioCheckout(
         createdAt,
         discountPercent: discount?.percent ?? 0,
         discountCode: discount?.code ?? null,
+        companyName: billing?.companyName ?? null,
+        companyIco: billing?.companyIco ?? null,
+        companyDic: billing?.companyDic ?? null,
+        companyAddress: billing?.companyAddress ?? null,
+        companyCity: billing?.companyCity ?? null,
+        companyZip: billing?.companyZip ?? null,
+        contactName: billing?.contactName ?? null,
+        proformaNumber,
+        proformaIssuedAt,
       });
       vs = candidate;
       break;
@@ -352,11 +453,14 @@ async function startFioCheckout(
   }
 
   const payUrl = `${c.env.BETTER_AUTH_URL}/checkout/pay/${vs}`;
+  const proformaUrl = proformaNumber
+    ? `${c.env.BETTER_AUTH_URL}/checkout/proforma/${vs}`
+    : null;
   c.executionCtx.waitUntil(
     sendEmail(c.env, {
       to: email,
       subject: "Potvrzení objednávky — kurzy.vibecoding.cz",
-      html: fioPendingHtml(payUrl, price, formatDueDate(expiresAt)),
+      html: fioPendingHtml(payUrl, price, formatDueDate(expiresAt), proformaUrl, proformaNumber),
     })
   );
 
@@ -517,6 +621,74 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   );
 
   return c.html(<VerifySuccess email={p.email} />);
+});
+
+// ─── ARES lookup endpoint ────────────────────────────────────────
+
+checkoutRoutes.get("/api/ares-lookup", async (c) => {
+  const ico = c.req.query("ico")?.trim();
+  const name = c.req.query("name")?.trim();
+  if (!ico && !name) {
+    return c.json({ error: "Zadejte IČO nebo název firmy" }, 400);
+  }
+  try {
+    const results = ico ? await lookupByIco(ico) : await lookupByName(name!);
+    return c.json({ results });
+  } catch (err) {
+    console.error("[ares] lookup failed:", err);
+    return c.json({ error: "Chyba při vyhledávání v ARES", results: [] }, 500);
+  }
+});
+
+// ─── Zálohový doklad render ──────────────────────────────────────
+
+checkoutRoutes.get("/checkout/proforma/:vs", async (c) => {
+  const vs = c.req.param("vs");
+  const db = drizzle(c.env.DB);
+
+  const rows = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.variableSymbol, vs))
+    .limit(1);
+
+  if (rows.length === 0 || !rows[0].proformaNumber) {
+    return c.html(
+      <Layout title="Zálohový doklad nenalezen">
+        <section class="max-w-md mx-auto px-4 py-16 text-center">
+          <h1 class="text-2xl font-bold mb-4">Zálohový doklad nenalezen</h1>
+          <p class="text-gray-600">Zkontrolujte odkaz z emailu nebo nás kontaktujte.</p>
+        </section>
+      </Layout>,
+      404,
+    );
+  }
+
+  const p = rows[0];
+  const prices = await getPrices(db);
+  const fullPrice = p.type === "organization" ? prices.organization : prices.individual;
+  const amount = applyDiscount(fullPrice, p.discountPercent ?? 0);
+  const domain = p.type === "organization" ? emailDomain(p.email) : null;
+
+  const html = generateProformaHtml({
+    proformaNumber: p.proformaNumber!,
+    issueDate: p.proformaIssuedAt ?? p.createdAt,
+    dueDate: p.expiresAt,
+    companyName: p.companyName,
+    companyIco: p.companyIco,
+    companyDic: p.companyDic,
+    companyAddress: p.companyAddress,
+    companyCity: p.companyCity,
+    companyZip: p.companyZip,
+    contactName: p.contactName,
+    contactEmail: p.email,
+    type: p.type as "individual" | "organization",
+    domain,
+    amount,
+    variableSymbol: p.variableSymbol!,
+  });
+
+  return c.html(html);
 });
 
 export { checkoutRoutes };

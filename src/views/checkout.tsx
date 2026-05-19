@@ -3,12 +3,24 @@ import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
 
 // ─── Mezistránka: výběr platební metody ────────────────────────
 
+export interface CheckoutPrefillCompany {
+  companyName?: string;
+  companyIco?: string;
+  companyDic?: string;
+  companyAddress?: string;
+  companyCity?: string;
+  companyZip?: string;
+  contactName?: string;
+}
+
 export const CheckoutSelect: FC<{
   type: "individual" | "organization";
   error?: string;
   prefillEmail?: string;
   prefillDomain?: string;
   prefillCode?: string;
+  prefillCompany?: CheckoutPrefillCompany;
+  prefillBilling?: boolean;
   priceOriginal?: number;
   priceFinal?: number;
   discountPercent?: number;
@@ -20,6 +32,8 @@ export const CheckoutSelect: FC<{
   prefillEmail,
   prefillDomain,
   prefillCode,
+  prefillCompany,
+  prefillBilling = false,
   priceOriginal,
   priceFinal,
   discountPercent = 0,
@@ -124,6 +138,118 @@ export const CheckoutSelect: FC<{
             </span>
           </label>
 
+          <details open={prefillBilling || !!prefillCompany?.companyIco}>
+            <summary class="cursor-pointer text-sm text-indigo-600 hover:underline">
+              Chci fakturu na firmu (IČO)
+            </summary>
+            <div class="mt-3 space-y-3">
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" id="billingEnabled" name="billingEnabled" value="1" checked={prefillBilling || !!prefillCompany?.companyIco} />
+                <span>Vystavit fakturu na firmu</span>
+              </label>
+
+              <div id="billing-fields" class={prefillBilling || prefillCompany?.companyIco ? "space-y-3" : "space-y-3 hidden"}>
+                <div>
+                  <label for="of-ico" class="block text-xs font-medium text-gray-700 mb-1">IČO</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="text"
+                      id="of-ico"
+                      name="companyIco"
+                      value={prefillCompany?.companyIco ?? ""}
+                      placeholder="12345678"
+                      autocomplete="off"
+                      class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <span id="of-ares-status" class="text-xs text-gray-500 self-center"></span>
+                  </div>
+                </div>
+                <div>
+                  <label for="of-company" class="block text-xs font-medium text-gray-700 mb-1">Název firmy</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="text"
+                      id="of-company"
+                      name="companyName"
+                      value={prefillCompany?.companyName ?? ""}
+                      placeholder="Acme s.r.o."
+                      autocomplete="organization"
+                      class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button type="button" id="of-name-search" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+                      Hledat v ARES
+                    </button>
+                  </div>
+                  <div id="of-name-results" class="hidden mt-2 border border-gray-200 rounded-lg divide-y"></div>
+                </div>
+                <div>
+                  <label for="of-dic" class="block text-xs font-medium text-gray-700 mb-1">DIČ (volitelné)</label>
+                  <input
+                    type="text"
+                    id="of-dic"
+                    name="companyDic"
+                    value={prefillCompany?.companyDic ?? ""}
+                    placeholder="CZ12345678"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label for="of-address" class="block text-xs font-medium text-gray-700 mb-1">Sídlo (ulice a č.p.)</label>
+                  <input
+                    type="text"
+                    id="of-address"
+                    name="companyAddress"
+                    value={prefillCompany?.companyAddress ?? ""}
+                    placeholder="Hlavní 123"
+                    autocomplete="street-address"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label for="of-zip" class="block text-xs font-medium text-gray-700 mb-1">PSČ</label>
+                    <input
+                      type="text"
+                      id="of-zip"
+                      name="companyZip"
+                      value={prefillCompany?.companyZip ?? ""}
+                      placeholder="110 00"
+                      autocomplete="postal-code"
+                      class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label for="of-city" class="block text-xs font-medium text-gray-700 mb-1">Město</label>
+                    <input
+                      type="text"
+                      id="of-city"
+                      name="companyCity"
+                      value={prefillCompany?.companyCity ?? ""}
+                      placeholder="Praha"
+                      autocomplete="address-level2"
+                      class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label for="of-contact" class="block text-xs font-medium text-gray-700 mb-1">Kontaktní osoba (volitelné)</label>
+                  <input
+                    type="text"
+                    id="of-contact"
+                    name="contactName"
+                    value={prefillCompany?.contactName ?? ""}
+                    placeholder="Jan Novák"
+                    autocomplete="name"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <p class="text-xs text-gray-500">
+                  Pro FIO převod vystavíme zálohový doklad ihned. Daňový doklad (fakturu) pošleme po přijetí platby.
+                </p>
+              </div>
+            </div>
+          </details>
+
           {showCodeInput && (
             <details open={!!prefillCode}>
               <summary class="cursor-pointer text-sm text-indigo-600 hover:underline">
@@ -157,9 +283,96 @@ export const CheckoutSelect: FC<{
           Přístup na 12 měsíců ke všem kurzům na platformě.
         </p>
       </div>
+      <script dangerouslySetInnerHTML={{ __html: aresScript }} />
     </section>
   );
 };
+
+// Vanilla JS pro toggle billing sekce + ARES lookup. Inlining drží UI závislosti
+// nulové (žádný htmx, žádný React). Debounce 400 ms, IČO auto-lookup při 8 číslicích.
+const aresScript = `
+(function() {
+  const billingEnabled = document.getElementById('billingEnabled');
+  const billingFields = document.getElementById('billing-fields');
+  const icoInput = document.getElementById('of-ico');
+  const nameInput = document.getElementById('of-company');
+  const nameSearchBtn = document.getElementById('of-name-search');
+  const status = document.getElementById('of-ares-status');
+  const results = document.getElementById('of-name-results');
+
+  if (!billingEnabled || !billingFields) return;
+
+  billingEnabled.addEventListener('change', () => {
+    billingFields.classList.toggle('hidden', !billingEnabled.checked);
+  });
+
+  function fill(c) {
+    if (c.company_name) document.getElementById('of-company').value = c.company_name;
+    if (c.ico) icoInput.value = c.ico;
+    if (c.dic) document.getElementById('of-dic').value = c.dic;
+    if (c.address) document.getElementById('of-address').value = c.address;
+    if (c.city) document.getElementById('of-city').value = c.city;
+    if (c.zip) document.getElementById('of-zip').value = c.zip;
+  }
+
+  let icoTimer = null;
+  icoInput && icoInput.addEventListener('input', () => {
+    if (icoTimer) clearTimeout(icoTimer);
+    const v = icoInput.value.trim().replace(/\\s/g, '');
+    if (!/^\\d{7,8}$/.test(v)) { status.textContent = ''; return; }
+    icoTimer = setTimeout(async () => {
+      status.textContent = 'Načítám…';
+      try {
+        const r = await fetch('/api/ares-lookup?ico=' + encodeURIComponent(v));
+        const data = await r.json();
+        if (data.results && data.results.length === 1) {
+          fill(data.results[0]);
+          status.textContent = '✓ ARES';
+          status.style.color = '#059669';
+        } else {
+          status.textContent = 'Nenalezeno';
+          status.style.color = '#dc2626';
+        }
+      } catch (e) {
+        status.textContent = 'Chyba';
+        status.style.color = '#dc2626';
+      }
+    }, 400);
+  });
+
+  nameSearchBtn && nameSearchBtn.addEventListener('click', async () => {
+    const q = nameInput.value.trim();
+    if (q.length < 3) { status.textContent = 'Min. 3 znaky'; return; }
+    status.textContent = 'Hledám…';
+    status.style.color = '#6b7280';
+    try {
+      const r = await fetch('/api/ares-lookup?name=' + encodeURIComponent(q));
+      const data = await r.json();
+      const arr = data.results || [];
+      results.innerHTML = '';
+      if (arr.length === 0) { status.textContent = 'Nic'; results.classList.add('hidden'); return; }
+      status.textContent = arr.length + ' výsledků';
+      arr.forEach((c) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'w-full text-left px-3 py-2 hover:bg-gray-50 text-sm';
+        btn.innerHTML = '<strong>' + (c.company_name || '?') + '</strong><br><span class="text-xs text-gray-500">IČO ' + (c.ico || '') + (c.city ? ', ' + c.city : '') + '</span>';
+        btn.addEventListener('click', () => {
+          fill(c);
+          results.classList.add('hidden');
+          status.textContent = '✓ Vybráno';
+          status.style.color = '#059669';
+        });
+        results.appendChild(btn);
+      });
+      results.classList.remove('hidden');
+    } catch (e) {
+      status.textContent = 'Chyba';
+      status.style.color = '#dc2626';
+    }
+  });
+})();
+`;
 
 // ─── FIO platební stránka s QR kódem ───────────────────────────
 

@@ -24,6 +24,11 @@ interface FakturoidSubject {
   id: number;
   name: string;
   email?: string;
+  registration_no?: string;
+  vat_no?: string;
+  street?: string;
+  city?: string;
+  zip?: string;
 }
 
 interface FakturoidInvoice {
@@ -38,6 +43,15 @@ export interface PurchaseInvoiceData {
   domain?: string | null;
   amount: number;
   variableSymbol?: string | null;
+  // Firemní fakturační údaje (volitelné). Když je companyIco vyplněné,
+  // fakturuje se na firmu a subjekt v Fakturoidu se hledá/zakládá podle IČO.
+  companyName?: string | null;
+  companyIco?: string | null;
+  companyDic?: string | null;
+  companyAddress?: string | null;
+  companyCity?: string | null;
+  companyZip?: string | null;
+  contactName?: string | null;
 }
 
 async function getAccessToken(env: FakturoidEnv): Promise<string> {
@@ -140,12 +154,118 @@ async function apiRequest(
   return null;
 }
 
-async function createSubject(
+/**
+ * Najde subjekt podle IČO. Fakturoid `subjects/search.json` hledá fulltext —
+ * filtrujeme až na klientu na přesnou shodu registration_no. Vrací null pokud nic.
+ */
+async function findSubjectByIco(
+  env: FakturoidEnv,
+  ico: string,
+): Promise<FakturoidSubject | null> {
+  try {
+    const results = (await apiRequest(
+      env,
+      "GET",
+      `subjects/search.json?query=${encodeURIComponent(ico)}`,
+    )) as FakturoidSubject[] | null;
+    if (!results?.length) return null;
+    const match = results.find((s) => s.registration_no === ico);
+    if (!match) return null;
+    return (await apiRequest(env, "GET", `subjects/${match.id}.json`)) as FakturoidSubject;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pokud uživatel zadal jen IČO bez ostatních polí (nebo UI selhalo),
+ * dotáhneme zbytek přímo z ARES. Best-effort — při výpadku ARES vrátí null
+ * a faktura se vystaví s tím, co máme.
+ */
+async function enrichFromAres(
+  ico: string,
+): Promise<Partial<PurchaseInvoiceData> | null> {
+  try {
+    const res = await fetch(
+      `https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/${ico}`,
+      { signal: AbortSignal.timeout(8000) },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      obchodniJmeno?: string;
+      dic?: string;
+      sidlo?: {
+        nazevUlice?: string;
+        cisloDomovni?: number;
+        cisloOrientacni?: number;
+        cisloOrientacniPismeno?: string;
+        nazevObce?: string;
+        psc?: number;
+      };
+    };
+    const s = data.sidlo || {};
+    let address = s.nazevUlice || "";
+    if (s.cisloDomovni) {
+      address += ` ${s.cisloDomovni}`;
+      if (s.cisloOrientacni) {
+        address += `/${s.cisloOrientacni}`;
+        if (s.cisloOrientacniPismeno) address += s.cisloOrientacniPismeno;
+      }
+    }
+    return {
+      companyName: data.obchodniJmeno || undefined,
+      companyDic: data.dic || undefined,
+      companyAddress: address.trim() || undefined,
+      companyCity: s.nazevObce || undefined,
+      companyZip: s.psc ? String(s.psc).replace(/(\d{3})(\d{2})/, "$1 $2") : undefined,
+    };
+  } catch (err) {
+    console.error("[fakturoid] ARES enrichment failed:", err);
+    return null;
+  }
+}
+
+function mergeAresEnrichment(
+  data: PurchaseInvoiceData,
+  ares: Partial<PurchaseInvoiceData> | null,
+): PurchaseInvoiceData {
+  if (!ares) return data;
+  return {
+    ...data,
+    companyName: data.companyName || ares.companyName || null,
+    companyDic: data.companyDic || ares.companyDic || null,
+    companyAddress: data.companyAddress || ares.companyAddress || null,
+    companyCity: data.companyCity || ares.companyCity || null,
+    companyZip: data.companyZip || ares.companyZip || null,
+  };
+}
+
+async function ensureSubject(
   env: FakturoidEnv,
   data: PurchaseInvoiceData,
 ): Promise<FakturoidSubject> {
-  // Pro org licenci pojmenuj subject podle domény (zvýrazní v Fakturoidu),
-  // pro individual jen e-mailem (žádné firemní jméno nemáme).
+  // 1) Pokud máme IČO, zkusíme najít existující subjekt → bez duplikátů
+  //    při opakovaných nákupech od stejné firmy.
+  if (data.companyIco) {
+    const existing = await findSubjectByIco(env, data.companyIco);
+    if (existing) return existing;
+  }
+
+  // 2) Sestavíme nový subjekt. Pro firemní fakturaci s IČO použijeme firemní
+  //    název a billing pole; jinak fallback na původní pojmenování (doména /
+  //    e-mail) které nemá registration_no.
+  if (data.companyIco) {
+    return (await apiRequest(env, "POST", "subjects.json", {
+      name: data.companyName || data.companyIco,
+      email: data.email,
+      registration_no: data.companyIco,
+      vat_no: data.companyDic || undefined,
+      street: data.companyAddress || undefined,
+      city: data.companyCity || undefined,
+      zip: data.companyZip || undefined,
+    })) as FakturoidSubject;
+  }
+
   const name =
     data.type === "organization" && data.domain
       ? `${data.domain} (firemní licence)`
@@ -335,8 +455,14 @@ export async function exportPurchaseInvoice(
       return { ok: false, error: "Fakturoid credentials nejsou nakonfigurované" };
     }
 
-    const subject = await createSubject(env, data);
-    const invoice = await createInvoice(env, subject.id, data);
+    // Pokud máme IČO ale chybí ostatní billing pole (např. Stripe metadata
+    // limit 500 znaků nedovolil vše), doplníme z ARES.
+    const enriched = data.companyIco && !data.companyAddress
+      ? mergeAresEnrichment(data, await enrichFromAres(data.companyIco))
+      : data;
+
+    const subject = await ensureSubject(env, enriched);
+    const invoice = await createInvoice(env, subject.id, enriched);
     const slug = await getAccountSlug(env);
 
     if (options?.sendEmail) {

@@ -99,6 +99,20 @@ export const purchase = sqliteTable("purchase", {
   // Skutečně přijatá částka v Kč. Stripe = amount_total / 100, FIO = tx.amount.
   // Granty (comp/staff) a pending = 0.
   amountPaid: integer("amountPaid").notNull().default(0),
+  // Firemní fakturační údaje (nullable — uvádí jen B2B / OSVČ, kteří chtějí
+  // fakturu na firmu). Při FIO objednávce se promítnou na zálohový doklad,
+  // při kterékoli platbě (FIO i Stripe) na finální Fakturoid fakturu.
+  companyName: text("companyName"),
+  companyIco: text("companyIco"),
+  companyDic: text("companyDic"),
+  companyAddress: text("companyAddress"),
+  companyCity: text("companyCity"),
+  companyZip: text("companyZip"),
+  contactName: text("contactName"),
+  // ZD číslo se generuje jen pro FIO objednávky (Stripe je instant pay,
+  // tam stačí finální faktura). Formát: ZD-YYYY-NNN, unikátní napříč rokem.
+  proformaNumber: text("proformaNumber").unique(),
+  proformaIssuedAt: integer("proformaIssuedAt", { mode: "timestamp" }),
 });
 
 // ─── Relations ────────────────────────────────────────────────────

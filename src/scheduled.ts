@@ -154,6 +154,13 @@ export async function scanFioPayments(
             domain,
             amount: expectedAmount,
             variableSymbol: p.variableSymbol,
+            companyName: p.companyName,
+            companyIco: p.companyIco,
+            companyDic: p.companyDic,
+            companyAddress: p.companyAddress,
+            companyCity: p.companyCity,
+            companyZip: p.companyZip,
+            contactName: p.contactName,
           },
           { sendEmail: true },
         );

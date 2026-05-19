@@ -42,6 +42,28 @@ export async function handleQueue(
   }
 }
 
+interface BillingFromMetadata {
+  companyName: string | null;
+  companyIco: string | null;
+  companyDic: string | null;
+  companyAddress: string | null;
+  companyCity: string | null;
+  companyZip: string | null;
+  contactName: string | null;
+}
+
+function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
+  return {
+    companyName: metadata.b_name ?? null,
+    companyIco: metadata.b_ico ?? null,
+    companyDic: metadata.b_dic ?? null,
+    companyAddress: metadata.b_addr ?? null,
+    companyCity: metadata.b_city ?? null,
+    companyZip: metadata.b_zip ?? null,
+    contactName: metadata.b_contact ?? null,
+  };
+}
+
 async function handleCheckoutCompleted(
   db: ReturnType<typeof drizzle>,
   data: Record<string, unknown>,
@@ -56,6 +78,7 @@ async function handleCheckoutCompleted(
 
   const discountPercent = Math.max(0, Math.min(100, parseInt(metadata.discountPercent ?? "0", 10) || 0));
   const discountCode = metadata.discountCode || null;
+  const billing = extractBilling(metadata);
 
   // Pokud uživatel s tímto emailem už existuje (přihlásil se přes magic link
   // dřív, než webhook dorazil), navaž purchase rovnou na jeho userId.
@@ -88,6 +111,7 @@ async function handleCheckoutCompleted(
         discountPercent,
         discountCode,
         amountPaid: paidAmountCzk,
+        ...billing,
       })
       .onConflictDoNothing();
 
@@ -106,6 +130,7 @@ async function handleCheckoutCompleted(
         type: "individual",
         domain: null,
         amount: paidAmountCzk,
+        billing,
       });
     }
   } else if (metadata.type === "organization") {
@@ -143,6 +168,7 @@ async function handleCheckoutCompleted(
         discountPercent,
         discountCode,
         amountPaid: paidAmountCzk,
+        ...billing,
       })
       .onConflictDoNothing();
 
@@ -161,6 +187,7 @@ async function handleCheckoutCompleted(
         type: "organization",
         domain,
         amount: paidAmountCzk,
+        billing,
       });
     }
   }
@@ -180,6 +207,7 @@ async function issueFakturoidInvoice(
     type: "individual" | "organization";
     domain: string | null;
     amount: number;
+    billing: BillingFromMetadata;
   },
 ): Promise<void> {
   try {
@@ -191,6 +219,7 @@ async function issueFakturoidInvoice(
         domain: opts.domain,
         amount: opts.amount,
         variableSymbol: null,
+        ...opts.billing,
       },
       { sendEmail: true },
     );
