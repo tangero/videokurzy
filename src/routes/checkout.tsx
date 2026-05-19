@@ -12,6 +12,7 @@ import { nextProformaNumber } from "../lib/proforma-sequence";
 import {
   PAYMENT_ACCOUNT,
   PAYMENT_IBAN,
+  PAYMENT_BIC,
   PRICE_INDIVIDUAL,
   PRICE_ORGANIZATION,
   FIO_DEFAULT_DUE_DAYS,
@@ -19,6 +20,7 @@ import {
   FIO_RATE_LIMIT_MS,
   FIO_LOOKBACK_DAYS,
   ACCESS_DURATION_DAYS,
+  SUPPLIER,
 } from "../config/payment";
 import { isFreemailDomain, FREEMAIL_REJECTION_MESSAGE } from "../config/freemail-domains";
 import { ADMIN_EMAILS } from "../config/admin";
@@ -382,11 +384,12 @@ async function startFioCheckout(
     return c.redirect(`/checkout/pay/${existingPending[0].vs}`, 303);
   }
 
-  // ZD číslo vygenerujeme jen pokud má smysl (uživatel vyplnil firmu).
-  // Sekvenci alokujeme jednou — když selže VS retry, použijeme stejné ZD číslo
-  // (alokace ze site_config už proběhla, nemá smysl plýtvat).
-  const proformaNumber = billing ? await nextProformaNumber(db, createdAt) : null;
-  const proformaIssuedAt = proformaNumber ? createdAt : null;
+  // ZD generujeme pro KAŽDOU FIO objednávku — slouží jako doklad pro účtárnu
+  // firmy kupujícího před přijetím platby. Když billing není vyplněno, ZD má
+  // jen e-mail v "odběrateli", což stačí jako interní doklad.
+  // Sekvenci alokujeme jednou — pokud selže VS retry, použijeme stejné ZD číslo.
+  const proformaNumber = await nextProformaNumber(db, createdAt);
+  const proformaIssuedAt = createdAt;
 
   // Generování VS s odolností proti TOCTOU: při UNIQUE violation opakuj s novým VS (max 5 pokusů).
   let vs: string | null = null;
@@ -453,9 +456,7 @@ async function startFioCheckout(
   }
 
   const payUrl = `${c.env.BETTER_AUTH_URL}/checkout/pay/${vs}`;
-  const proformaUrl = proformaNumber
-    ? `${c.env.BETTER_AUTH_URL}/checkout/proforma/${vs}`
-    : null;
+  const proformaUrl = `${c.env.BETTER_AUTH_URL}/checkout/proforma/${vs}`;
   c.executionCtx.waitUntil(
     sendEmail(c.env, {
       to: email,
@@ -534,17 +535,36 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
   }
 
   return c.html(
-    <Layout title="Platba bankovním převodem">
+    <Layout title={p.proformaNumber ? `Zálohový doklad ${p.proformaNumber}` : "Platba bankovním převodem"}>
       <PaymentDetails
         variableSymbol={p.variableSymbol!}
         amount={price}
         account={PAYMENT_ACCOUNT}
+        iban={PAYMENT_IBAN}
+        bic={PAYMENT_BIC}
         qrSvg={qrSvg}
         type={p.type as "individual" | "organization"}
         email={p.email}
         domain={domain}
         dueDate={formatDueDate(p.expiresAt)}
+        issueDate={formatDueDate(p.proformaIssuedAt ?? p.createdAt)}
         isExtended={isExtended}
+        proformaNumber={p.proformaNumber}
+        supplier={{
+          name: SUPPLIER.name,
+          address: SUPPLIER.address,
+          city: SUPPLIER.city,
+          zip: SUPPLIER.zip,
+          ico: SUPPLIER.ico,
+          email: SUPPLIER.email,
+        }}
+        companyName={p.companyName}
+        companyIco={p.companyIco}
+        companyDic={p.companyDic}
+        companyAddress={p.companyAddress}
+        companyCity={p.companyCity}
+        companyZip={p.companyZip}
+        contactName={p.contactName}
       />
     </Layout>
   );

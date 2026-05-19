@@ -374,66 +374,168 @@ const aresScript = `
 })();
 `;
 
-// ─── FIO platební stránka s QR kódem ───────────────────────────
+// ─── FIO platební stránka = živý zálohový doklad ──────────────
+// Stránka /checkout/pay/:vs slouží jako "zálohový doklad pro účtárnu" + QR
+// platba + tlačítko k ověření. Uživatel hned vidí firmu (dodavatele) i sebe
+// (odběratele), položku, číslo dokladu. Pro tisk/PDF je k dispozici čistá
+// verze na /checkout/proforma/:vs (bez navigace/tlačítek).
 
-export const PaymentDetails: FC<{
+export interface PaymentDetailsProps {
   variableSymbol: string;
   amount: number;
   account: string;
+  iban: string;
+  bic: string;
   qrSvg: string;
   type: "individual" | "organization";
   email: string;
   domain?: string;
-  dueDate: string; // „19. 4. 2026"
+  dueDate: string;
+  issueDate: string;
   isExtended: boolean;
-}> = ({ variableSymbol, amount, account, qrSvg, type, email: _email, domain, dueDate, isExtended }) => {
-  const formattedAmount = amount.toLocaleString("cs-CZ");
-  const deadlineLabel = isExtended ? "21 dní (prodloužená splatnost)" : "7 dní";
+  proformaNumber: string | null;
+  // Dodavatel
+  supplier: {
+    name: string;
+    address: string;
+    city: string;
+    zip: string;
+    ico: string;
+    email: string;
+  };
+  // Odběratel (volitelný)
+  companyName?: string | null;
+  companyIco?: string | null;
+  companyDic?: string | null;
+  companyAddress?: string | null;
+  companyCity?: string | null;
+  companyZip?: string | null;
+  contactName?: string | null;
+}
+
+export const PaymentDetails: FC<PaymentDetailsProps> = (p) => {
+  const formattedAmount = p.amount.toLocaleString("cs-CZ");
+  const deadlineLabel = p.isExtended ? "21 dní (prodloužená splatnost)" : "7 dní";
+  const itemLabel = p.type === "organization"
+    ? `Roční přístup ke kurzům — firemní licence${p.domain ? ` (${p.domain})` : ""}`
+    : "Roční přístup ke kurzům — osobní předplatné";
+  const hasBuyer = !!(p.companyName || p.companyIco);
 
   return (
-    <section class="max-w-md mx-auto px-4 py-16">
-      <div class="bg-white border border-gray-200 rounded-xl p-8 shadow-sm">
-        <h1 class="text-2xl font-bold text-gray-900 mb-2 text-center">Platba bankovním převodem</h1>
-        <p class="text-gray-600 text-center mb-6">
-          {type === "organization" ? `Firemní licence pro doménu ${domain}` : "Roční přístup ke všem kurzům"}
-        </p>
-
-        <div class="flex justify-center mb-4">
-          <div class="bg-white p-4 rounded-lg border border-gray-100 shadow-inner" dangerouslySetInnerHTML={{ __html: qrSvg }} />
-        </div>
-        <p class="text-center text-sm text-gray-500 mb-6">
-          Naskenujte QR kód v mobilní aplikaci vaší banky
-        </p>
-
-        <div class="border-t border-gray-200 pt-6 space-y-3">
-          <p class="text-center text-sm font-medium text-gray-700 mb-4">Nebo zadejte údaje ručně:</p>
-          <PaymentRow label="Číslo účtu" value={account} />
-          <PaymentRow label="Částka" value={`${formattedAmount} Kč`} copyValue={String(amount)} />
-          <PaymentRow label="Variabilní symbol" value={variableSymbol} />
+    <section class="max-w-3xl mx-auto px-4 py-10">
+      <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        {/* Hlavička */}
+        <div class="bg-indigo-50 border-b border-indigo-100 px-6 py-5 flex items-center justify-between">
+          <div>
+            <h1 class="text-xl font-bold text-gray-900">
+              Zálohový doklad{p.proformaNumber ? ` ${p.proformaNumber}` : ""}
+            </h1>
+            <p class="text-xs text-gray-600 mt-0.5">
+              Není daňovým dokladem. Fakturu (daňový doklad) zašleme po přijetí platby.
+            </p>
+          </div>
+          <div class="text-right text-xs text-gray-600">
+            <div>Vystaveno: <strong>{p.issueDate}</strong></div>
+            <div>Splatnost: <strong>{p.dueDate}</strong></div>
+          </div>
         </div>
 
-        <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mt-6">
-          <p class="text-sm text-amber-800">
-            <strong>Splatnost {deadlineLabel}</strong> — platbu proveďte do <strong>{dueDate}</strong>.
+        {/* Dodavatel + Odběratel */}
+        <div class="grid md:grid-cols-2 gap-4 px-6 py-5 border-b border-gray-100">
+          <div>
+            <h3 class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-2">Dodavatel</h3>
+            <p class="font-semibold text-gray-900">{p.supplier.name}</p>
+            <p class="text-sm text-gray-700">{p.supplier.address}</p>
+            <p class="text-sm text-gray-700">{p.supplier.zip} {p.supplier.city}</p>
+            <p class="text-sm text-gray-700">IČO: {p.supplier.ico}</p>
+            <p class="text-sm text-gray-700">{p.supplier.email}</p>
+            <p class="text-xs text-gray-500 mt-1">Neplátce DPH.</p>
+          </div>
+          <div>
+            <h3 class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-2">Odběratel</h3>
+            {hasBuyer ? (
+              <>
+                {p.companyName && <p class="font-semibold text-gray-900">{p.companyName}</p>}
+                {p.companyAddress && <p class="text-sm text-gray-700">{p.companyAddress}</p>}
+                {(p.companyZip || p.companyCity) && (
+                  <p class="text-sm text-gray-700">{p.companyZip ?? ""} {p.companyCity ?? ""}</p>
+                )}
+                {p.companyIco && <p class="text-sm text-gray-700">IČO: {p.companyIco}</p>}
+                {p.companyDic && <p class="text-sm text-gray-700">DIČ: {p.companyDic}</p>}
+                {p.contactName && <p class="text-sm text-gray-700 mt-1">{p.contactName}</p>}
+                <p class="text-sm text-gray-700">{p.email}</p>
+              </>
+            ) : (
+              <>
+                <p class="text-sm text-gray-700">{p.email}</p>
+                <p class="text-xs text-gray-500 mt-1">Fyzická osoba — nezadáno IČO.</p>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Položka + Celkem */}
+        <div class="px-6 py-5 border-b border-gray-100">
+          <div class="flex items-start justify-between gap-4">
+            <div class="flex-1">
+              <p class="text-sm text-gray-900">{itemLabel}</p>
+              <p class="text-xs text-gray-500 mt-1">VS pro účetní párování: {p.variableSymbol}</p>
+            </div>
+            <div class="text-right">
+              <p class="text-lg font-bold text-gray-900">{formattedAmount} Kč</p>
+            </div>
+          </div>
+        </div>
+
+        {/* QR + platební údaje */}
+        <div class="grid md:grid-cols-2 gap-6 px-6 py-6 bg-gray-50 border-b border-gray-100">
+          <div class="flex flex-col items-center justify-center">
+            <div class="bg-white p-3 rounded-lg border border-gray-200" dangerouslySetInnerHTML={{ __html: p.qrSvg }} />
+            <p class="text-xs text-gray-500 mt-2">Naskenujte v bankovní aplikaci</p>
+          </div>
+          <div class="space-y-2">
+            <p class="text-sm font-semibold text-gray-900">Platba převodem</p>
+            <PaymentRow label="Číslo účtu" value={p.account} />
+            <PaymentRow label="IBAN" value={p.iban} />
+            <PaymentRow label="BIC / SWIFT" value={p.bic} />
+            <PaymentRow label="Částka" value={`${formattedAmount} Kč`} copyValue={String(p.amount)} />
+            <PaymentRow label="Variabilní symbol" value={p.variableSymbol} />
+          </div>
+        </div>
+
+        {/* Splatnost note */}
+        <div class="px-6 py-4 bg-amber-50 border-b border-amber-100">
+          <p class="text-sm text-amber-900">
+            <strong>Splatnost {deadlineLabel}</strong> — uhraďte do <strong>{p.dueDate}</strong>.
             Po uplynutí lhůty bude objednávka automaticky zrušena.
           </p>
-          <p class="text-xs text-amber-700 mt-2">
-            Pro správné přiřazení platby pečlivě vyplňte variabilní symbol.
-          </p>
         </div>
 
-        <div class="mt-8 border-t border-gray-200 pt-6">
+        {/* Akce */}
+        <div class="px-6 py-5">
           <div id="verify-result"></div>
-          <button
-            hx-post={`/api/fio/verify/${variableSymbol}`}
-            hx-target="#verify-result"
-            hx-swap="innerHTML"
-            class="w-full bg-green-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-green-700 transition-colors"
-          >
-            Ověřit platbu
-          </button>
-          <p class="text-xs text-gray-400 text-center mt-2">
-            Mezibankovní převody mohou trvat až několik hodin.
+          <div class="flex flex-col sm:flex-row gap-3">
+            <button
+              hx-post={`/api/fio/verify/${p.variableSymbol}`}
+              hx-target="#verify-result"
+              hx-swap="innerHTML"
+              class="flex-1 bg-green-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-green-700 transition-colors"
+            >
+              Ověřit platbu
+            </button>
+            {p.proformaNumber && (
+              <a
+                href={`/checkout/proforma/${p.variableSymbol}`}
+                target="_blank"
+                rel="noopener"
+                class="flex-1 text-center bg-white border border-gray-300 text-gray-800 font-semibold px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Stáhnout doklad pro účtárnu
+              </a>
+            )}
+          </div>
+          <p class="text-xs text-gray-500 text-center mt-3">
+            Mezibankovní převody mohou trvat až několik hodin. Po přijetí platby vám pošleme přístup do kurzů a daňový doklad e-mailem na <strong>{p.email}</strong>.
           </p>
         </div>
       </div>

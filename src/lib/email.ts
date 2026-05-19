@@ -69,7 +69,7 @@ function primaryButton(href: string, label: string): string {
 
 // ─── Šablony: purchase flow ─────────────────────────────────────
 
-/** Po vytvoření pending FIO objednávky — instrukce k platbě. */
+/** Po vytvoření pending FIO objednávky — instrukce k platbě + odkaz na ZD. */
 export function fioPendingHtml(
   payUrl: string,
   amount: number,
@@ -79,16 +79,26 @@ export function fioPendingHtml(
 ): string {
   const formattedAmount = amount.toLocaleString("cs-CZ");
   const proformaBlock = proformaUrl && proformaNumber
-    ? `<p style="font-size: 14px; line-height: 1.6; margin-top: 16px;">
-        Zálohový doklad <strong>${proformaNumber}</strong> najdete zde:
-        <a href="${proformaUrl}" style="color: #4f46e5;">otevřít zálohový doklad</a>.
-        Daňový doklad (fakturu) pošleme po přijetí platby.
-      </p>`
+    ? `<div style="background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0 0 8px; font-size: 14px; color: #3730a3;">
+          <strong>Zálohový doklad pro účtárnu</strong>
+        </p>
+        <p style="margin: 0 0 12px; font-size: 14px; color: #4338ca;">
+          Číslo dokladu: <strong>${proformaNumber}</strong>. Doklad můžete předat účtárně ke schválení platby —
+          najdete ho na stejném odkazu jako platební údaje, nebo přímo zde:
+        </p>
+        <p style="margin: 0;">
+          <a href="${proformaUrl}" style="color: #4f46e5; font-weight: 600;">Otevřít zálohový doklad ${proformaNumber} →</a>
+        </p>
+        <p style="margin: 12px 0 0; font-size: 12px; color: #6366f1;">
+          Daňový doklad (fakturu v PDF) zašleme automaticky po přijetí platby.
+        </p>
+      </div>`
     : "";
   return emailWrapper(`
     <p style="font-size: 16px; line-height: 1.5;">Děkujeme za objednávku!</p>
     <p style="font-size: 16px; line-height: 1.5;">Pro aktivaci přístupu uhraďte <strong>${formattedAmount} Kč</strong> bankovním převodem do <strong>${dueDate}</strong>.</p>
-    ${primaryButton(payUrl, "Zobrazit platební údaje a QR kód")}
+    ${primaryButton(payUrl, "Zobrazit platební údaje, QR kód a doklad")}
     ${proformaBlock}
     <p style="font-size: 14px; color: #666; line-height: 1.5;">
       Po připsání platby na účet vám pošleme přihlašovací odkaz. Mezibankovní převody obvykle trvají 1 pracovní den.

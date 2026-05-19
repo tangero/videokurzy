@@ -21,20 +21,21 @@ import { TermsPage } from "./views/terms";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// Prepend DOCTYPE to all HTML responses (Hono JSX doesn't add it automatically)
+// Prepend DOCTYPE to all HTML responses (Hono JSX doesn't add it automatically).
+// Pokud body už začíná s <!DOCTYPE, ponecháme. Vždy ale vytvoříme novou Response,
+// protože `c.res.text()` consume body — bez re-create by zůstal prázdný stream
+// a Cloudflare worker by vrátil 500 "Worker threw exception".
 app.use("*", async (c, next) => {
   await next();
   const ct = c.res.headers.get("content-type") ?? "";
-  if (ct.includes("text/html")) {
-    const body = await c.res.text();
-    if (!body.startsWith("<!DOCTYPE")) {
-      c.res = new Response("<!DOCTYPE html>" + body, {
-        status: c.res.status,
-        statusText: c.res.statusText,
-        headers: c.res.headers,
-      });
-    }
-  }
+  if (!ct.includes("text/html")) return;
+  const body = await c.res.text();
+  const finalBody = body.startsWith("<!DOCTYPE") ? body : "<!DOCTYPE html>" + body;
+  c.res = new Response(finalBody, {
+    status: c.res.status,
+    statusText: c.res.statusText,
+    headers: c.res.headers,
+  });
 });
 
 // Auth middleware on all routes (sets user if logged in)
