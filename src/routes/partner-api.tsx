@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, like, ne, or, sql } from "drizzle-orm";
 import { purchase, siteConfig } from "../db/schema";
 import { user } from "../db/auth-schema";
 import { requirePartnerKey } from "../middleware/partner-auth";
@@ -57,6 +57,8 @@ function computeAmount(type: string, discountPercent: number, prices: Prices): n
   return Math.round(base * (1 - pct / 100));
 }
 
+type PurchaseKind = "paid" | "comp" | "staff";
+
 interface PurchaseRow {
   id: number;
   email: string;
@@ -73,10 +75,14 @@ interface PurchaseRow {
   discountCode: string | null;
   fakturoidInvoiceId: number | null;
   fakturoidSubjectId: number | null;
+  kind: PurchaseKind;
+  compReason: string | null;
+  grantedBy: string | null;
   userName: string | null;
 }
 
 function serializePurchase(row: PurchaseRow, prices: Prices) {
+  const isPaid = row.kind === "paid";
   return {
     id: row.id,
     email: row.email,
@@ -88,8 +94,13 @@ function serializePurchase(row: PurchaseRow, prices: Prices) {
     fio_transaction_id: row.fioTransactionId,
     stripe_payment_id: row.stripePaymentId,
     status: row.status,
+    kind: row.kind,
+    comp_reason: row.compReason,
+    granted_by: row.grantedBy,
     base_price: basePrice(row.type, prices),
-    amount: computeAmount(row.type, row.discountPercent, prices),
+    // Granty (comp/staff) nemají reálnou částku — vracíme 0, ať se omylem
+    // nezapočítají do revenue v konzumentu.
+    amount: isPaid ? computeAmount(row.type, row.discountPercent, prices) : 0,
     discount_percent: row.discountPercent,
     discount_code: row.discountCode,
     fakturoid_invoice_id: row.fakturoidInvoiceId,
@@ -109,6 +120,8 @@ partner.get("/api/partner/purchases", async (c) => {
 
   const url = new URL(c.req.url);
   const statusParam = url.searchParams.get("status") ?? "all";
+  const kindParam = url.searchParams.get("kind"); // 'paid' | 'comp' | 'staff' | null
+  const includeStaff = url.searchParams.get("include_staff") === "1";
   const search = (url.searchParams.get("search") ?? "").trim();
   const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
   const limit = Math.min(
@@ -120,6 +133,13 @@ partner.get("/api/partner/purchases", async (c) => {
   const conditions = [] as ReturnType<typeof eq>[];
   if (statusParam !== "all" && (VALID_STATUSES as readonly string[]).includes(statusParam)) {
     conditions.push(eq(purchase.status, statusParam as PurchaseStatus));
+  }
+  // Staff řádky (admin uživatelé) jsou audit, ne zákazníci — defaultně skryté.
+  // Explicitní `kind` filtr má přednost; `include_staff=1` umožní zobrazit vše.
+  if (kindParam && (["paid", "comp", "staff"] as const).includes(kindParam as PurchaseKind)) {
+    conditions.push(eq(purchase.kind, kindParam as PurchaseKind));
+  } else if (!includeStaff) {
+    conditions.push(ne(purchase.kind, "staff"));
   }
   if (search) {
     const pattern = `%${search}%`;
@@ -153,6 +173,9 @@ partner.get("/api/partner/purchases", async (c) => {
       discountCode: purchase.discountCode,
       fakturoidInvoiceId: purchase.fakturoidInvoiceId,
       fakturoidSubjectId: purchase.fakturoidSubjectId,
+      kind: purchase.kind,
+      compReason: purchase.compReason,
+      grantedBy: purchase.grantedBy,
       userName: user.name,
     })
     .from(purchase)
@@ -168,29 +191,40 @@ partner.get("/api/partner/purchases", async (c) => {
   const [totalRow] = whereExpr ? await totalQuery.where(whereExpr) : await totalQuery;
   const total = Number(totalRow?.count ?? 0);
 
-  // Stats across all rows (ignore current filter — gives consistent dashboard numbers).
+  // Stats across all rows (ignore current filter — gives consistent dashboard
+  // numbers). Staff řádky jsou audit přístupu administrátorů a do statistik
+  // zákazníků nepatří, takže je z agregace úplně vynecháme.
   const statsRows = (await db
     .select({
       status: purchase.status,
       type: purchase.type,
       discountPercent: purchase.discountPercent,
+      kind: purchase.kind,
     })
-    .from(purchase)) as Array<{
+    .from(purchase)
+    .where(ne(purchase.kind, "staff"))) as Array<{
       status: PurchaseStatus;
       type: "individual" | "organization";
       discountPercent: number;
+      kind: PurchaseKind;
     }>;
 
   let pending = 0;
-  let active = 0;
+  let activePaid = 0;
+  let activeComp = 0;
   let expired = 0;
   let refunded = 0;
   let totalRevenue = 0;
   for (const s of statsRows) {
     if (s.status === "pending") pending++;
     else if (s.status === "active") {
-      active++;
-      totalRevenue += computeAmount(s.type, s.discountPercent, prices);
+      if (s.kind === "paid") {
+        activePaid++;
+        totalRevenue += computeAmount(s.type, s.discountPercent, prices);
+      } else {
+        // comp (staff je vyfiltrován výše)
+        activeComp++;
+      }
     } else if (s.status === "expired") expired++;
     else if (s.status === "refunded") refunded++;
   }
@@ -204,9 +238,13 @@ partner.get("/api/partner/purchases", async (c) => {
     stats: {
       total: statsRows.length,
       pending,
-      active,
+      // active = součet pro UI, plus rozpad pro nové dashboard karty.
+      active: activePaid + activeComp,
+      active_paid: activePaid,
+      active_comp: activeComp,
       expired,
       refunded,
+      // Revenue jen z reálně zaplacených objednávek.
       total_revenue: totalRevenue,
     },
   });
@@ -236,6 +274,9 @@ partner.get("/api/partner/purchases/:id", async (c) => {
       discountCode: purchase.discountCode,
       fakturoidInvoiceId: purchase.fakturoidInvoiceId,
       fakturoidSubjectId: purchase.fakturoidSubjectId,
+      kind: purchase.kind,
+      compReason: purchase.compReason,
+      grantedBy: purchase.grantedBy,
       userName: user.name,
     })
     .from(purchase)

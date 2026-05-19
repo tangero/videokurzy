@@ -14,6 +14,9 @@ async function seedPurchase(opts: {
   fakturoidInvoiceId?: number | null;
   createdAt?: Date;
   expiresAt?: Date;
+  kind?: "paid" | "comp" | "staff";
+  compReason?: string | null;
+  grantedBy?: string | null;
 } = {}) {
   const createdAt = opts.createdAt ?? new Date("2026-05-01T10:00:00Z");
   const expiresAt = opts.expiresAt ?? new Date("2027-05-01T10:00:00Z");
@@ -21,8 +24,9 @@ async function seedPurchase(opts: {
     INSERT INTO purchase (
       id, email, userId, type, paymentMethod, variableSymbol, fioTransactionId,
       stripePaymentId, stripeSubscriptionId, status, expiresAt, createdAt,
-      discountPercent, discountCode, fakturoidInvoiceId, fakturoidSubjectId
-    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, NULL)
+      discountPercent, discountCode, fakturoidInvoiceId, fakturoidSubjectId,
+      kind, compReason, grantedBy
+    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)
   `;
   await env.DB.prepare(sql)
     .bind(
@@ -36,6 +40,9 @@ async function seedPurchase(opts: {
       Math.floor(createdAt.getTime() / 1000),
       opts.discountPercent ?? 0,
       opts.fakturoidInvoiceId ?? null,
+      opts.kind ?? "paid",
+      opts.compReason ?? null,
+      opts.grantedBy ?? null,
     )
     .run();
 }
@@ -193,6 +200,84 @@ describe("partner-api /api/partner/purchases", () => {
     const bodyVs = await byVs.json<any>();
     expect(bodyVs.total).toBe(1);
     expect(bodyVs.items[0].id).toBe(21);
+  });
+
+  it("excludes staff rows by default and excludes them from revenue/stats", async () => {
+    await seedPurchase({ id: 200, email: "paid@x.cz", status: "active", kind: "paid", variableSymbol: "33000200" });
+    await seedPurchase({ id: 201, email: "comp@x.cz", status: "active", kind: "comp", variableSymbol: "33000201", grantedBy: "patrick@vibecoding.cz" });
+    await seedPurchase({ id: 202, email: "admin@x.cz", status: "active", kind: "staff", variableSymbol: "33000202" });
+
+    const res = await SELF.fetch("https://test.local/api/partner/purchases", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    const body = await res.json<any>();
+
+    // List vrátí jen paid + comp, staff je defaultně skryté
+    expect(body.total).toBe(2);
+    const ids = body.items.map((i: any) => i.id).sort();
+    expect(ids).toEqual([200, 201]);
+
+    // Stats: staff je úplně vynechaný, revenue jen z paid
+    expect(body.stats).toMatchObject({
+      total: 2,
+      active: 2,
+      active_paid: 1,
+      active_comp: 1,
+      total_revenue: 2000, // jen paid individual za 2000
+    });
+  });
+
+  it("returns kind/comp metadata and amount=0 for non-paid kinds", async () => {
+    await seedPurchase({
+      id: 210,
+      email: "comp@x.cz",
+      type: "individual",
+      status: "active",
+      kind: "comp",
+      compReason: "Recenze pro vibecoding.cz",
+      grantedBy: "patrick@vibecoding.cz",
+      variableSymbol: "33000210",
+    });
+
+    const res = await SELF.fetch("https://test.local/api/partner/purchases", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    const body = await res.json<any>();
+    const comp = body.items[0];
+
+    // Granty neukazují finanční částku — base_price zůstává pro referenci,
+    // amount musí být 0, aby UI klidně mohlo zobrazovat amount bez další podmínky.
+    expect(comp.kind).toBe("comp");
+    expect(comp.amount).toBe(0);
+    expect(comp.base_price).toBe(2000);
+    expect(comp.comp_reason).toBe("Recenze pro vibecoding.cz");
+    expect(comp.granted_by).toBe("patrick@vibecoding.cz");
+  });
+
+  it("filters by kind=comp", async () => {
+    await seedPurchase({ id: 220, status: "active", kind: "paid", variableSymbol: "33000220" });
+    await seedPurchase({ id: 221, status: "active", kind: "comp", variableSymbol: "33000221" });
+    await seedPurchase({ id: 222, status: "active", kind: "staff", variableSymbol: "33000222" });
+
+    const res = await SELF.fetch(
+      "https://test.local/api/partner/purchases?kind=comp",
+      { headers: { "X-Partner-Key": PARTNER_KEY } },
+    );
+    const body = await res.json<any>();
+    expect(body.total).toBe(1);
+    expect(body.items[0].id).toBe(221);
+  });
+
+  it("include_staff=1 surfaces staff rows", async () => {
+    await seedPurchase({ id: 230, status: "active", kind: "paid", variableSymbol: "33000230" });
+    await seedPurchase({ id: 231, status: "active", kind: "staff", variableSymbol: "33000231" });
+
+    const res = await SELF.fetch(
+      "https://test.local/api/partner/purchases?include_staff=1",
+      { headers: { "X-Partner-Key": PARTNER_KEY } },
+    );
+    const body = await res.json<any>();
+    expect(body.total).toBe(2);
   });
 
   it("paginates", async () => {

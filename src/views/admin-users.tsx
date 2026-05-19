@@ -9,22 +9,39 @@ function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function accessBadge(access: AdminUserListItem["activeAccess"], expiresAt: Date | null) {
+function accessBadge(
+  access: AdminUserListItem["activeAccess"],
+  expiresAt: Date | null,
+  source: AdminUserListItem["accessSource"],
+) {
   if (!access) {
-    return <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">zdarma</span>;
+    return (
+      <span
+        class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600"
+        title="Bez aktivního přístupu — jen registrace, nebo grant zdarma od admina."
+      >
+        bez licence
+      </span>
+    );
   }
-  const cls = access === "organization"
-    ? "bg-purple-100 text-purple-700"
-    : "bg-emerald-100 text-emerald-700";
-  const label = access === "organization" ? "firemní" : "soukromá";
+  const typeLabel = access === "organization" ? "firemní" : "soukromá";
+  const isGrant = source === "grant";
+  const cls = isGrant
+    ? "bg-indigo-100 text-indigo-700"
+    : access === "organization"
+      ? "bg-purple-100 text-purple-700"
+      : "bg-emerald-100 text-emerald-700";
+  const sourceLabel = isGrant ? "grant zdarma" : "zaplaceno";
   const expired = expiresAt && expiresAt < new Date();
+  const title = `${sourceLabel}${expiresAt ? ` · platnost do ${formatDate(expiresAt)}` : ""}`;
   return (
     <span
-      class={`px-2 py-1 rounded-full text-xs font-medium ${cls} ${expired ? "opacity-60 line-through" : ""}`}
-      title={expiresAt ? `Platnost do ${formatDate(expiresAt)}` : undefined}
+      class={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${cls} ${expired ? "opacity-60 line-through" : ""}`}
+      title={title}
     >
-      {label}
-      {expiresAt && <span class="ml-1 font-normal">do {formatDate(expiresAt)}</span>}
+      <span>{typeLabel}</span>
+      <span class="font-normal opacity-80">· {sourceLabel}</span>
+      {expiresAt && <span class="font-normal opacity-70">do {formatDate(expiresAt)}</span>}
     </span>
   );
 }
@@ -126,7 +143,7 @@ export function AdminUsersList({
                     {u.role}
                   </span>
                 </td>
-                <td class="px-4 py-2">{accessBadge(u.activeAccess, u.accessExpiresAt)}</td>
+                <td class="px-4 py-2">{accessBadge(u.activeAccess, u.accessExpiresAt, u.accessSource)}</td>
                 <td class="px-4 py-2 text-gray-500">{formatDate(u.createdAt)}</td>
                 <td class="px-4 py-2 text-right">
                   <a href={`/admin/users/${u.id}`} class="text-indigo-600 hover:underline text-xs">

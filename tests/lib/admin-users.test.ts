@@ -23,16 +23,18 @@ describe("createAdminUser", () => {
     db = drizzle(env.DB, { schema: { ...authSchema, ...identitySchema, ...appSchema } });
   });
 
-  it("creates a verified user with primary email record and paid admin grant", async () => {
+  it("creates a verified user with primary email record and a comp purchase", async () => {
     const created = await createAdminUser(db, {
       email: "  New.User@Example.cz ",
       name: "Nový Uživatel",
-      role: "admin",
+      role: "user",
       access: "individual",
+      grantedBy: "patrick@vibecoding.cz",
+      compReason: "Recenze",
     });
 
     expect(created.email).toBe("new.user@example.cz");
-    expect(created.role).toBe("admin");
+    expect(created.role).toBe("user");
 
     const userRow = await db
       .select()
@@ -55,17 +57,37 @@ describe("createAdminUser", () => {
       .where(eq(appSchema.purchase.userId, created.id))
       .get();
     expect(purchaseRow?.type).toBe("individual");
-    expect(purchaseRow?.paymentMethod).toBe("stripe");
     expect(purchaseRow?.status).toBe("active");
-    expect(purchaseRow?.stripePaymentId).toMatch(/^admin_grant_/);
+    expect(purchaseRow?.kind).toBe("comp");
+    expect(purchaseRow?.grantedBy).toBe("patrick@vibecoding.cz");
+    expect(purchaseRow?.compReason).toBe("Recenze");
+    // Granty nepoužívají Stripe namespace — nezamořují stripePaymentId UNIQUE index.
+    expect(purchaseRow?.stripePaymentId).toBeNull();
   });
 
-  it("uses a 90 day default expiry for paid admin grants", async () => {
+  it("skips purchase creation for admin role (access is granted via user.role)", async () => {
+    const created = await createAdminUser(db, {
+      email: "boss@example.cz",
+      role: "admin",
+      access: "individual",
+    });
+
+    expect(created.role).toBe("admin");
+
+    const purchases = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.userId, created.id));
+    expect(purchases).toEqual([]);
+  });
+
+  it("uses a 90 day default expiry for comp grants", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-17T08:00:00.000Z"));
 
     const created = await createAdminUser(db, {
       email: "trial@example.cz",
+      role: "user",
       access: "individual",
     });
 
@@ -77,9 +99,10 @@ describe("createAdminUser", () => {
     expect(purchaseRow?.expiresAt.toISOString()).toBe("2026-08-15T08:00:00.000Z");
   });
 
-  it("stores an explicit access expiry for paid admin grants", async () => {
+  it("stores an explicit access expiry for comp grants", async () => {
     const created = await createAdminUser(db, {
       email: "expires@example.cz",
+      role: "user",
       access: "organization",
       expiresAt: new Date("2026-09-30T23:59:59.000Z"),
     });
@@ -90,6 +113,7 @@ describe("createAdminUser", () => {
       .where(eq(appSchema.purchase.userId, created.id))
       .get();
     expect(purchaseRow?.type).toBe("organization");
+    expect(purchaseRow?.kind).toBe("comp");
     expect(purchaseRow?.expiresAt.toISOString()).toBe("2026-09-30T23:59:59.000Z");
   });
 

@@ -226,26 +226,17 @@ admin.get("/admin", async (c) => {
   const [purchaseCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase);
-  // Rozpad pro karty: zaplacené = active s reálnou platbou (ne admin grant),
-  // admin granty = active s prefixem admin_grant_, pending = čekající na FIO/Stripe.
+  // Rozpad pro karty: zaplacené = active a kind='paid', granty = kind='comp',
+  // pending = čekající na FIO/Stripe. Staff řádky (kind='staff') jsou audit
+  // přístupu administrátorů a do business statistik nepatří.
   const [purchasePaidCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase)
-    .where(
-      and(
-        eq(purchase.status, "active"),
-        sql`(${purchase.stripePaymentId} IS NULL OR ${purchase.stripePaymentId} NOT LIKE 'admin_grant_%')`,
-      ),
-    );
+    .where(and(eq(purchase.status, "active"), eq(purchase.kind, "paid")));
   const [purchaseGrantCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase)
-    .where(
-      and(
-        eq(purchase.status, "active"),
-        sql`${purchase.stripePaymentId} LIKE 'admin_grant_%'`,
-      ),
-    );
+    .where(and(eq(purchase.status, "active"), eq(purchase.kind, "comp")));
   const [purchasePendingCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase)
@@ -276,6 +267,7 @@ admin.get("/admin", async (c) => {
           createdAt: purchase.createdAt,
           expiresAt: purchase.expiresAt,
           stripePaymentId: purchase.stripePaymentId,
+          kind: purchase.kind,
         })
         .from(purchase)
         .where(inArray(purchase.email, recentUserEmails))
@@ -389,13 +381,20 @@ admin.get("/admin", async (c) => {
           </div>
           <div
             class="bg-white p-4 rounded-lg border"
-            title="Záznamy v tabulce purchase. Zaplaceno = active s reálnou platbou; granty = admin přístupy zdarma; čeká = pending na FIO/Stripe."
+            title="Všechny řádky v tabulce purchase bez ohledu na stav: aktivní zaplacené, admin granty zdarma, pending čekající na platbu i historické (expired/refunded)."
           >
-            <p class="text-sm text-gray-500">Nákupy</p>
+            <p class="text-sm text-gray-500">Nákupy (celkem řádků)</p>
             <p class="text-2xl font-bold">{purchaseCount.count}</p>
             <p class="text-xs text-gray-500 mt-1">
-              {purchasePaidCount.count} zaplaceno · {purchaseGrantCount.count} grant
-              {purchasePendingCount.count > 0 && <> · {purchasePendingCount.count} čeká</>}
+              <strong class="text-emerald-700">{purchasePaidCount.count}</strong> zaplaceno
+              {" · "}
+              <strong class="text-indigo-700">{purchaseGrantCount.count}</strong> grant zdarma
+              {purchasePendingCount.count > 0 && (
+                <> · <strong class="text-yellow-700">{purchasePendingCount.count}</strong> čeká na platbu</>
+              )}
+            </p>
+            <p class="text-xs text-gray-400 mt-0.5">
+              zbytek tvoří expired/refunded historie
             </p>
           </div>
           <div class="bg-white p-4 rounded-lg border">
@@ -520,13 +519,14 @@ admin.get("/admin", async (c) => {
                   };
                 } else if (p.status === "active") {
                   const isTestStripe = p.stripePaymentId?.startsWith("cs_test_");
-                  const isAdminGrant = p.stripePaymentId?.startsWith("admin_grant_");
+                  const isGrant = p.kind === "comp" || p.kind === "staff";
                   let detail = `${p.type === "organization" ? "firemní" : "soukromá"} do ${p.expiresAt.toLocaleDateString("cs-CZ")}`;
                   if (isTestStripe) detail += " · ⚠ test mode";
-                  else if (isAdminGrant) detail += " · grant od admina";
+                  else if (p.kind === "staff") detail += " · staff (admin)";
+                  else if (p.kind === "comp") detail += " · grant od admina";
                   else if (p.paymentMethod === "stripe") detail += " · Stripe";
                   else if (p.paymentMethod === "fio") detail += " · FIO";
-                  statusBadge = isAdminGrant
+                  statusBadge = isGrant
                     ? {
                         label: "zdarma (grant)",
                         cls: "bg-indigo-100 text-indigo-800",
@@ -687,7 +687,10 @@ admin.post("/admin/users/new", async (c) => {
 
   try {
     const expiresAt = parseAdminGrantExpiresAt(accessExpiresOn);
-    const result = await createAdminUsers(db, { emails, name, role, access, expiresAt });
+    const result = await createAdminUsers(db, {
+      emails, name, role, access, expiresAt,
+      grantedBy: currentUser.email,
+    });
     if (result.errors.length > 0) {
       const failed = result.errors.map((e) => `${e.email}: ${e.message}`).join("; ");
       throw new Error(`${result.created.length} založeno, ${result.errors.length} se nepodařilo: ${failed}`);
@@ -837,11 +840,13 @@ admin.post("/admin/users/:id/delete", async (c) => {
 });
 
 admin.post("/admin/users/:id/purchases/new", async (c) => {
+  const currentUser = c.get("user")!;
   const id = c.req.param("id");
   const db = drizzle(c.env.DB);
   const body = await c.req.parseBody();
   const access = String(body.access ?? "individual");
   const expiresOn = String(body.expiresOn ?? "");
+  const compReason = String(body.compReason ?? "").trim() || null;
 
   if (access !== "individual" && access !== "organization") {
     return c.redirect(`/admin/users/${id}?err=${encodeURIComponent("Neplatný typ přístupu.")}`);
@@ -849,7 +854,11 @@ admin.post("/admin/users/:id/purchases/new", async (c) => {
 
   try {
     const expiresAt = parseAdminGrantExpiresAt(expiresOn);
-    await grantAdminAccess(db, { userId: id, access, expiresAt });
+    await grantAdminAccess(db, {
+      userId: id, access, expiresAt,
+      grantedBy: currentUser.email,
+      compReason,
+    });
     return c.redirect(`/admin/users/${id}?ok=granted`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Grant se nepodařilo přidat.");
@@ -1010,8 +1019,8 @@ admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
 
   for (const p of candidates) {
     if (p.fakturoidInvoiceId) { skipped++; continue; }
-    // Admin granty nejsou reálné platby — žádná faktura.
-    if (p.stripePaymentId?.startsWith("admin_grant_")) { skipped++; continue; }
+    // Granty (comp/staff) nejsou reálné platby — žádná faktura.
+    if (p.kind !== "paid") { skipped++; continue; }
 
     // Vypočítej, kolik měli zaplatit (pro match v Fakturoid invoices).
     const fullPrice = p.type === "organization" ? priceOrganization : priceIndividual;
@@ -1144,8 +1153,8 @@ admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
 
   for (const p of candidates) {
     if (p.fakturoidInvoiceId) { skipped++; continue; }
-    // Admin granty: žádná reálná platba, faktura nedává smysl.
-    if (p.stripePaymentId?.startsWith("admin_grant_")) { skipped++; continue; }
+    // Granty (comp/staff): žádná reálná platba, faktura nedává smysl.
+    if (p.kind !== "paid") { skipped++; continue; }
 
     // Zjisti reálnou částku.
     let amountCzk = 0;

@@ -90,6 +90,12 @@ export const purchase = sqliteTable("purchase", {
   discountCode: text("discountCode"),
   fakturoidInvoiceId: integer("fakturoidInvoiceId"),
   fakturoidSubjectId: integer("fakturoidSubjectId"),
+  // 'paid' = reálná platba, 'comp' = komplimentár (zdarma od admina),
+  // 'staff' = audit přístupu administrátora (user.role='admin').
+  // Pouze 'paid' se započítává do revenue a fakturace.
+  kind: text("kind", { enum: ["paid", "comp", "staff"] }).notNull().default("paid"),
+  compReason: text("compReason"),
+  grantedBy: text("grantedBy"),
 });
 
 // ─── Relations ────────────────────────────────────────────────────

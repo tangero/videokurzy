@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { user } from "../db/schema";
@@ -53,7 +53,15 @@ function parsePastedEmails(value: string): string[] {
 
 export async function createAdminUser(
   db: Db,
-  opts: { email: string; name?: string; role?: string; access?: string; expiresAt?: Date },
+  opts: {
+    email: string;
+    name?: string;
+    role?: string;
+    access?: string;
+    expiresAt?: Date;
+    grantedBy?: string | null;
+    compReason?: string | null;
+  },
 ): Promise<CreateAdminUserResult> {
   const email = normalizeEmail(opts.email);
   const name = opts.name?.trim() || null;
@@ -96,14 +104,19 @@ export async function createAdminUser(
     db as unknown as Parameters<typeof linkPurchasesToUser>[2],
   );
 
-  if (access !== "free") {
+  // Admin uživatelé mají přístup z titulu role (viz hasAccess()) — purchase
+  // řádek by jen plnil tabulku objednávek "fake zákazníkem". Nezakládáme.
+  if (access !== "free" && role !== "admin") {
     await db.insert(purchase).values({
       email,
       userId: id,
       type: access,
-      paymentMethod: "stripe",
-      stripePaymentId: `admin_grant_${nanoid(16)}`,
+      paymentMethod: "stripe", // historický artefakt — pro comp je irelevantní
+      stripePaymentId: null,    // čistý namespace; granty se poznají podle kind='comp'
       status: "active",
+      kind: "comp",
+      grantedBy: opts.grantedBy ?? null,
+      compReason: opts.compReason ?? null,
       expiresAt: opts.expiresAt ?? defaultAdminGrantExpiresAt(now),
       createdAt: now,
     });
@@ -120,6 +133,9 @@ export type AdminUserListItem = {
   createdAt: Date;
   activeAccess: AdminAccess | null;
   accessExpiresAt: Date | null;
+  // 'paid' = reálně zaplaceno (Stripe/FIO), 'grant' = comp/staff od admina,
+  // null = bez aktivního přístupu (jen registrace nebo expired).
+  accessSource: "paid" | "grant" | null;
 };
 
 export async function listAdminUsers(
@@ -167,6 +183,7 @@ export async function listAdminUsers(
       email: purchase.email,
       type: purchase.type,
       expiresAt: purchase.expiresAt,
+      kind: purchase.kind,
     })
     .from(purchase)
     .where(
@@ -177,13 +194,22 @@ export async function listAdminUsers(
     );
 
   const emailToId = new Map(rows.map((r) => [r.email.toLowerCase(), r.id]));
-  const activeByUser = new Map<string, { type: AdminAccess; expiresAt: Date }>();
+  const activeByUser = new Map<string, {
+    type: AdminAccess;
+    expiresAt: Date;
+    source: "paid" | "grant";
+  }>();
   for (const p of activePurchases) {
     const userId = p.userId ?? emailToId.get(p.email.toLowerCase()) ?? null;
     if (!userId) continue;
+    const source: "paid" | "grant" = p.kind === "paid" ? "paid" : "grant";
     const prev = activeByUser.get(userId);
     if (!prev || prev.expiresAt < p.expiresAt) {
-      activeByUser.set(userId, { type: p.type as AdminAccess, expiresAt: p.expiresAt });
+      activeByUser.set(userId, {
+        type: p.type as AdminAccess,
+        expiresAt: p.expiresAt,
+        source,
+      });
     }
   }
 
@@ -194,6 +220,7 @@ export async function listAdminUsers(
         ...r,
         activeAccess: active?.type ?? null,
         accessExpiresAt: active?.expiresAt ?? null,
+        accessSource: active?.source ?? null,
       };
     }),
     total,
@@ -302,22 +329,34 @@ export async function deleteAdminUser(db: Db, id: string): Promise<void> {
 
 export async function grantAdminAccess(
   db: Db,
-  opts: { userId: string; access: Exclude<AdminAccess, "free">; expiresAt: Date },
+  opts: {
+    userId: string;
+    access: Exclude<AdminAccess, "free">;
+    expiresAt: Date;
+    grantedBy?: string | null;
+    compReason?: string | null;
+  },
 ): Promise<void> {
   const u = await db
-    .select({ id: user.id, email: user.email })
+    .select({ id: user.id, email: user.email, role: user.role })
     .from(user)
     .where(eq(user.id, opts.userId))
     .get();
   if (!u) throw new Error("Uživatel nenalezen.");
+  if (u.role === "admin") {
+    throw new Error("Administrátor má přístup z titulu role, grant není potřeba.");
+  }
   const now = new Date();
   await db.insert(purchase).values({
     email: u.email,
     userId: u.id,
     type: opts.access,
-    paymentMethod: "stripe",
-    stripePaymentId: `admin_grant_${nanoid(16)}`,
+    paymentMethod: "stripe",   // historický artefakt — pro comp irelevantní
+    stripePaymentId: null,
     status: "active",
+    kind: "comp",
+    grantedBy: opts.grantedBy ?? null,
+    compReason: opts.compReason ?? null,
     expiresAt: opts.expiresAt,
     createdAt: now,
   });
@@ -357,7 +396,15 @@ export async function extendAdminPurchase(
 
 export async function createAdminUsers(
   db: Db,
-  opts: { emails: string; name?: string; role?: string; access?: string; expiresAt?: Date },
+  opts: {
+    emails: string;
+    name?: string;
+    role?: string;
+    access?: string;
+    expiresAt?: Date;
+    grantedBy?: string | null;
+    compReason?: string | null;
+  },
 ): Promise<{ created: CreateAdminUserResult[]; errors: { email: string; message: string }[] }> {
   const emails = parsePastedEmails(opts.emails);
   if (emails.length === 0) {
@@ -376,6 +423,8 @@ export async function createAdminUsers(
         role: opts.role,
         access: opts.access,
         expiresAt: opts.expiresAt,
+        grantedBy: opts.grantedBy,
+        compReason: opts.compReason,
       }));
     } catch (err) {
       errors.push({ email, message: (err as Error).message || "Uživatele se nepodařilo založit." });
