@@ -30,6 +30,8 @@ import {
 } from "../lib/transcribe";
 import { countDiscountedActivePurchases } from "../lib/discount";
 import { scanFioPayments } from "../scheduled";
+import { exportPurchaseInvoice } from "../lib/fakturoid";
+import Stripe from "stripe";
 import {
   AdminNav,
   AdminCoursesList,
@@ -308,6 +310,24 @@ admin.get("/admin", async (c) => {
             {userCreated}. Přihlášení probíhá přes magic link na /login.
           </div>
         )}
+        {c.req.query("invoiceFill") && (() => {
+          const msg = c.req.query("invoiceFill") ?? "";
+          const isError = /chyba|error/i.test(msg);
+          return (
+            <div
+              class={`mb-6 rounded-lg border-2 px-5 py-4 text-sm shadow ${
+                isError
+                  ? "border-red-300 bg-red-50 text-red-900"
+                  : "border-emerald-300 bg-emerald-50 text-emerald-900"
+              }`}
+            >
+              <div class="font-semibold mb-1">
+                {isError ? "✕ Dovystavení faktur" : "✓ Dovystavení faktur dokončeno"}
+              </div>
+              <code class="block whitespace-pre-wrap break-all text-xs font-mono">{msg}</code>
+            </div>
+          );
+        })()}
         {c.req.query("fioScan") && (() => {
           const msg = c.req.query("fioScan") ?? "";
           const isError = /chyba|error|failed/i.test(msg);
@@ -383,6 +403,21 @@ admin.get("/admin", async (c) => {
               </button>
             </form>
           </div>
+          <form
+            method="post"
+            action="/admin/api/purchases/issue-missing-invoices"
+            hx-boost="false"
+            class="mt-3 pt-3 border-t border-gray-100"
+          >
+            <button
+              type="submit"
+              class="text-xs text-indigo-600 hover:underline"
+              title="Pro každý aktivní Stripe nákup bez Fakturoid faktury stáhne reálnou částku z Stripe Checkout Session a vystaví fakturu zpětně."
+              onclick="return confirm('Vystavit chybějící Fakturoid faktury pro starší Stripe nákupy?');"
+            >
+              Dovystavit chybějící Fakturoid faktury
+            </button>
+          </form>
           {fioCooldownRemainingMs > 0 && (
             <script dangerouslySetInnerHTML={{ __html: `
               (function () {
@@ -899,6 +934,77 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
 });
 
 // ─── FIO manual scan ─────────────────────────────────────────────
+
+/**
+ * Jednorázové dovystavení Fakturoid faktur pro Stripe nákupy, které byly
+ * provedeny před spuštěním integrace (fakturoidInvoiceId IS NULL). Stáhne
+ * `amount_total` ze Stripe checkout session API, vystaví fakturu a aktualizuje
+ * purchase. Bezpečný k opakovaným během — pokud purchase už invoice má,
+ * přeskočí ji.
+ */
+admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
+  const db = drizzle(c.env.DB);
+  const candidates = await db
+    .select()
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.status, "active"),
+        eq(purchase.paymentMethod, "stripe"),
+      ),
+    );
+
+  const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
+  let issued = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const p of candidates) {
+    if (p.fakturoidInvoiceId) { skipped++; continue; }
+    if (!p.stripePaymentId || !p.stripePaymentId.startsWith("cs_live_")) {
+      skipped++; continue;
+    }
+
+    try {
+      const session = await stripe.checkout.sessions.retrieve(p.stripePaymentId);
+      const amountCzk = session.amount_total ? Math.round(session.amount_total / 100) : 0;
+      if (amountCzk <= 0) {
+        errors.push(`${p.email}: Stripe session bez amount_total`);
+        continue;
+      }
+      const domain = p.type === "organization" ? p.email.split("@")[1] : null;
+      const res = await exportPurchaseInvoice(
+        c.env,
+        {
+          email: p.email,
+          type: p.type as "individual" | "organization",
+          domain,
+          amount: amountCzk,
+          variableSymbol: null,
+        },
+        { sendEmail: true },
+      );
+      if (res.ok && res.invoiceId) {
+        await db
+          .update(purchase)
+          .set({
+            fakturoidInvoiceId: res.invoiceId,
+            fakturoidSubjectId: res.subjectId ?? null,
+          })
+          .where(eq(purchase.id, p.id));
+        issued++;
+      } else {
+        errors.push(`${p.email}: ${res.error ?? "neznámá chyba"}`);
+      }
+    } catch (err) {
+      errors.push(`${p.email}: ${(err as Error).message}`);
+    }
+  }
+
+  const summary = `Dovystaveno faktur: ${issued}, přeskočeno: ${skipped}` +
+    (errors.length > 0 ? `, chyby: ${errors.join(" | ")}` : "");
+  return c.redirect(`/admin?invoiceFill=${encodeURIComponent(summary)}`);
+});
 
 // Diagnostické volání FIO API — zkusí 3 varianty a vrátí, co každá vrátila.
 // Pomáhá rozlišit: invalid token (FIO 500 prázdné body), token bez oprávnění,

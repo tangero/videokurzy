@@ -1,0 +1,240 @@
+import { env, SELF } from "cloudflare:test";
+import { describe, expect, it, beforeEach } from "vitest";
+
+const PARTNER_KEY = "test-partner-key";
+
+async function seedPurchase(opts: {
+  id?: number;
+  email?: string;
+  type?: "individual" | "organization";
+  status?: "pending" | "active" | "expired" | "refunded";
+  variableSymbol?: string | null;
+  paymentMethod?: "stripe" | "fio";
+  discountPercent?: number;
+  fakturoidInvoiceId?: number | null;
+  createdAt?: Date;
+  expiresAt?: Date;
+} = {}) {
+  const createdAt = opts.createdAt ?? new Date("2026-05-01T10:00:00Z");
+  const expiresAt = opts.expiresAt ?? new Date("2027-05-01T10:00:00Z");
+  const sql = `
+    INSERT INTO purchase (
+      id, email, userId, type, paymentMethod, variableSymbol, fioTransactionId,
+      stripePaymentId, stripeSubscriptionId, status, expiresAt, createdAt,
+      discountPercent, discountCode, fakturoidInvoiceId, fakturoidSubjectId
+    ) VALUES (?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, NULL)
+  `;
+  await env.DB.prepare(sql)
+    .bind(
+      opts.id ?? null,
+      opts.email ?? "test@example.com",
+      opts.type ?? "individual",
+      opts.paymentMethod ?? "fio",
+      opts.variableSymbol ?? "33123456",
+      opts.status ?? "pending",
+      Math.floor(expiresAt.getTime() / 1000),
+      Math.floor(createdAt.getTime() / 1000),
+      opts.discountPercent ?? 0,
+      opts.fakturoidInvoiceId ?? null,
+    )
+    .run();
+}
+
+async function clearPurchases() {
+  await env.DB.prepare("DELETE FROM purchase").run();
+}
+
+describe("partner-api /api/partner/health", () => {
+  it("403 without key", async () => {
+    const res = await SELF.fetch("https://test.local/api/partner/health");
+    expect(res.status).toBe(403);
+  });
+
+  it("200 with key", async () => {
+    const res = await SELF.fetch("https://test.local/api/partner/health", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json<{ ok: boolean; service: string }>();
+    expect(body.ok).toBe(true);
+    expect(body.service).toBe("videokurzy");
+  });
+});
+
+describe("partner-api /api/partner/purchases", () => {
+  beforeEach(async () => {
+    await clearPurchases();
+  });
+
+  it("403 without key", async () => {
+    const res = await SELF.fetch("https://test.local/api/partner/purchases");
+    expect(res.status).toBe(403);
+  });
+
+  it("returns empty list with stats", async () => {
+    const res = await SELF.fetch("https://test.local/api/partner/purchases", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json<any>();
+    expect(body.items).toEqual([]);
+    expect(body.total).toBe(0);
+    expect(body.stats).toMatchObject({
+      total: 0,
+      pending: 0,
+      active: 0,
+      total_revenue: 0,
+    });
+  });
+
+  it("lists purchases newest-first with computed amount", async () => {
+    await seedPurchase({
+      id: 1,
+      email: "a@example.com",
+      type: "individual",
+      status: "active",
+      variableSymbol: "33000001",
+      createdAt: new Date("2026-05-01T10:00:00Z"),
+    });
+    await seedPurchase({
+      id: 2,
+      email: "b@example.com",
+      type: "organization",
+      status: "pending",
+      variableSymbol: "33000002",
+      discountPercent: 20,
+      createdAt: new Date("2026-05-02T10:00:00Z"),
+      fakturoidInvoiceId: 999,
+    });
+
+    const res = await SELF.fetch("https://test.local/api/partner/purchases", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    const body = await res.json<any>();
+    expect(body.total).toBe(2);
+    expect(body.items).toHaveLength(2);
+
+    // newest-first
+    expect(body.items[0].id).toBe(2);
+    expect(body.items[0].type).toBe("organization");
+    expect(body.items[0].discount_percent).toBe(20);
+    expect(body.items[0].base_price).toBe(15000);
+    expect(body.items[0].amount).toBe(12000); // 15000 * 0.8
+    expect(body.items[0].fakturoid_invoice_id).toBe(999);
+
+    expect(body.items[1].id).toBe(1);
+    expect(body.items[1].base_price).toBe(2000);
+    expect(body.items[1].amount).toBe(2000);
+
+    expect(body.stats.pending).toBe(1);
+    expect(body.stats.active).toBe(1);
+    expect(body.stats.total_revenue).toBe(2000); // jen active se počítá
+  });
+
+  it("filters by status", async () => {
+    await seedPurchase({ id: 10, status: "active", variableSymbol: "33000010" });
+    await seedPurchase({ id: 11, status: "pending", variableSymbol: "33000011" });
+    await seedPurchase({ id: 12, status: "refunded", variableSymbol: "33000012" });
+
+    const res = await SELF.fetch(
+      "https://test.local/api/partner/purchases?status=pending",
+      { headers: { "X-Partner-Key": PARTNER_KEY } },
+    );
+    const body = await res.json<any>();
+    expect(body.total).toBe(1);
+    expect(body.items[0].id).toBe(11);
+  });
+
+  it("search matches by email and VS", async () => {
+    await seedPurchase({ id: 20, email: "alice@example.com", variableSymbol: "33000020" });
+    await seedPurchase({ id: 21, email: "bob@example.com", variableSymbol: "33000021" });
+
+    const byEmail = await SELF.fetch(
+      "https://test.local/api/partner/purchases?search=alice",
+      { headers: { "X-Partner-Key": PARTNER_KEY } },
+    );
+    const bodyEmail = await byEmail.json<any>();
+    expect(bodyEmail.total).toBe(1);
+    expect(bodyEmail.items[0].email).toBe("alice@example.com");
+
+    const byVs = await SELF.fetch(
+      "https://test.local/api/partner/purchases?search=33000021",
+      { headers: { "X-Partner-Key": PARTNER_KEY } },
+    );
+    const bodyVs = await byVs.json<any>();
+    expect(bodyVs.total).toBe(1);
+    expect(bodyVs.items[0].id).toBe(21);
+  });
+
+  it("paginates", async () => {
+    for (let i = 1; i <= 5; i++) {
+      await seedPurchase({
+        id: 100 + i,
+        variableSymbol: `3300010${i}`,
+        createdAt: new Date(`2026-05-0${i}T10:00:00Z`),
+      });
+    }
+    const res = await SELF.fetch(
+      "https://test.local/api/partner/purchases?page=2&limit=2",
+      { headers: { "X-Partner-Key": PARTNER_KEY } },
+    );
+    const body = await res.json<any>();
+    expect(body.total).toBe(5);
+    expect(body.pages).toBe(3);
+    expect(body.page).toBe(2);
+    expect(body.limit).toBe(2);
+    expect(body.items).toHaveLength(2);
+  });
+});
+
+describe("partner-api /api/partner/purchases/:id", () => {
+  beforeEach(async () => {
+    await clearPurchases();
+  });
+
+  it("403 without key", async () => {
+    const res = await SELF.fetch("https://test.local/api/partner/purchases/1");
+    expect(res.status).toBe(403);
+  });
+
+  it("404 for missing id", async () => {
+    const res = await SELF.fetch("https://test.local/api/partner/purchases/9999", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("400 for non-numeric id", async () => {
+    const res = await SELF.fetch("https://test.local/api/partner/purchases/abc", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns detail", async () => {
+    await seedPurchase({
+      id: 42,
+      email: "detail@example.com",
+      type: "organization",
+      status: "active",
+      paymentMethod: "stripe",
+      variableSymbol: null,
+      discountPercent: 10,
+    });
+    const res = await SELF.fetch("https://test.local/api/partner/purchases/42", {
+      headers: { "X-Partner-Key": PARTNER_KEY },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json<any>();
+    expect(body.purchase).toMatchObject({
+      id: 42,
+      email: "detail@example.com",
+      type: "organization",
+      payment_method: "stripe",
+      status: "active",
+      base_price: 15000,
+      amount: 13500, // 15000 * 0.9
+      discount_percent: 10,
+    });
+  });
+});

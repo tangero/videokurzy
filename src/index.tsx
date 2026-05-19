@@ -12,6 +12,7 @@ import { devRoutes } from "./routes/dev";
 import { adminRoutes } from "./routes/admin";
 import { leadRoutes } from "./routes/leads";
 import internalRoutes from "./routes/internal";
+import partnerRoutes from "./routes/partner-api";
 import profileRoutes from "./routes/profile";
 import { handleQueue } from "./queue";
 import { handleScheduled } from "./scheduled";
@@ -51,6 +52,7 @@ app.route("/", devRoutes);
 app.route("/", leadRoutes);
 app.route("/", adminRoutes);
 app.route("/", internalRoutes);
+app.route("/", partnerRoutes);
 app.route("/", profileRoutes);
 
 // Static pages

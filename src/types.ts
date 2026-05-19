@@ -19,6 +19,7 @@ export interface Env {
   FAKTUROID_CLIENT_SECRET?: string;
   FIO_API_TOKEN: string;
   COOKIE_DOMAIN?: string;
+  VIBECODING_PARTNER_KEY?: string;
 }
 
 export type Variables = {
