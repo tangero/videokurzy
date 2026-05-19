@@ -409,50 +409,17 @@ admin.get("/admin", async (c) => {
               </button>
             </form>
           </div>
-          <div class="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-3">
-            <form
-              method="post"
-              action="/admin/api/purchases/issue-missing-invoices"
-              hx-boost="false"
-            >
-              <button
-                type="submit"
-                class="text-xs text-indigo-600 hover:underline"
-                title="Pro každý aktivní Stripe nákup bez Fakturoid faktury stáhne reálnou částku ze Stripe Checkout Session a vystaví fakturu zpětně."
-                onclick="return confirm('Vystavit chybějící Fakturoid faktury pro starší Stripe nákupy?');"
-              >
-                Dovystavit chybějící Fakturoid faktury
-              </button>
-            </form>
-            <form
-              method="post"
-              action="/admin/api/purchases/mark-invoices-paid"
-              hx-boost="false"
-            >
-              <button
-                type="submit"
-                class="text-xs text-indigo-600 hover:underline"
-                title="Pro každou aktivní purchase s Fakturoid fakturou ve stavu Vystavená/Odeslaná zaeviduje platbu (zaplaceno dnes)."
-                onclick="return confirm('Označit všechny Vystavené/Odeslané Fakturoid faktury jako Zaplacené?');"
-              >
-                Označit nezaplacené faktury jako zaplacené
-              </button>
-            </form>
-            <form
-              method="post"
-              action="/admin/api/purchases/link-orphan-invoices"
-              hx-boost="false"
-            >
-              <button
-                type="submit"
-                class="text-xs text-indigo-600 hover:underline"
-                title="Pro každý aktivní purchase bez fakturoidInvoiceId dohledá fakturu ve Fakturoidu podle emailu+částky, naváže ji a označí zaplacenou."
-                onclick="return confirm('Dohledat osiřelé Fakturoid faktury a navázat je na purchase rows?');"
-              >
-                Dohledat osiřelé faktury
-              </button>
-            </form>
-          </div>
+          {/*
+            Opravné akce nad Fakturoid fakturami jsou skryté — endpointy jsou
+            stále funkční (popis v docs/fakturoid-integration.md), ale tlačítka
+            už nepotřebujeme: nový flow vystavuje faktury přímo jako Zaplacené.
+            Kdyby v budoucnu bylo třeba ad-hoc opravy, lze je zde dočasně
+            zobrazit nebo zavolat curlem z terminálu admina.
+
+            POST /admin/api/purchases/issue-missing-invoices
+            POST /admin/api/purchases/mark-invoices-paid
+            POST /admin/api/purchases/link-orphan-invoices
+          */}
           {fioCooldownRemainingMs > 0 && (
             <script dangerouslySetInnerHTML={{ __html: `
               (function () {

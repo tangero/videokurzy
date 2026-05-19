@@ -156,7 +156,12 @@ async function createSubject(
   })) as FakturoidSubject;
 }
 
-async function createPaidInvoice(
+/**
+ * Vytvoří fakturu ve stavu `open` (Vystavená). Stav přepne na `paid` až
+ * záznam platby v `recordPayment` — `paid_on` na invoice je jen UI hint,
+ * status řídí existence záznamu v `payments`.
+ */
+async function createInvoice(
   env: FakturoidEnv,
   subjectId: number,
   data: PurchaseInvoiceData,
@@ -169,10 +174,6 @@ async function createPaidInvoice(
   const noteParts: string[] = ["Neplaťte, faktura již byla uhrazena."];
   if (data.variableSymbol) noteParts.push(`VS: ${data.variableSymbol}`);
 
-  // Faktura se vystavuje atomicky jako Zaplacená — `paid_on` v request body
-  // znamená, že Fakturoid invoice rovnou zaeviduje jako zaplacenou, aniž bych
-  // musel řetězit další API volání (mark_as_sent + payments.json), která mohou
-  // selhat samostatně a nechat fakturu v částečném stavu.
   const today = new Date().toISOString().split("T")[0];
   const invoice = (await apiRequest(env, "POST", "invoices.json", {
     subject_id: subjectId,
@@ -181,7 +182,6 @@ async function createPaidInvoice(
     vat_price_mode: "without_vat",
     issued_on: today,
     taxable_fulfillment_due: today,
-    paid_on: today,
     lines: [
       {
         name: lineName,
@@ -194,6 +194,19 @@ async function createPaidInvoice(
   })) as FakturoidInvoice;
 
   return invoice;
+}
+
+/** Zaeviduje platbu — Fakturoid přepne fakturu na status `paid`. */
+async function recordPayment(
+  env: FakturoidEnv,
+  invoiceId: number,
+  amount: number,
+): Promise<void> {
+  await apiRequest(env, "POST", `invoices/${invoiceId}/payments.json`, {
+    paid_on: new Date().toISOString().split("T")[0],
+    amount,
+    currency: "CZK",
+  });
 }
 
 /**
@@ -296,9 +309,21 @@ export interface ExportResult {
 }
 
 /**
- * Hlavní orchestrace — vytvoří subject (pokud neexistuje), vystaví zaplacenou
- * fakturu, volitelně ji odešle emailem. Vrací invoice + subject ID pro uložení
- * do `purchase` (pro pozdější dobropisy / audit).
+ * Hlavní orchestrace pro nákup: create subject → create invoice → (volitelně)
+ * pošli emailem → zaeviduj platbu. Konečný stav faktury je vždy `paid`.
+ *
+ * Pořadí kroků je klíčové. Fakturoid status drive existence záznamů, ne pole
+ * `paid_on` na faktuře. Stavový přechod:
+ *   1. POST /invoices.json → `open` (Vystavená).
+ *   2. POST /invoices/{id}/message.json → `sent` (Odeslaná). Volitelné.
+ *   3. POST /invoices/{id}/payments.json → `paid` (Zaplacená). VŽDY poslední,
+ *      protože email by jinak vrátil stav zpět na `sent`.
+ *
+ * Tři chyby v minulosti, kterých se chceme vyhnout:
+ *  - Fire-and-forget volání → worker zabil promise, faktura osiřela bez DB linku.
+ *  - Spoléhat na `paid_on` v invoice body → status zůstal `open`, status řídí
+ *    payments tabulka.
+ *  - Poslat email po payments.json → status se vrátil z `paid` na `sent`.
  */
 export async function exportPurchaseInvoice(
   env: FakturoidEnv,
@@ -311,10 +336,8 @@ export async function exportPurchaseInvoice(
     }
 
     const subject = await createSubject(env, data);
-    const invoice = await createPaidInvoice(env, subject.id, data);
+    const invoice = await createInvoice(env, subject.id, data);
     const slug = await getAccountSlug(env);
-
-    console.log(`Fakturoid: invoice ${invoice.id} for ${data.email} (${data.type})`);
 
     if (options?.sendEmail) {
       try {
@@ -323,6 +346,17 @@ export async function exportPurchaseInvoice(
         console.error("Fakturoid: send invoice email failed:", e);
       }
     }
+
+    // VŽDY poslední krok — záznam platby přepne status na `paid`. Pokud
+    // selže, faktura zůstane `sent` (po emailu) nebo `open` (bez emailu);
+    // /admin/api/purchases/mark-invoices-paid umí takovou fakturu opravit.
+    try {
+      await recordPayment(env, invoice.id, data.amount);
+    } catch (e) {
+      console.error("Fakturoid: record payment failed:", e);
+    }
+
+    console.log(`Fakturoid: invoice ${invoice.id} for ${data.email} (${data.type}) → paid`);
 
     return {
       ok: true,
