@@ -1002,6 +1002,8 @@ admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
 
   for (const p of candidates) {
     if (p.fakturoidInvoiceId) { skipped++; continue; }
+    // Admin granty nejsou reálné platby — žádná faktura.
+    if (p.stripePaymentId?.startsWith("admin_grant_")) { skipped++; continue; }
 
     // Vypočítej, kolik měli zaplatit (pro match v Fakturoid invoices).
     const fullPrice = p.type === "organization" ? priceOrganization : priceIndividual;
@@ -1119,12 +1121,13 @@ admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
   const candidates = await db
     .select()
     .from(purchase)
-    .where(
-      and(
-        eq(purchase.status, "active"),
-        eq(purchase.paymentMethod, "stripe"),
-      ),
-    );
+    .where(eq(purchase.status, "active"));
+
+  // Pro FIO purchases potřebujeme aktuální ceny (Stripe má amount_total v session).
+  const cfgRows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
+  const priceIndividual = parseInt(cfg.price_individual ?? "2000", 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? "15000", 10);
 
   const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
   let issued = 0;
@@ -1133,18 +1136,36 @@ admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
 
   for (const p of candidates) {
     if (p.fakturoidInvoiceId) { skipped++; continue; }
-    if (!p.stripePaymentId || !p.stripePaymentId.startsWith("cs_live_")) {
-      skipped++; continue;
-    }
+    // Admin granty: žádná reálná platba, faktura nedává smysl.
+    if (p.stripePaymentId?.startsWith("admin_grant_")) { skipped++; continue; }
 
-    try {
-      const session = await stripe.checkout.sessions.retrieve(p.stripePaymentId);
-      const amountCzk = session.amount_total ? Math.round(session.amount_total / 100) : 0;
-      if (amountCzk <= 0) {
-        errors.push(`${p.email}: Stripe session bez amount_total`);
+    // Zjisti reálnou částku.
+    let amountCzk = 0;
+    if (p.paymentMethod === "stripe" && p.stripePaymentId?.startsWith("cs_live_")) {
+      try {
+        const session = await stripe.checkout.sessions.retrieve(p.stripePaymentId);
+        amountCzk = session.amount_total ? Math.round(session.amount_total / 100) : 0;
+      } catch (err) {
+        errors.push(`${p.email}: Stripe retrieve ${(err as Error).message}`);
         continue;
       }
-      const domain = p.type === "organization" ? p.email.split("@")[1] : null;
+    } else if (p.paymentMethod === "fio") {
+      // FIO: dopočítej z aktuálních cen a discountPercent na purchase.
+      const fullPrice = p.type === "organization" ? priceOrganization : priceIndividual;
+      const discountFactor = (100 - (p.discountPercent ?? 0)) / 100;
+      amountCzk = Math.floor(fullPrice * discountFactor);
+    } else {
+      skipped++;
+      continue;
+    }
+
+    if (amountCzk <= 0) {
+      errors.push(`${p.email}: nelze určit částku (paymentMethod=${p.paymentMethod})`);
+      continue;
+    }
+
+    const domain = p.type === "organization" ? p.email.split("@")[1] : null;
+    try {
       const res = await exportPurchaseInvoice(
         c.env,
         {
@@ -1152,7 +1173,7 @@ admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
           type: p.type as "individual" | "organization",
           domain,
           amount: amountCzk,
-          variableSymbol: null,
+          variableSymbol: p.variableSymbol,
         },
         { sendEmail: true },
       );
@@ -1174,7 +1195,7 @@ admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
   }
 
   const summary = `Dovystaveno faktur: ${issued}, přeskočeno: ${skipped}` +
-    (errors.length > 0 ? `, chyby: ${errors.join(" | ")}` : "");
+    (errors.length > 0 ? `, chyby: ${errors.slice(0, 5).join(" | ")}` : "");
   return c.redirect(`/admin?invoiceFill=${encodeURIComponent(summary)}`);
 });
 
