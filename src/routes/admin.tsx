@@ -265,6 +265,12 @@ admin.get("/admin", async (c) => {
   const orgs = await db.select().from(organization).orderBy(asc(organization.createdAt));
   const userCreated = c.req.query("userCreated");
 
+  const lastFioScan = await readLastFioScan(c.env);
+  const nowMs = Date.now();
+  const fioCooldownRemainingMs = lastFioScan
+    ? Math.max(0, FIO_SCAN_COOLDOWN_MS - (nowMs - lastFioScan.at))
+    : 0;
+
   // I3: načíst emaily kupujících pro detekci domain mismatch
   const orgPurchases = await db
     .select({ email: purchase.email, createdAt: purchase.createdAt })
@@ -339,15 +345,67 @@ admin.get("/admin", async (c) => {
 
         {/* FIO manual scan — hx-boost="false" obchází htmx interceptor, jinak
            form submit projde jako AJAX a 303 redirect neproběhne čistě. */}
-        <form method="post" action="/admin/api/fio/scan" hx-boost="false" class="mb-8">
-          <button
-            type="submit"
-            class="text-sm bg-white border border-gray-300 px-3 py-2 rounded hover:bg-gray-50"
-            title="Stáhne aktuální FIO transakce a spáruje s pending objednávkami. Stejné běží denně v 3:00 UTC."
-          >
-            Spustit FIO scan
-          </button>
-        </form>
+        <div class="mb-8 bg-white border rounded-lg p-4">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-gray-900">FIO sync plateb</h3>
+              {lastFioScan ? (
+                <p class="text-xs text-gray-500 mt-1">
+                  Naposled {formatRelativeTime(lastFioScan.at, nowMs)} ·
+                  <strong class="text-gray-700"> spárováno {lastFioScan.matched}</strong>,
+                  nezískáno {lastFioScan.skipped}
+                  {lastFioScan.errors.length > 0 && (
+                    <span class="text-red-600"> · chyba: {lastFioScan.errors[0]}</span>
+                  )}
+                </p>
+              ) : (
+                <p class="text-xs text-gray-500 mt-1">
+                  Nikdy nespuštěno ručně. Denně běží v 3:00 UTC.
+                </p>
+              )}
+            </div>
+            <form method="post" action="/admin/api/fio/scan" hx-boost="false">
+              <button
+                type="submit"
+                id="fio-scan-btn"
+                data-cooldown-ms={String(fioCooldownRemainingMs)}
+                disabled={fioCooldownRemainingMs > 0}
+                class="text-sm bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                title="Stáhne aktuální FIO transakce a spáruje s pending objednávkami. FIO rate limit 30 s, držíme 60 s cooldown."
+              >
+                {fioCooldownRemainingMs > 0 ? (
+                  <>
+                    Další scan za <span id="fio-cooldown">{Math.ceil(fioCooldownRemainingMs / 1000)}</span> s
+                  </>
+                ) : (
+                  <>Spustit FIO scan</>
+                )}
+              </button>
+            </form>
+          </div>
+          {fioCooldownRemainingMs > 0 && (
+            <script dangerouslySetInnerHTML={{ __html: `
+              (function () {
+                var btn = document.getElementById('fio-scan-btn');
+                var counter = document.getElementById('fio-cooldown');
+                if (!btn || !counter) return;
+                var remaining = parseInt(btn.dataset.cooldownMs, 10);
+                var endAt = Date.now() + remaining;
+                var tick = function () {
+                  var left = Math.max(0, endAt - Date.now());
+                  if (left <= 0) {
+                    btn.disabled = false;
+                    btn.innerHTML = 'Spustit FIO scan';
+                    return;
+                  }
+                  counter.textContent = String(Math.ceil(left / 1000));
+                  setTimeout(tick, 500);
+                };
+                tick();
+              })();
+            `}} />
+          )}
+        </div>
 
         {/* Users */}
         <div id="users" class="flex items-center justify-between gap-4 mb-4">
@@ -884,10 +942,62 @@ admin.get("/admin/api/fio/diagnose", async (c) => {
   return c.json({ tokenHint, tests: [last, week, month] }, 200, { "Cache-Control": "no-store" });
 });
 
+const FIO_SCAN_COOLDOWN_MS = 60 * 1000; // FIO API rate limit ~30s, držíme 60s buffer.
+const FIO_SCAN_KV_KEY = "fio:lastScan";
+
+type FioScanRecord = {
+  at: number;
+  matched: number;
+  skipped: number;
+  errors: string[];
+};
+
+/** „před 12 s" / „před 4 min" / „před 2 h" / „19. 5. 11:23". */
+function formatRelativeTime(at: number, now: number = Date.now()): string {
+  const diff = Math.max(0, now - at);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `před ${sec} s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `před ${min} min`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `před ${hr} h`;
+  return new Date(at).toLocaleString("cs-CZ", {
+    day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+async function readLastFioScan(env: Env): Promise<FioScanRecord | null> {
+  const raw = await env.KV.get(FIO_SCAN_KV_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as FioScanRecord;
+  } catch {
+    return null;
+  }
+}
+
 admin.post("/admin/api/fio/scan", async (c) => {
+  const last = await readLastFioScan(c.env);
+  const now = Date.now();
+  if (last && now - last.at < FIO_SCAN_COOLDOWN_MS) {
+    const remaining = Math.ceil((FIO_SCAN_COOLDOWN_MS - (now - last.at)) / 1000);
+    return c.redirect(
+      `/admin?fioScan=${encodeURIComponent(`Počkej ${remaining} s — FIO API má rate limit 30 s. Naposled spuštěno před ${Math.ceil((now - last.at) / 1000)} s.`)}`,
+    );
+  }
+
   try {
     const db = drizzle(c.env.DB);
     const result = await scanFioPayments(db, c.env);
+    // Ulož stav do KV pro UI display + cooldown gating.
+    const record: FioScanRecord = {
+      at: Date.now(),
+      matched: result.matched,
+      skipped: result.skipped,
+      errors: result.errors,
+    };
+    await c.env.KV.put(FIO_SCAN_KV_KEY, JSON.stringify(record), { expirationTtl: 7 * 86400 });
+
     const summary = `spárováno ${result.matched}, nezískáno ${result.skipped}` +
       (result.errors.length ? `, chyby: ${result.errors.join(" | ")}` : "");
     return c.redirect(`/admin?fioScan=${encodeURIComponent(summary)}`);
