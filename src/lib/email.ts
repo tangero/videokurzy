@@ -70,12 +70,26 @@ function primaryButton(href: string, label: string): string {
 // ─── Šablony: purchase flow ─────────────────────────────────────
 
 /** Po vytvoření pending FIO objednávky — instrukce k platbě. */
-export function fioPendingHtml(payUrl: string, amount: number, dueDate: string): string {
+export function fioPendingHtml(
+  payUrl: string,
+  amount: number,
+  dueDate: string,
+  proformaUrl?: string | null,
+  proformaNumber?: string | null,
+): string {
   const formattedAmount = amount.toLocaleString("cs-CZ");
+  const proformaBlock = proformaUrl && proformaNumber
+    ? `<p style="font-size: 14px; line-height: 1.6; margin-top: 16px;">
+        Zálohový doklad <strong>${proformaNumber}</strong> najdete zde:
+        <a href="${proformaUrl}" style="color: #4f46e5;">otevřít zálohový doklad</a>.
+        Daňový doklad (fakturu) pošleme po přijetí platby.
+      </p>`
+    : "";
   return emailWrapper(`
     <p style="font-size: 16px; line-height: 1.5;">Děkujeme za objednávku!</p>
     <p style="font-size: 16px; line-height: 1.5;">Pro aktivaci přístupu uhraďte <strong>${formattedAmount} Kč</strong> bankovním převodem do <strong>${dueDate}</strong>.</p>
     ${primaryButton(payUrl, "Zobrazit platební údaje a QR kód")}
+    ${proformaBlock}
     <p style="font-size: 14px; color: #666; line-height: 1.5;">
       Po připsání platby na účet vám pošleme přihlašovací odkaz. Mezibankovní převody obvykle trvají 1 pracovní den.
     </p>`);
@@ -175,3 +189,90 @@ export const renewal21Html = (renewUrl: string) => renewalReminderHtml(21, renew
 export const renewal14Html = (renewUrl: string) => renewalReminderHtml(14, renewUrl);
 export const renewal7Html = (renewUrl: string) => renewalReminderHtml(7, renewUrl);
 export const renewal1Html = (renewUrl: string) => renewalReminderHtml(1, renewUrl);
+
+// ─── Šablony: payment reminders (pending FIO objednávky) ──────────
+
+export interface PaymentReminderOpts {
+  /** Variabilní symbol */
+  vs: string;
+  /** Částka v Kč */
+  amount: number;
+  /** Číslo účtu pro zobrazení (např. 2403461724/2010) */
+  accountNumber: string;
+  /** Splatnost — datum konce platnosti pending objednávky */
+  dueDate: string;
+  /** SPD/SPAYD řetězec pro QR platbu (z `generateSPD`) */
+  spd: string;
+  /** Odkaz na celou platební stránku s QR a údaji (`/checkout/pay/<vs>`) */
+  payUrl: string;
+  /** Odkaz na novou objednávku s možností platby kartou (`/checkout/individual`) */
+  cardUrl: string;
+}
+
+/** PNG QR kód vygenerovaný přes api.qrserver.com — žádná závislost ani build krok. */
+function qrImageTag(spd: string, size = 220): string {
+  const url = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=8&data=${encodeURIComponent(spd)}`;
+  return `<img src="${url}" width="${size}" height="${size}" alt="QR platba" style="display:block;margin:0 auto;border:1px solid #e5e7eb;border-radius:8px;background:white;">`;
+}
+
+function paymentBox(opts: PaymentReminderOpts): string {
+  const amount = opts.amount.toLocaleString("cs-CZ");
+  return `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0;text-align:center;">
+    ${qrImageTag(opts.spd)}
+    <p style="font-size:14px;color:#4b5563;margin:14px 0 4px;">Naskenujte QR v bankovní aplikaci nebo zadejte ručně:</p>
+    <table style="margin:8px auto 0;font-size:14px;color:#111827;line-height:1.7;">
+      <tr><td style="text-align:right;padding-right:10px;color:#6b7280;">Účet:</td><td><strong>${opts.accountNumber}</strong></td></tr>
+      <tr><td style="text-align:right;padding-right:10px;color:#6b7280;">Částka:</td><td><strong>${amount} Kč</strong></td></tr>
+      <tr><td style="text-align:right;padding-right:10px;color:#6b7280;">Variabilní symbol:</td><td><strong>${opts.vs}</strong></td></tr>
+      <tr><td style="text-align:right;padding-right:10px;color:#6b7280;">Splatnost do:</td><td><strong>${opts.dueDate}</strong></td></tr>
+    </table>
+  </div>`;
+}
+
+/** Upomínka 2 dny po vytvoření objednávky — jemné připomenutí. */
+export function paymentReminder2dHtml(opts: PaymentReminderOpts): string {
+  return emailWrapper(`
+    <p style="font-size:16px;line-height:1.5;">Dobrý den,</p>
+    <p style="font-size:16px;line-height:1.5;">připomínáme, že na vaši objednávku kurzu zatím nedorazila platba. Tady jsou opět platební údaje:</p>
+    ${paymentBox(opts)}
+    ${primaryButton(opts.payUrl, "Otevřít platební stránku")}
+    <p style="font-size:14px;color:#6b7280;line-height:1.6;">
+      Chcete raději platit kartou? <a href="${opts.cardUrl}" style="color:#4f46e5;">Klikněte sem</a> — vytvoříte novou objednávku přes Stripe a přístup máte hned po zaplacení.
+    </p>
+    <p style="font-size:14px;color:#6b7280;line-height:1.6;">
+      Pokud už jste zaplatili v posledních hodinách, tento email klidně ignorujte — bankovní převod může trvat 1 pracovní den, než dorazí na účet.
+    </p>`);
+}
+
+/** Upomínka 5 dní po vytvoření — urgence před auto-stornem v den 7. */
+export function paymentReminder5dHtml(opts: PaymentReminderOpts): string {
+  return emailWrapper(`
+    <p style="font-size:16px;line-height:1.5;"><strong>Platba kurzu — poslední dny do splatnosti</strong></p>
+    <p style="font-size:16px;line-height:1.5;">
+      Vaše objednávka má splatnost do <strong>${opts.dueDate}</strong>. Pokud do té doby platba nedorazí, objednávka se automaticky stornuje a budete muset objednat znovu.
+    </p>
+    ${paymentBox(opts)}
+    ${primaryButton(opts.payUrl, "Otevřít platební stránku")}
+    <p style="font-size:14px;color:#6b7280;line-height:1.6;">
+      Chcete raději platit kartou s okamžitou aktivací? <a href="${opts.cardUrl}" style="color:#4f46e5;">Klikněte sem</a>.
+    </p>
+    <p style="font-size:14px;color:#6b7280;line-height:1.6;">
+      Dotazy? Odpovězte na tento email — píše vám Patrick Zandl.
+    </p>`);
+}
+
+/** Po auto-stornu (den 7+) — info, že objednávka byla zrušena, a odkaz na novou. */
+export function paymentCancelledHtml(opts: { reorderUrl: string; vs: string }): string {
+  return emailWrapper(`
+    <p style="font-size:16px;line-height:1.5;">Dobrý den,</p>
+    <p style="font-size:16px;line-height:1.5;">
+      vaši objednávku s variabilním symbolem <strong>${opts.vs}</strong> jsme po uplynutí splatnosti automaticky stornovali — platba nedorazila.
+    </p>
+    <p style="font-size:16px;line-height:1.5;">
+      Pokud máte o kurz stále zájem, vytvořte si prosím novou objednávku. Můžete platit kartou nebo bankovním převodem:
+    </p>
+    ${primaryButton(opts.reorderUrl, "Vytvořit novou objednávku")}
+    <p style="font-size:14px;color:#6b7280;line-height:1.6;">
+      Pokud jste platbu provedli těsně před stornem a peníze dorazí dodatečně, automaticky vám obnovíme přístup a pošleme přihlašovací odkaz.
+    </p>`);
+}

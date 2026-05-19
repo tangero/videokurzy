@@ -39,3 +39,25 @@ export const FIO_LOOKBACK_DAYS = 28;
 
 /** Renewal reminder offsets ve dnech před expirací (3 týdny, 2 týdny, 1 týden, 1 den) */
 export const FIO_RENEWAL_REMINDER_DAYS = [21, 14, 7, 1] as const;
+
+/**
+ * Payment reminder offsets ve dnech OD vytvoření pending FIO objednávky.
+ * Den 2 = jemné připomenutí, den 5 = poslední urgence před auto-stornem v den 7.
+ */
+export const FIO_PAYMENT_REMINDER_DAYS = [2, 5] as const;
+
+/** Prefix pro číslo zálohového dokladu (ZD-YYYY-NNN). */
+export const PROFORMA_PREFIX = "ZD";
+
+/** Dodavatel — pro zálohový doklad. (Fakturoid si svého dodavatele drží sám.) */
+export const SUPPLIER = {
+  name: "Patrick Zandl",
+  ico: "43943420",
+  email: "patrick@zandl.cz",
+  address: "U Přelízky 1126/6",
+  city: "Brandýs nad Labem-Stará Boleslav",
+  zip: "250 01",
+  country: "Česká republika",
+  bankAccount: PAYMENT_ACCOUNT,
+  bankName: "Fio banka, a.s.",
+} as const;

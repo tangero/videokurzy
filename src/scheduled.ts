@@ -1,9 +1,10 @@
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import { purchase, siteConfig } from "./db/schema";
 import { sendRenewalReminders } from "./lib/renewal-reminders";
+import { sendPaymentReminders } from "./lib/payment-reminders";
 import { fetchFioTransactions, matchPayment } from "./lib/fio";
-import { sendEmail, purchaseConfirmedHtml } from "./lib/email";
+import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { applyDiscount } from "./lib/discount";
 import { exportPurchaseInvoice } from "./lib/fakturoid";
 import {
@@ -19,8 +20,13 @@ import type { Env } from "./types";
  * Cron registrován v wrangler.toml: `[triggers] crons = ["0 3 * * *"]` (denně 03:00 UTC).
  *
  * Úkoly:
- * 1. Expirace FIO pending objednávek, kterým vypršela splatnost.
- * 2. Renewal reminders pro aktivní FIO předplatné (21/14/7/1 den před expirací).
+ * 1. Spárování došlých FIO plateb s pending objednávkami.
+ * 2. Payment reminders pro nezaplacené pending FIO objednávky (2 a 5 dní po vytvoření).
+ * 3. Expirace pending FIO objednávek po splatnosti + storno email.
+ * 4. Renewal reminders pro aktivní FIO předplatné (21/14/7/1 den před expirací).
+ *
+ * Pořadí: scan → reminders → expire — aby se upomínka neposlala objednávce,
+ * která byla v témže běhu spárována nebo expirována.
  */
 export async function handleScheduled(
   event: ScheduledEvent,
@@ -38,7 +44,18 @@ export async function handleScheduled(
   }
 
   try {
-    const expiredCount = await expirePendingFioOrders(db, now);
+    const { sent, errors, skipped } = await sendPaymentReminders(db, env, now);
+    if (skipped === -1) {
+      console.log("[cron] payment reminders: KILLED via PAYMENT_REMINDERS_ENABLED=false");
+    } else {
+      console.log(`[cron] payment reminders: sent=${sent}, errors=${errors}, skipped=${skipped}`);
+    }
+  } catch (err) {
+    console.error("[cron] sendPaymentReminders failed:", err);
+  }
+
+  try {
+    const expiredCount = await expirePendingFioOrders(db, env, now);
     console.log(`[cron] expired ${expiredCount} pending FIO orders at ${event.scheduledTime}`);
   } catch (err) {
     console.error("[cron] expirePendingFioOrders failed:", err);
@@ -164,22 +181,56 @@ export async function scanFioPayments(
   return { matched, skipped: pending.length - matched, errors };
 }
 
-/** Přepne všechny pending FIO objednávky s expiresAt < now na status `expired`. */
+/**
+ * Přepne všechny pending FIO objednávky s expiresAt < now na status `expired`
+ * a každému uživateli pošle storno email s odkazem na novou objednávku.
+ * Email se posílá jen reálným objednávkám (`kind='paid'`) — granty by sem
+ * stejně neměly přijít, ale filtr je explicitní pro jistotu.
+ */
 async function expirePendingFioOrders(
   db: ReturnType<typeof drizzle>,
+  env: Env,
   now: Date
 ): Promise<number> {
-  const result = await db
-    .update(purchase)
-    .set({ status: "expired" })
+  // Načti řádky před UPDATEm, abychom měli email + VS pro storno mail.
+  const expiring = await db
+    .select({
+      id: purchase.id,
+      email: purchase.email,
+      type: purchase.type,
+      variableSymbol: purchase.variableSymbol,
+    })
+    .from(purchase)
     .where(
       and(
         eq(purchase.status, "pending"),
         eq(purchase.paymentMethod, "fio"),
+        eq(purchase.kind, "paid"),
         lt(purchase.expiresAt, now)
       )
-    )
-    .returning({ id: purchase.id });
+    );
 
-  return result.length;
+  if (expiring.length === 0) return 0;
+
+  const ids = expiring.map((r) => r.id);
+  await db
+    .update(purchase)
+    .set({ status: "expired" })
+    .where(inArray(purchase.id, ids));
+
+  // Storno emaily — kill switch sdílíme s payment reminders, ať lze obojí vypnout jedním přepínačem.
+  const killed = (env as { PAYMENT_REMINDERS_ENABLED?: string }).PAYMENT_REMINDERS_ENABLED === "false";
+  if (!killed) {
+    for (const r of expiring) {
+      if (!r.variableSymbol) continue;
+      const reorderUrl = `${env.BETTER_AUTH_URL}/checkout/${r.type === "organization" ? "organization" : "individual"}`;
+      sendEmail(env, {
+        to: r.email,
+        subject: "Vaše objednávka kurzu byla stornována",
+        html: paymentCancelledHtml({ reorderUrl, vs: r.variableSymbol }),
+      }).catch((err) => console.error(`[cron] cancel email for purchase ${r.id} failed:`, err));
+    }
+  }
+
+  return expiring.length;
 }
