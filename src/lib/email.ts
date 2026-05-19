@@ -4,6 +4,17 @@
 import { EMAIL_FROM, EMAIL_REPLY_TO } from "../config/admin";
 import type { Env } from "../types";
 
+// Brand barvy pro emailové šablony. Inline CSS je nutnost (klienti CSS ignorují),
+// ale konstanty drží konzistenci, ať změna brand barvy je jednomístná.
+const BRAND = "#4f46e5";        // indigo-600 — primární akce
+const BRAND_DARK = "#3730a3";   // indigo-800 — důraz, nadpisy v callout
+const BRAND_MID = "#4338ca";    // indigo-700 — odstavce v callout
+const BRAND_LIGHT = "#eef2ff";  // indigo-50 — pozadí callout
+const BRAND_BORDER = "#c7d2fe"; // indigo-200 — border callout
+const TEXT = "#1f2937";         // gray-800 — tělo
+const TEXT_MUTED = "#4b5563";   // gray-600 — patička, hint (≥4.5:1 na bílé)
+const DIVIDER = "#e5e7eb";      // gray-200 — separátor
+
 interface SendEmailOptions {
   to: string | string[];
   subject: string;
@@ -45,23 +56,23 @@ function emailWrapper(content: string): string {
   return `<!DOCTYPE html>
 <html lang="cs">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto; padding: 40px 20px; color: #1a1a1a; background: #ffffff;">
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 520px; margin: 0 auto; padding: 40px 20px; color: ${TEXT}; background: #ffffff;">
   <div style="text-align: center; margin-bottom: 32px;">
     <h1 style="font-size: 20px; font-weight: 600; margin: 0;">kurzy.vibecoding.cz</h1>
   </div>
   ${content}
-  <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 32px 0;">
-  <p style="font-size: 12px; color: #999; text-align: center;">
+  <hr style="border: none; border-top: 1px solid ${DIVIDER}; margin: 32px 0;">
+  <p style="font-size: 12px; color: ${TEXT_MUTED}; text-align: center;">
     kurzy.vibecoding.cz &middot; Andrea Maloveczká &middot; Vibecoding.cz
   </p>
 </body>
 </html>`;
 }
 
-/** CTA tlačítko s primary barvou (indigo-600). */
+/** CTA tlačítko s primary brand barvou. */
 function primaryButton(href: string, label: string): string {
   return `<div style="text-align: center; margin: 32px 0;">
-    <a href="${href}" style="display: inline-block; background: #4f46e5; color: white; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;">
+    <a href="${href}" style="display: inline-block; background: ${BRAND}; color: white; font-weight: 600; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px;">
       ${label}
     </a>
   </div>`;
@@ -79,18 +90,18 @@ export function fioPendingHtml(
 ): string {
   const formattedAmount = amount.toLocaleString("cs-CZ");
   const proformaBlock = proformaUrl && proformaNumber
-    ? `<div style="background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 16px; margin: 24px 0;">
-        <p style="margin: 0 0 8px; font-size: 14px; color: #3730a3;">
+    ? `<div style="background: ${BRAND_LIGHT}; border: 1px solid ${BRAND_BORDER}; border-radius: 8px; padding: 16px; margin: 24px 0;">
+        <p style="margin: 0 0 8px; font-size: 14px; color: ${BRAND_DARK};">
           <strong>Zálohový doklad pro účtárnu</strong>
         </p>
-        <p style="margin: 0 0 12px; font-size: 14px; color: #4338ca;">
+        <p style="margin: 0 0 12px; font-size: 14px; color: ${BRAND_MID};">
           Číslo dokladu: <strong>${proformaNumber}</strong>. Doklad můžete předat účtárně ke schválení platby —
           najdete ho na stejném odkazu jako platební údaje, nebo přímo zde:
         </p>
         <p style="margin: 0;">
-          <a href="${proformaUrl}" style="color: #4f46e5; font-weight: 600;">Otevřít zálohový doklad ${proformaNumber} →</a>
+          <a href="${proformaUrl}" style="color: ${BRAND}; font-weight: 600;">Otevřít zálohový doklad ${proformaNumber} →</a>
         </p>
-        <p style="margin: 12px 0 0; font-size: 12px; color: #6366f1;">
+        <p style="margin: 12px 0 0; font-size: 12px; color: ${BRAND_MID};">
           Daňový doklad (fakturu v PDF) zašleme automaticky po přijetí platby.
         </p>
       </div>`
@@ -100,7 +111,7 @@ export function fioPendingHtml(
     <p style="font-size: 16px; line-height: 1.5;">Pro aktivaci přístupu uhraďte <strong>${formattedAmount} Kč</strong> bankovním převodem do <strong>${dueDate}</strong>.</p>
     ${primaryButton(payUrl, "Zobrazit platební údaje, QR kód a doklad")}
     ${proformaBlock}
-    <p style="font-size: 14px; color: #666; line-height: 1.5;">
+    <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
       Po připsání platby na účet vám pošleme přihlašovací odkaz. Mezibankovní převody obvykle trvají 1 pracovní den.
     </p>`);
 }
@@ -112,7 +123,7 @@ export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "or
     <p style="font-size: 16px; line-height: 1.5;">Platba přijata — ${typeLabel} je aktivní!</p>
     <p style="font-size: 16px; line-height: 1.5;">Přístup ke všem kurzům máte na 12 měsíců.</p>
     ${primaryButton(loginUrl, "Přihlásit se do kurzu")}
-    <p style="font-size: 14px; color: #666; line-height: 1.5;">
+    <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
       Dotazy? Odpovězte na tento email — píše vám Andrea Maloveczká.
     </p>`);
 }
