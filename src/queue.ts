@@ -120,7 +120,7 @@ async function handleCheckoutCompleted(
       env.RESEND_API_KEY,
       "purchase.completed",
       customerEmail.toLowerCase(),
-      { type: "individual" }
+      { type: "individual", paymentMethod: "stripe" }
     );
 
     if (paidAmountCzk > 0) {
@@ -177,7 +177,7 @@ async function handleCheckoutCompleted(
       env.RESEND_API_KEY,
       "purchase.completed",
       customerEmail.toLowerCase(),
-      { type: "organization", domain }
+      { type: "organization", domain, paymentMethod: "stripe" }
     );
 
     if (paidAmountCzk > 0) {

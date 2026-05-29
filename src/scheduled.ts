@@ -5,6 +5,7 @@ import { sendRenewalReminders } from "./lib/renewal-reminders";
 import { sendPaymentReminders } from "./lib/payment-reminders";
 import { fetchFioTransactions, matchPayment } from "./lib/fio";
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
+import { sendResendEvent } from "./lib/resend";
 import { applyDiscount } from "./lib/discount";
 import { exportPurchaseInvoice } from "./lib/fakturoid";
 import {
@@ -129,6 +130,13 @@ export async function scanFioPayments(
           amountPaid: result.transaction.amount,
         })
         .where(eq(purchase.id, p.id));
+
+      // Resend automation event — onboarding sekvence. Bez tohohle by FIO
+      // kupující (~43 %) do automatu vůbec nevstoupili (Stripe ho fíruje v queue.ts).
+      sendResendEvent(env.RESEND_API_KEY, "purchase.completed", p.email.toLowerCase(), {
+        type: p.type,
+        paymentMethod: "fio",
+      }).catch((err) => console.error(`[cron] resend event failed for ${p.email}:`, err));
 
       // Email s magic linkem ke kurzu — nečekáme na něj, ať jeden výpadek
       // Resendu nezablokuje další pářování.

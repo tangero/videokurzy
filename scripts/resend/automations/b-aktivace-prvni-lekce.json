@@ -1,0 +1,15 @@
+{
+  "name": "B — Aktivace: pusť si první lekci",
+  "status": "disabled",
+  "steps": [
+    { "key": "trigger", "type": "trigger", "config": { "event_name": "account.created" } },
+    { "key": "delay", "type": "delay", "config": { "duration": "1 day" } },
+    { "key": "wait_lesson", "type": "wait_for_event", "config": { "event_name": "lesson.completed", "timeout": "3 days" } },
+    { "key": "send", "type": "send_email", "config": { "template": { "id": "__TPL_B__" } } }
+  ],
+  "connections": [
+    { "from": "trigger", "to": "delay" },
+    { "from": "delay", "to": "wait_lesson" },
+    { "from": "wait_lesson", "to": "send", "type": "timeout" }
+  ]
+}

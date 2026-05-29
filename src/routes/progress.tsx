@@ -3,7 +3,7 @@ import { eq, and, gt, asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Env, Variables } from "../types";
 import { requireAuth } from "../middleware/auth";
-import { progress, lesson } from "../db/schema";
+import { progress, lesson, module } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { sendResendEvent } from "../lib/resend";
 import { ProgressComplete } from "../views/watch";
@@ -27,6 +27,48 @@ progressRoutes.post("/api/progress/:lessonId", requireAuth, async (c) => {
       target: [progress.userId, progress.lessonId],
       set: { completed: true, completedAt: new Date() },
     });
+
+  // Emit lesson.completed event — onboarding / re-engagement automations.
+  // Payload nese deep-link na další lekci a postup v kurzu pro personalizaci e-mailu.
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        const [thisLesson] = await db
+          .select({ title: lesson.title })
+          .from(lesson)
+          .where(eq(lesson.id, lessonId))
+          .limit(1);
+        if (!thisLesson) return;
+
+        // Globální pořadí všech lekcí (napříč moduly) → další lekce pro CTA odkaz.
+        const allLessons = await db
+          .select({ id: lesson.id, slug: lesson.slug })
+          .from(lesson)
+          .innerJoin(module, eq(lesson.moduleId, module.id))
+          .orderBy(asc(module.sortOrder), asc(lesson.sortOrder));
+
+        const totalCount = allLessons.length;
+        const idx = allLessons.findIndex((l) => l.id === lessonId);
+        const nextLessonSlug =
+          idx >= 0 && idx < allLessons.length - 1 ? allLessons[idx + 1].slug : null;
+
+        const completedRows = await db
+          .select({ lessonId: progress.lessonId })
+          .from(progress)
+          .where(and(eq(progress.userId, user.id), eq(progress.completed, true)));
+
+        await sendResendEvent(c.env.RESEND_API_KEY, "lesson.completed", user.email, {
+          lessonId,
+          lessonTitle: thisLesson.title,
+          nextLessonSlug,
+          completedCount: completedRows.length,
+          totalCount,
+        });
+      } catch (err) {
+        console.error("Resend lesson.completed event failed:", err);
+      }
+    })()
+  );
 
   // Fire Resend event if this is the last free lesson and user has no purchase
   c.executionCtx.waitUntil(

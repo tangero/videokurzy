@@ -1,0 +1,15 @@
+{
+  "name": "C — Re-engagement: zasekl ses?",
+  "status": "disabled",
+  "steps": [
+    { "key": "trigger", "type": "trigger", "config": { "event_name": "lesson.completed" } },
+    { "key": "wait_next", "type": "wait_for_event", "config": { "event_name": "lesson.completed", "timeout": "7 days" } },
+    { "key": "has_next", "type": "condition", "config": { "type": "rule", "field": "event.nextLessonSlug", "operator": "is_empty" } },
+    { "key": "send", "type": "send_email", "config": { "template": { "id": "__TPL_C__", "variables": { "LESSON_TITLE": { "var": "event.lessonTitle" }, "NEXT_LESSON_SLUG": { "var": "event.nextLessonSlug" } } } } }
+  ],
+  "connections": [
+    { "from": "trigger", "to": "wait_next" },
+    { "from": "wait_next", "to": "has_next", "type": "timeout" },
+    { "from": "has_next", "to": "send", "type": "condition_not_met" }
+  ]
+}

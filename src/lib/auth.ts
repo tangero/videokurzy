@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import * as authSchema from "../db/auth-schema";
 import type { Env } from "../types";
 import { ensureUserEmailRecord } from "./user-emails";
+import { sendResendEvent } from "./resend";
 
 export function createAuth(env: Env, ctx: ExecutionContext) {
   const db = drizzle(env.DB, { schema: authSchema });
@@ -46,6 +47,13 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
               userId: createdUser.id,
               email: createdUser.email,
             });
+            // U magic-link auth vzniká účet právě při prvním přihlášení →
+            // tohle je čistý "first login" signál pro onboarding automation.
+            await sendResendEvent(
+              env.RESEND_API_KEY,
+              "account.created",
+              createdUser.email.toLowerCase()
+            );
           },
         },
       },
