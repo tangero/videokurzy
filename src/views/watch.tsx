@@ -97,6 +97,7 @@ export const WatchPage: FC<WatchProps> = ({
   prevSlug,
   nextSlug,
   hasPaidAccess,
+  loggedIn,
   isLastFreeLesson,
   nearbyLessons,
   lessonGlobalIndex,
