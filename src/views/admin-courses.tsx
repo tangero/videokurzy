@@ -42,6 +42,7 @@ export function AdminNav({ active }: { active: string }) {
     { href: "/admin", label: "Přehled" },
     { href: "/admin/users", label: "Uživatelé" },
     { href: "/admin/courses", label: "Kurzy" },
+    { href: "/admin/stats", label: "Statistiky" },
     { href: "/admin/settings", label: "Nastavení" },
   ];
   return (
