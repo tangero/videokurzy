@@ -149,4 +149,14 @@ export const siteConfig = sqliteTable("site_config", {
   value: text("value").notNull(),
 });
 
+// Snapshot agregovaných bunny.net statistik na video (jedna řádka/video,
+// upsert při každém synci z cronu). Watch-time v sekundách. engagementScore 0–100.
+export const videoStats = sqliteTable("video_stats", {
+  videoGuid: text("videoGuid").primaryKey(),
+  views: integer("views").notNull().default(0),
+  watchTimeSeconds: integer("watchTimeSeconds").notNull().default(0),
+  engagementScore: integer("engagementScore").notNull().default(0),
+  syncedAt: integer("syncedAt", { mode: "timestamp" }).notNull(),
+});
+
 export { user, session, account, verification } from "./auth-schema";
