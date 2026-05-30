@@ -1,0 +1,13 @@
+{
+  "name": "D — Re-engagement: dokoukej lekci",
+  "status": "disabled",
+  "steps": [
+    { "key": "trigger", "type": "trigger", "config": { "eventName": "lesson.started" } },
+    { "key": "wait_done", "type": "wait_for_event", "config": { "eventName": "lesson.completed", "timeout": "3 days" } },
+    { "key": "send", "type": "send_email", "config": { "template": { "id": "__TPL_D__" } } }
+  ],
+  "connections": [
+    { "from": "trigger", "to": "wait_done" },
+    { "from": "wait_done", "to": "send", "type": "timeout" }
+  ]
+}
