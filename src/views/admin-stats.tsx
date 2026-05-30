@@ -37,22 +37,22 @@ function fmtDate(ts: number | null): string {
   return d.toLocaleDateString("cs-CZ");
 }
 
-const Card: FC<{ label: string; value: string; hint?: string; tone?: "ok" | "warn" }> = ({
+// Kompaktní metrika — definiční řádek (label vlevo, hodnota vpravo), ne
+// "hero metric" karta. Plochá hierarchie dle .impeccable.md.
+const Metric: FC<{ label: string; value: string; hint?: string; tone?: "warn" }> = ({
   label,
   value,
   hint,
   tone,
 }) => (
-  <div class="rounded-lg border border-gray-200 bg-white p-4">
-    <div class="text-sm text-gray-500">{label}</div>
-    <div
-      class={`mt-1 text-2xl font-bold ${
-        tone === "warn" ? "text-amber-600" : tone === "ok" ? "text-emerald-600" : "text-gray-900"
-      }`}
-    >
+  <div class="flex items-baseline justify-between gap-4 py-2">
+    <div class="text-sm text-gray-600">
+      {label}
+      {hint ? <span class="ml-2 text-xs text-gray-500">{hint}</span> : null}
+    </div>
+    <div class={`text-base font-semibold tabular-nums ${tone === "warn" ? "text-amber-600" : "text-gray-900"}`}>
       {value}
     </div>
-    {hint ? <div class="mt-1 text-xs text-gray-400">{hint}</div> : null}
   </div>
 );
 
@@ -64,111 +64,113 @@ export const AdminStatsPage: FC<{
   const { buyers, funnel, videos } = data;
   return (
     <Layout title="Statistiky" user={user}>
-      <AdminNav active="/admin/stats" />
+      <section class="max-w-5xl mx-auto px-4 py-8">
+        <h1 class="text-2xl font-bold mb-6">Admin</h1>
+        <AdminNav active="/admin/stats" />
 
-      <div class="space-y-8">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">Statistiky</h1>
-          <p class="mt-1 text-sm text-gray-500">
+        <div class="mt-6 space-y-10">
+          <p class="text-sm text-gray-600">
             Profil kupujících, sledovanost a aktivace. Bunny data poslední sync:{" "}
             {fmtDate(lastSync)}.
           </p>
-        </div>
 
-        {/* Kupující */}
-        <section>
-          <h2 class="mb-3 text-lg font-semibold text-gray-900">Kupující</h2>
-          <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Card label="Platící objednávky" value={String(buyers.paidCount)} />
-            <Card label="Tržby" value={`${buyers.revenueCzk.toLocaleString("cs-CZ")} Kč`} />
-            <Card label="Stripe / FIO (aktivní)" value={`${buyers.stripeActive} / ${buyers.fioActive}`} />
-            <Card label="S IČO (chce fakturu)" value={String(buyers.withIco)} />
-          </div>
-          <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Card label="Účty celkem" value={String(buyers.accounts)} />
-            <Card
-              label="Zaplatil bez účtu"
-              value={String(buyers.noAccount)}
-              hint="nepřihlásil se → nemá přístup"
-              tone={buyers.noAccount > 0 ? "warn" : "ok"}
-            />
-            <Card
-              label="Nerozkoukáno"
-              value={String(buyers.notStarted)}
-              hint="má účet, 0 dokončených lekcí"
-              tone={buyers.notStarted > 0 ? "warn" : "ok"}
-            />
-          </div>
-        </section>
-
-        {/* Sledovanost videí (bunny) */}
-        <section>
-          <h2 class="mb-3 text-lg font-semibold text-gray-900">Sledovanost videí (bunny.net)</h2>
-          {videos.length === 0 ? (
-            <p class="text-sm text-gray-500">
-              Zatím žádná data — cron je stáhne při dalším běhu (denně 03:00 UTC).
-            </p>
-          ) : (
-            <div class="overflow-x-auto rounded-lg border border-gray-200">
-              <table class="min-w-full divide-y divide-gray-200 text-sm">
-                <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
-                  <tr>
-                    <th class="px-4 py-2">Lekce</th>
-                    <th class="px-4 py-2 text-right">Zhlédnutí</th>
-                    <th class="px-4 py-2 text-right">Odsledováno</th>
-                    <th class="px-4 py-2 text-right">Engagement</th>
-                    <th class="px-4 py-2 text-right">Dokončení</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-                  {videos.map((v) => (
-                    <tr>
-                      <td class="px-4 py-2 text-gray-900">{v.title}</td>
-                      <td class="px-4 py-2 text-right">{v.views}</td>
-                      <td class="px-4 py-2 text-right">{fmtDuration(v.watchTimeSeconds)}</td>
-                      <td class="px-4 py-2 text-right">{v.engagementScore}/100</td>
-                      <td class="px-4 py-2 text-right">
-                        {v.completions}
-                        {v.views > 0 ? (
-                          <span class="text-gray-400">
-                            {" "}
-                            ({Math.round((v.completions / v.views) * 100)} %)
-                          </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* Kupující */}
+          <section>
+            <h2 class="mb-2 text-lg font-semibold text-gray-900">Kupující</h2>
+            <div class="grid gap-x-10 sm:grid-cols-2">
+              <div class="divide-y divide-gray-100">
+                <Metric label="Platící objednávky" value={String(buyers.paidCount)} />
+                <Metric label="Tržby" value={`${buyers.revenueCzk.toLocaleString("cs-CZ")} Kč`} />
+                <Metric label="Stripe / FIO (aktivní)" value={`${buyers.stripeActive} / ${buyers.fioActive}`} />
+                <Metric label="S IČO (chce fakturu)" value={String(buyers.withIco)} />
+              </div>
+              <div class="divide-y divide-gray-100">
+                <Metric label="Účty celkem" value={String(buyers.accounts)} />
+                <Metric
+                  label="Zaplatil bez účtu"
+                  hint="nepřihlásil se → nemá přístup"
+                  value={String(buyers.noAccount)}
+                  tone={buyers.noAccount > 0 ? "warn" : undefined}
+                />
+                <Metric
+                  label="Nerozkoukáno"
+                  hint="má účet, 0 dokončených lekcí"
+                  value={String(buyers.notStarted)}
+                  tone={buyers.notStarted > 0 ? "warn" : undefined}
+                />
+              </div>
             </div>
-          )}
-          <p class="mt-2 text-xs text-gray-400">
-            Pozn.: jednotka „odsledováno" z bunny se ještě ověřuje — ber zatím relativně, ne absolutně.
-          </p>
-        </section>
+          </section>
 
-        {/* Trychtýř dokončení */}
-        <section>
-          <h2 class="mb-3 text-lg font-semibold text-gray-900">Trychtýř dokončení</h2>
-          <div class="space-y-2">
-            {funnel.map((l) => {
-              const top = funnel[0]?.completions || 1;
-              const pct = Math.round((l.completions / top) * 100);
-              return (
-                <div>
-                  <div class="flex justify-between text-sm">
-                    <span class="text-gray-700">{l.title}</span>
-                    <span class="text-gray-500">{l.completions}</span>
+          {/* Sledovanost videí (bunny) */}
+          <section>
+            <h2 class="mb-2 text-lg font-semibold text-gray-900">Sledovanost videí (bunny.net)</h2>
+            {videos.length === 0 ? (
+              <p class="text-sm text-gray-600">
+                Zatím žádná data — cron je stáhne při dalším běhu (denně 03:00 UTC).
+              </p>
+            ) : (
+              <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead class="bg-gray-50 text-left text-xs uppercase text-gray-600">
+                    <tr>
+                      <th scope="col" class="px-4 py-2 font-semibold">Lekce</th>
+                      <th scope="col" class="px-4 py-2 text-right font-semibold">Zhlédnutí</th>
+                      <th scope="col" class="px-4 py-2 text-right font-semibold">Odsledováno</th>
+                      <th scope="col" class="px-4 py-2 text-right font-semibold">Engagement</th>
+                      <th scope="col" class="px-4 py-2 text-right font-semibold">Dokončení</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100">
+                    {videos.map((v) => (
+                      <tr>
+                        <td class="px-4 py-2 text-gray-900">{v.title}</td>
+                        <td class="px-4 py-2 text-right tabular-nums">{v.views}</td>
+                        <td class="px-4 py-2 text-right tabular-nums">{fmtDuration(v.watchTimeSeconds)}</td>
+                        <td class="px-4 py-2 text-right tabular-nums">{v.engagementScore}/100</td>
+                        <td class="px-4 py-2 text-right tabular-nums">
+                          {v.completions}
+                          {v.views > 0 ? (
+                            <span class="text-gray-500">
+                              {" "}
+                              ({Math.round((v.completions / v.views) * 100)} %)
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p class="mt-2 text-xs text-gray-500">
+              Pozn.: jednotka „odsledováno" z bunny se ještě ověřuje — ber zatím relativně, ne absolutně.
+            </p>
+          </section>
+
+          {/* Trychtýř dokončení */}
+          <section>
+            <h2 class="mb-3 text-lg font-semibold text-gray-900">Trychtýř dokončení</h2>
+            <div class="space-y-3">
+              {funnel.map((l) => {
+                const top = funnel[0]?.completions || 1;
+                const pct = Math.round((l.completions / top) * 100);
+                return (
+                  <div>
+                    <div class="flex justify-between text-sm">
+                      <span class="text-gray-700">{l.title}</span>
+                      <span class="text-gray-600 tabular-nums">{l.completions}</span>
+                    </div>
+                    <div class="mt-1 h-2 rounded bg-gray-100">
+                      <div class="h-2 rounded bg-indigo-600" style={`width:${pct}%`}></div>
+                    </div>
                   </div>
-                  <div class="mt-1 h-2 rounded bg-gray-100">
-                    <div class="h-2 rounded bg-gray-900" style={`width:${pct}%`}></div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      </section>
     </Layout>
   );
 };
