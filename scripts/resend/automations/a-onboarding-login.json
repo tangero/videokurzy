@@ -2,10 +2,10 @@
   "name": "A — Onboarding: dokonči přihlášení",
   "status": "disabled",
   "steps": [
-    { "key": "trigger", "type": "trigger", "config": { "event_name": "purchase.completed" } },
+    { "key": "trigger", "type": "trigger", "config": { "eventName": "purchase.completed" } },
     { "key": "delay", "type": "delay", "config": { "duration": "2 days" } },
-    { "key": "wait_login", "type": "wait_for_event", "config": { "event_name": "account.created", "timeout": "5 days" } },
-    { "key": "send", "type": "send_email", "config": { "template": { "id": "__TPL_A__", "variables": { "EMAIL": { "var": "contact.email" } } } } }
+    { "key": "wait_login", "type": "wait_for_event", "config": { "eventName": "account.created", "timeout": "5 days" } },
+    { "key": "send", "type": "send_email", "config": { "template": { "id": "__TPL_A__" } } }
   ],
   "connections": [
     { "from": "trigger", "to": "delay" },

@@ -27,7 +27,7 @@ resend events create --name "lesson.completed" \
 echo "▶ 2/3 Šablony (create + publish)"
 TPL_A=$(resend templates create --name "Onboarding — dokonči přihlášení" \
   --subject "Máš zaplaceno — ještě se přihlas do kurzu" --from "$FROM" \
-  --html-file templates/onboarding-login.html --var EMAIL:string --json | id_of)
+  --html-file templates/onboarding-login.html --json | id_of)
 resend templates publish "$TPL_A" >/dev/null && echo "  A=$TPL_A"
 
 TPL_B=$(resend templates create --name "Aktivace — pusť si první lekci" \
