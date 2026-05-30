@@ -432,25 +432,6 @@ admin.get("/admin", async (c) => {
             </div>
           );
         })()}
-        {c.req.query("fioScan") && (() => {
-          const msg = c.req.query("fioScan") ?? "";
-          const isError = /chyba|error|failed/i.test(msg);
-          return (
-            <div
-              class={`mb-6 rounded-lg border-2 px-5 py-4 text-sm shadow ${
-                isError
-                  ? "border-red-300 bg-red-50 text-red-900"
-                  : "border-blue-300 bg-blue-50 text-blue-900"
-              }`}
-            >
-              <div class="font-semibold mb-1">
-                {isError ? "✕ FIO scan selhal" : "↻ FIO scan dokončen"}
-              </div>
-              <code class="block whitespace-pre-wrap break-all text-xs font-mono">{msg}</code>
-            </div>
-          );
-        })()}
-
         {/* Stats */}
         <div class="grid grid-cols-3 gap-4 mb-4">
           <div
@@ -487,28 +468,53 @@ admin.get("/admin", async (c) => {
           </div>
         </div>
 
-        {/* Aktivita ze sledování videa (klíčový signál "pokračují v koukání?") */}
-        <div class="grid grid-cols-3 gap-4 mb-8">
-          <div class="bg-white p-4 rounded-lg border" title="Uživatelé, kteří měli nějakou aktivitu u videa v posledních 7 dnech (z lesson_watch).">
-            <p class="text-sm text-gray-500">Aktivní posledních 7 dní</p>
-            <p class="text-2xl font-bold text-emerald-700">{activeLast7d?.count ?? 0}</p>
-            <p class="text-xs text-gray-500 mt-1">sledovali nějakou lekci</p>
-          </div>
-          <div class="bg-white p-4 rounded-lg border" title="Uživatelé, kteří zatím nespustili žádné video (žádný záznam v lesson_watch).">
-            <p class="text-sm text-gray-500">Nikdy nezačali sledovat</p>
-            <p class="text-2xl font-bold text-amber-600">{neverWatchedCount}</p>
-            <p class="text-xs text-gray-500 mt-1">z celkového počtu uživatelů</p>
-          </div>
-          <div class="bg-white p-4 rounded-lg border">
-            <p class="text-sm text-gray-500">Sledovali alespoň 1 lekci</p>
-            <p class="text-2xl font-bold">{usersWithAnyWatch.length}</p>
-            <p class="text-xs text-gray-500 mt-1">mají záznam o sledování</p>
-          </div>
+        {/* Aktivita ze sledování videa — sloučeno do jedné karty. Dokud tracking
+           modul nemá žádná data (nikdo nespustil video), ukazujeme stavovou
+           hlášku místo tří matoucích nul. */}
+        <div class="mb-6">
+          {usersWithAnyWatch.length === 0 ? (
+            <div
+              class="bg-white p-4 rounded-lg border border-dashed text-sm text-gray-500"
+              title="Metriky sledování se naplní, jakmile uživatelé začnou přehrávat videa (záznamy v lesson_watch)."
+            >
+              <span class="font-semibold text-gray-700">Sledování videa:</span> zatím bez dat —
+              žádný uživatel nemá záznam o přehrávání ({neverWatchedCount} registrovaných, tracking se teprve rozjíždí).
+            </div>
+          ) : (
+            <div class="bg-white p-4 rounded-lg border flex flex-wrap items-center gap-x-10 gap-y-2">
+              <div title="Uživatelé s aktivitou u videa za posledních 7 dní.">
+                <p class="text-xs text-gray-500">Aktivní 7 dní</p>
+                <p class="text-xl font-bold text-emerald-700">{activeLast7d?.count ?? 0}</p>
+              </div>
+              <div title="Uživatelé se záznamem o sledování alespoň jedné lekce.">
+                <p class="text-xs text-gray-500">Sledovali ≥ 1 lekci</p>
+                <p class="text-xl font-bold">{usersWithAnyWatch.length}</p>
+              </div>
+              <div title="Registrovaní uživatelé bez jediného záznamu o přehrávání.">
+                <p class="text-xs text-gray-500">Nikdy nezačali</p>
+                <p class="text-xl font-bold text-amber-600">{neverWatchedCount}</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* FIO manual scan — hx-boost="false" obchází htmx interceptor, jinak
            form submit projde jako AJAX a 303 redirect neproběhne čistě. */}
-        <div class="mb-8 bg-white border rounded-lg p-4">
+        <div class="mb-6 bg-white border rounded-lg p-4">
+          {c.req.query("fioScan") && (() => {
+            const msg = c.req.query("fioScan") ?? "";
+            const isError = /chyba|error|failed/i.test(msg);
+            return (
+              <div
+                class={`mb-3 rounded-md px-3 py-2 text-xs ${
+                  isError ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"
+                }`}
+              >
+                <strong>{isError ? "✕ FIO scan selhal" : "↻ FIO scan dokončen"}</strong>{" "}
+                <span class="font-mono break-all">{msg}</span>
+              </div>
+            );
+          })()}
           <div class="flex items-center justify-between flex-wrap gap-3">
             <div>
               <h3 class="text-sm font-semibold text-gray-900">FIO sync plateb</h3>
