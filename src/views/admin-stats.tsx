@@ -16,6 +16,7 @@ export interface AdminStatsData {
   funnel: { title: string; durationSeconds: number; completions: number }[];
   videos: {
     title: string;
+    isFree: boolean;
     views: number;
     watchTimeSeconds: number;
     engagementScore: number;
@@ -167,7 +168,14 @@ export const AdminStatsPage: FC<{
                   <tbody class="divide-y divide-gray-100">
                     {videos.map((v) => (
                       <tr>
-                        <td class="px-4 py-2 text-gray-900">{v.title}</td>
+                        <td class="px-4 py-2 text-gray-900">
+                          {v.title}
+                          {v.isFree && (
+                            <span class="ml-2 inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 align-middle">
+                              ZDARMA
+                            </span>
+                          )}
+                        </td>
                         <td class="px-4 py-2 text-right tabular-nums">{v.views}</td>
                         <td class="px-4 py-2 text-right tabular-nums">{fmtDuration(v.watchTimeSeconds)}</td>
                         <td class="px-4 py-2 text-right tabular-nums">{v.engagementScore}/100</td>

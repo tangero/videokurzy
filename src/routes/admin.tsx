@@ -853,7 +853,7 @@ admin.get("/admin/stats", async (c) => {
   `)) as Array<{ title: string; durationSeconds: number; completions: number }>;
 
   const videoRows = (await db.all(sql`
-    SELECT l.id AS id, l.title AS title,
+    SELECT l.id AS id, l.title AS title, l.isFree AS isFree,
       coalesce(vs.views,0) AS views,
       coalesce(vs.watchTimeSeconds,0) AS watchTimeSeconds,
       coalesce(vs.engagementScore,0) AS engagementScore,
@@ -863,7 +863,7 @@ admin.get("/admin/stats", async (c) => {
     LEFT JOIN video_stats vs ON vs.videoGuid = l.bunnyVideoId
     WHERE l.bunnyVideoId IS NOT NULL
     ORDER BY m.sortOrder, l.sortOrder
-  `)) as Array<{ id: number; title: string; views: number; watchTimeSeconds: number; engagementScore: number; completions: number }>;
+  `)) as Array<{ id: number; title: string; isFree: boolean; views: number; watchTimeSeconds: number; engagementScore: number; completions: number }>;
 
   // Retenční křivka per lekce (20 segmentů) z lesson_watch (Track ②).
   const retentionByLesson = new Map<number, number[]>();
@@ -904,6 +904,7 @@ admin.get("/admin/stats", async (c) => {
         })),
         videos: videoRows.map((r) => ({
           title: r.title,
+          isFree: !!r.isFree,
           views: Number(r.views),
           watchTimeSeconds: Number(r.watchTimeSeconds),
           engagementScore: Number(r.engagementScore),
