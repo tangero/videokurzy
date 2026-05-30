@@ -75,7 +75,10 @@ export const AdminStatsPage: FC<{
   user: { name: string | null; email: string };
   data: AdminStatsData;
   lastSync: number | null;
-}> = ({ user, data, lastSync }) => {
+  videoStatsSynced?: number;
+  videoStatsErrors?: number;
+  videoStatsError?: string;
+}> = ({ user, data, lastSync, videoStatsSynced, videoStatsErrors, videoStatsError }) => {
   const { buyers, funnel, videos } = data;
   return (
     <Layout title="Statistiky" user={user}>
@@ -84,6 +87,19 @@ export const AdminStatsPage: FC<{
         <AdminNav active="/admin/stats" />
 
         <div class="mt-6 space-y-10">
+          {videoStatsSynced !== undefined && (
+            <div class="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+              ✓ Bunny statistiky úspěšně aktualizovány. 
+              Synced: <strong>{videoStatsSynced}</strong> videí
+              {videoStatsErrors ? `, chyb: ${videoStatsErrors}` : ""}.
+            </div>
+          )}
+          {videoStatsError && (
+            <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              ✕ Chyba při synchronizaci Bunny statistik: {videoStatsError}
+            </div>
+          )}
+
           <div class="flex items-center justify-between mb-2">
             <p class="text-sm text-gray-600">
               Profil kupujících, sledovanost a aktivace. Bunny data poslední sync:{" "}

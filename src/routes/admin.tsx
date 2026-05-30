@@ -875,10 +875,17 @@ admin.get("/admin/stats", async (c) => {
     | { lastSync: number | null }
     | undefined;
 
+  const videoStatsSynced = c.req.query("videoStatsSynced") ? Number(c.req.query("videoStatsSynced")) : undefined;
+  const videoStatsErrors = c.req.query("videoStatsErrors") ? Number(c.req.query("videoStatsErrors")) : undefined;
+  const videoStatsError = c.req.query("videoStatsError") || undefined;
+
   return c.html(
     <AdminStatsPage
       user={currentUser}
       lastSync={syncRow?.lastSync ?? null}
+      videoStatsSynced={videoStatsSynced}
+      videoStatsErrors={videoStatsErrors}
+      videoStatsError={videoStatsError}
       data={{
         buyers: {
           paidCount: Number(buyerRow?.paidCount ?? 0),
@@ -1208,15 +1215,11 @@ admin.post("/admin/api/video-stats/sync", async (c) => {
   const db = drizzle(c.env.DB);
   try {
     const result = await syncVideoStats(db, c.env);
-    return c.json({
-      ok: true,
-      synced: result.synced,
-      errors: result.errors,
-      message: `Synced ${result.synced} videos, ${result.errors} errors.`,
-    });
+    // Po úspěšném syncu přesměrujeme zpět na stats stránku s informací
+    return c.redirect(`/admin/stats?videoStatsSynced=${result.synced}&videoStatsErrors=${result.errors}`);
   } catch (err) {
     console.error("[admin] manual video stats sync failed:", err);
-    return c.json({ ok: false, error: (err as Error).message }, 500);
+    return c.redirect(`/admin/stats?videoStatsError=${encodeURIComponent((err as Error).message)}`);
   }
 });
 
