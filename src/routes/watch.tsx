@@ -153,6 +153,7 @@ watch.get("/watch/:slug", async (c) => {
       prevSlug={prevSlug}
       nextSlug={nextSlug}
       hasPaidAccess={hasPaidAccess}
+      loggedIn={Boolean(user)}
       isLastFreeLesson={isLastFreeLesson}
       nearbyLessons={nearbyLessons}
       lessonGlobalIndex={globalIdx}

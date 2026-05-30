@@ -36,6 +36,7 @@ interface WatchProps {
   prevSlug: string | null;
   nextSlug: string | null;
   hasPaidAccess: boolean;
+  loggedIn: boolean;
   isLastFreeLesson?: boolean;
   nearbyLessons?: SidebarLesson[];
   lessonGlobalIndex?: number;
