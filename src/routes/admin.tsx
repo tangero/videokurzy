@@ -22,6 +22,7 @@ import {
 } from "../lib/admin-users";
 import { AdminUsersList, AdminUserDetailView } from "../views/admin-users";
 import { AdminStatsPage } from "../views/admin-stats";
+import { getRetentionCurve } from "../lib/watch-stats";
 import {
   triggerTranscribe,
   fetchBunnyVideo,
@@ -727,7 +728,7 @@ admin.get("/admin/stats", async (c) => {
   `)) as Array<{ title: string; durationSeconds: number; completions: number }>;
 
   const videoRows = (await db.all(sql`
-    SELECT l.title AS title,
+    SELECT l.id AS id, l.title AS title,
       coalesce(vs.views,0) AS views,
       coalesce(vs.watchTimeSeconds,0) AS watchTimeSeconds,
       coalesce(vs.engagementScore,0) AS engagementScore,
@@ -737,7 +738,13 @@ admin.get("/admin/stats", async (c) => {
     LEFT JOIN video_stats vs ON vs.videoGuid = l.bunnyVideoId
     WHERE l.bunnyVideoId IS NOT NULL
     ORDER BY m.sortOrder, l.sortOrder
-  `)) as Array<{ title: string; views: number; watchTimeSeconds: number; engagementScore: number; completions: number }>;
+  `)) as Array<{ id: number; title: string; views: number; watchTimeSeconds: number; engagementScore: number; completions: number }>;
+
+  // Retenční křivka per lekce (20 segmentů) z lesson_watch (Track ②).
+  const retentionByLesson = new Map<number, number[]>();
+  for (const v of videoRows) {
+    retentionByLesson.set(Number(v.id), await getRetentionCurve(db, Number(v.id)));
+  }
 
   const syncRow = (await db.get(sql`SELECT max(syncedAt) AS lastSync FROM video_stats`)) as
     | { lastSync: number | null }
@@ -769,6 +776,7 @@ admin.get("/admin/stats", async (c) => {
           watchTimeSeconds: Number(r.watchTimeSeconds),
           engagementScore: Number(r.engagementScore),
           completions: Number(r.completions),
+          retention: retentionByLesson.get(Number(r.id)) ?? [],
           syncedAt: null,
         })),
       }}

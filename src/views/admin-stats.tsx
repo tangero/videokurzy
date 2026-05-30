@@ -20,6 +20,7 @@ export interface AdminStatsData {
     watchTimeSeconds: number;
     engagementScore: number;
     completions: number;
+    retention: number[];
     syncedAt: number | null;
   }[];
 }
@@ -55,6 +56,20 @@ const Metric: FC<{ label: string; value: string; hint?: string; tone?: "warn" }>
     </div>
   </div>
 );
+
+// Retenční sparkline — 20 segmentů, výška = podíl diváků, kteří segment dosáhli
+// (vůči segmentu 0). Vizuálně ukazuje, kde diváci odcházejí.
+const Sparkline: FC<{ curve: number[] }> = ({ curve }) => {
+  const top = curve[0] || 1;
+  return (
+    <div class="flex h-6 items-end gap-px" title="Retence po segmentech videa (kde diváci odcházejí)">
+      {curve.map((v) => {
+        const h = Math.max(6, Math.round((v / top) * 100));
+        return <div class="w-1 rounded-sm bg-indigo-500" style={`height:${h}%`}></div>;
+      })}
+    </div>
+  );
+};
 
 export const AdminStatsPage: FC<{
   user: { name: string | null; email: string };
@@ -119,6 +134,7 @@ export const AdminStatsPage: FC<{
                       <th scope="col" class="px-4 py-2 text-right font-semibold">Odsledováno</th>
                       <th scope="col" class="px-4 py-2 text-right font-semibold">Engagement</th>
                       <th scope="col" class="px-4 py-2 text-right font-semibold">Dokončení</th>
+                      <th scope="col" class="px-4 py-2 font-semibold">Retence</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-gray-100">
@@ -136,6 +152,13 @@ export const AdminStatsPage: FC<{
                               ({Math.round((v.completions / v.views) * 100)} %)
                             </span>
                           ) : null}
+                        </td>
+                        <td class="px-4 py-2">
+                          {v.retention && v.retention.length ? (
+                            <Sparkline curve={v.retention} />
+                          ) : (
+                            <span class="text-gray-400">—</span>
+                          )}
                         </td>
                       </tr>
                     ))}
