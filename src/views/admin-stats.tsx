@@ -84,10 +84,21 @@ export const AdminStatsPage: FC<{
         <AdminNav active="/admin/stats" />
 
         <div class="mt-6 space-y-10">
-          <p class="text-sm text-gray-600">
-            Profil kupujících, sledovanost a aktivace. Bunny data poslední sync:{" "}
-            {fmtDate(lastSync)}.
-          </p>
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-sm text-gray-600">
+              Profil kupujících, sledovanost a aktivace. Bunny data poslední sync:{" "}
+              <strong>{fmtDate(lastSync)}</strong>.
+            </p>
+            <form method="post" action="/admin/api/video-stats/sync" hx-boost="false">
+              <button
+                type="submit"
+                class="text-xs bg-gray-900 text-white px-3 py-1.5 rounded hover:bg-gray-700"
+                title="Ručně stáhne aktuální statistiky ze všech videí na Bunny.net (stejně jako noční cron)"
+              >
+                Sync Bunny stats teď
+              </button>
+            </form>
+          </div>
 
           {/* Kupující */}
           <section>

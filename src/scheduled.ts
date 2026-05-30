@@ -6,7 +6,7 @@ import { sendPaymentReminders } from "./lib/payment-reminders";
 import { fetchFioTransactions, matchPayment } from "./lib/fio";
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
-import { fetchVideoStatistics } from "./lib/bunny-stats";
+import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
 import { applyDiscount } from "./lib/discount";
 import { exportPurchaseInvoice } from "./lib/fakturoid";
 import {
@@ -76,54 +76,6 @@ export async function handleScheduled(
   } catch (err) {
     console.error("[cron] syncVideoStats failed:", err);
   }
-}
-
-/**
- * Stáhne agregované bunny.net statistiky pro každé video s GUID a upsertne je
- * do `video_stats`. Běží server-side (ostré BUNNY_* creds má jen worker).
- * Chyba jednoho videa neshodí ostatní.
- */
-export async function syncVideoStats(
-  db: ReturnType<typeof drizzle>,
-  env: Env,
-): Promise<{ synced: number; errors: number }> {
-  const lessons = await db
-    .select({ guid: lesson.bunnyVideoId })
-    .from(lesson)
-    .where(isNotNull(lesson.bunnyVideoId));
-
-  let synced = 0;
-  let errors = 0;
-  for (const l of lessons) {
-    if (!l.guid) continue;
-    try {
-      const s = await fetchVideoStatistics(env, l.guid);
-      const now = new Date();
-      await db
-        .insert(videoStats)
-        .values({
-          videoGuid: l.guid,
-          views: s.views,
-          watchTimeSeconds: s.watchTimeSeconds,
-          engagementScore: s.engagementScore,
-          syncedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: videoStats.videoGuid,
-          set: {
-            views: s.views,
-            watchTimeSeconds: s.watchTimeSeconds,
-            engagementScore: s.engagementScore,
-            syncedAt: now,
-          },
-        });
-      synced++;
-    } catch (err) {
-      errors++;
-      console.error(`[cron] video stats ${l.guid} failed:`, err);
-    }
-  }
-  return { synced, errors };
 }
 
 /**

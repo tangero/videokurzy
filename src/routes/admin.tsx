@@ -23,6 +23,7 @@ import {
 import { AdminUsersList, AdminUserDetailView } from "../views/admin-users";
 import { AdminStatsPage } from "../views/admin-stats";
 import { getRetentionCurve } from "../lib/watch-stats";
+import { syncVideoStats } from "../lib/bunny-stats";
 import {
   triggerTranscribe,
   fetchBunnyVideo,
@@ -1199,6 +1200,24 @@ admin.post("/admin/api/organizations/:id/approve", async (c) => {
       <td class="px-4 py-2"></td>
     </tr>
   );
+});
+
+// ─── Bunny video stats manual sync ────────────────────────────────
+
+admin.post("/admin/api/video-stats/sync", async (c) => {
+  const db = drizzle(c.env.DB);
+  try {
+    const result = await syncVideoStats(db, c.env);
+    return c.json({
+      ok: true,
+      synced: result.synced,
+      errors: result.errors,
+      message: `Synced ${result.synced} videos, ${result.errors} errors.`,
+    });
+  } catch (err) {
+    console.error("[admin] manual video stats sync failed:", err);
+    return c.json({ ok: false, error: (err as Error).message }, 500);
+  }
 });
 
 // ─── Bunny API proxy ──────────────────────────────────────────────

@@ -1,3 +1,6 @@
+import { drizzle } from "drizzle-orm/d1";
+import { isNotNull } from "drizzle-orm";
+import { lesson, videoStats } from "../db/schema";
 import type { Env } from "../types";
 
 const BUNNY_API_BASE = "https://video.bunnycdn.com";
@@ -51,4 +54,57 @@ export async function fetchVideoStatistics(
     watchTimeSeconds: Math.round(sumChart(data.watchTimeChart)),
     engagementScore: Math.round(Number(data.engagementScore) || 0),
   };
+}
+
+/**
+ * Stáhne agregované bunny.net statistiky pro každé video s GUID a upsertne je
+ * do `video_stats`. Chyba jednoho videa neshodí ostatní.
+ *
+ * Tuto funkci lze volat jak z cronu, tak ručně z adminu.
+ */
+export async function syncVideoStats(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+): Promise<{ synced: number; errors: number }> {
+  const lessons = await db
+    .select({ guid: lesson.bunnyVideoId })
+    .from(lesson)
+    .where(isNotNull(lesson.bunnyVideoId));
+
+  let synced = 0;
+  let errors = 0;
+
+  for (const l of lessons) {
+    if (!l.guid) continue;
+    try {
+      const s = await fetchVideoStatistics(env, l.guid);
+      const now = new Date();
+
+      await db
+        .insert(videoStats)
+        .values({
+          videoGuid: l.guid,
+          views: s.views,
+          watchTimeSeconds: s.watchTimeSeconds,
+          engagementScore: s.engagementScore,
+          syncedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: videoStats.videoGuid,
+          set: {
+            views: s.views,
+            watchTimeSeconds: s.watchTimeSeconds,
+            engagementScore: s.engagementScore,
+            syncedAt: now,
+          },
+        });
+
+      synced++;
+    } catch (err) {
+      errors++;
+      console.error(`[bunny-stats] video ${l.guid} failed:`, err);
+    }
+  }
+
+  return { synced, errors };
 }

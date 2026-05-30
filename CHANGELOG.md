@@ -4,6 +4,23 @@ Větší změny v `kurzy.vibecoding.cz`. Formát volně podle
 [Keep a Changelog](https://keepachangelog.com/). Datumy jsou
 nasazení na produkci.
 
+## Unreleased
+
+### Přidáno
+
+- **Přehled aktivity uživatelů při sledování videí** na hlavním admin dashboardu (`/admin`). Nové karty:
+  - „Aktivní posledních 7 dní“ — kolik uživatelů mělo reálnou aktivitu u videa
+  - „Nikdy nezačali sledovat“ — uživatelé bez jediného záznamu o sledování
+  - „Sledovali alespoň 1 lekci“ — uživatelé s alespoň jedním záznamem v `lesson_watch`
+- **Sekce „Nejaktivnější uživatelé“** — top uživatelé seřazení podle počtu lekcí, které skutečně sledovali (z `lesson_watch`), včetně data poslední aktivity. Přímý přehled nejsilnějších uživatelů.
+- **Sloupec „Poslední aktivita“** v tabulce recent users na dashboardu a v plném seznamu `/admin/users`. Zobrazuje `max(updatedAt)` z `lesson_watch` — nejlepší dostupný signál, zda uživatel pokračuje v koukání obsahu.
+- `listAdminUsers()` a `getAdminUserDetail()` nyní vracejí pole `lastActivityAt` (z `lesson_watch`).
+- Heartbeat z playeru (`/api/watch`) je nyní plně využit v admin rozhraní pro tyto přehledy.
+
+### Změněno
+
+- Dashboard admina nyní výrazně lépe odpovídá na otázku „pokračují uživatelé v koukání videí, nebo jen zakládají účty?“.
+
 ## 2026-05-19 — Fakturoid, FIO automatika, slevy a další
 
 ### Přidáno
