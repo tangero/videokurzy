@@ -167,7 +167,7 @@ export const AdminStatsPage: FC<{
                   </thead>
                   <tbody class="divide-y divide-gray-100">
                     {videos.map((v) => (
-                      <tr>
+                      <tr class={v.isFree ? "bg-emerald-50/70" : ""}>
                         <td class="px-4 py-2 text-gray-900">
                           {v.title}
                           {v.isFree && (
@@ -189,10 +189,15 @@ export const AdminStatsPage: FC<{
                           ) : null}
                         </td>
                         <td class="px-4 py-2">
-                          {v.retention && v.retention.length ? (
+                          {v.retention && v.retention.length > 0 ? (
                             <Sparkline curve={v.retention} />
                           ) : (
-                            <span class="text-gray-400">—</span>
+                            <span 
+                              class="text-gray-400 cursor-help" 
+                              title="Zatím žádná data o sledování této lekce. Retenční křivka se začne plnit, jakmile uživatelé začnou video sledovat přes player."
+                            >
+                              —
+                            </span>
                           )}
                         </td>
                       </tr>
