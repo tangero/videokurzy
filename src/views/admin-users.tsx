@@ -343,7 +343,7 @@ export function AdminUserDetailView({
                 <th class="py-1 pr-2">Typ</th>
                 <th class="py-1 pr-2">Stav</th>
                 <th class="py-1 pr-2">Platnost do</th>
-                <th class="py-1 pr-2">Platba</th>
+                <th class="py-1 pr-2">Zdroj / Důvod</th>
                 <th class="py-1 pr-2">Vytvořeno</th>
                 <th class="py-1 text-right">Akce</th>
               </tr>
@@ -368,7 +368,19 @@ export function AdminUserDetailView({
                     </span>
                   </td>
                   <td class="py-2 pr-2">{formatDate(p.expiresAt)}</td>
-                  <td class="py-2 pr-2 text-gray-500">{p.paymentMethod}</td>
+                  <td class="py-2 pr-2 text-gray-500 text-xs">
+                    {p.kind === "paid" ? (
+                      <span>{p.paymentMethod}</span>
+                    ) : p.kind === "staff" ? (
+                      <span class="text-blue-700">staff (admin)</span>
+                    ) : (
+                      <span>
+                        grant
+                        {p.grantedBy && <span class="block text-[10px] text-gray-400">{p.grantedBy}</span>}
+                        {p.compReason && <span class="block text-[10px] italic text-indigo-600">„{p.compReason}“</span>}
+                      </span>
+                    )}
+                  </td>
                   <td class="py-2 pr-2 text-gray-500">{formatDate(p.createdAt)}</td>
                   <td class="py-2 text-right">
                     <div class="flex justify-end gap-2">
@@ -424,6 +436,15 @@ export function AdminUserDetailView({
                 type="date"
                 name="expiresOn"
                 value={defaultExpiresOn}
+                class="w-full rounded border px-3 py-2 text-sm"
+              />
+            </label>
+            <label class="block col-span-2">
+              <span class="block text-xs font-medium text-gray-700 mb-1">Důvod grantu (volitelné)</span>
+              <input
+                type="text"
+                name="compReason"
+                placeholder="např. Recenze, VIP, podpora, akce..."
                 class="w-full rounded border px-3 py-2 text-sm"
               />
             </label>

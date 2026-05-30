@@ -244,6 +244,9 @@ export type AdminUserDetail = {
     status: "pending" | "active" | "expired" | "refunded";
     expiresAt: Date;
     createdAt: Date;
+    kind: "paid" | "comp" | "staff";
+    compReason: string | null;
+    grantedBy: string | null;
   }[];
   progressCount: number;
 };
@@ -294,6 +297,9 @@ export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserD
       status: p.status,
       expiresAt: p.expiresAt,
       createdAt: p.createdAt,
+      kind: p.kind,
+      compReason: p.compReason ?? null,
+      grantedBy: p.grantedBy ?? null,
     })),
     progressCount: progressRow?.c ?? 0,
   };

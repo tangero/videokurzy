@@ -290,6 +290,8 @@ admin.get("/admin", async (c) => {
           expiresAt: purchase.expiresAt,
           stripePaymentId: purchase.stripePaymentId,
           kind: purchase.kind,
+          grantedBy: purchase.grantedBy,
+          compReason: purchase.compReason,
         })
         .from(purchase)
         .where(inArray(purchase.email, recentUserEmails))
@@ -545,11 +547,21 @@ admin.get("/admin", async (c) => {
                   const isTestStripe = p.stripePaymentId?.startsWith("cs_test_");
                   const isGrant = p.kind === "comp" || p.kind === "staff";
                   let detail = `${p.type === "organization" ? "firemní" : "soukromá"} do ${p.expiresAt.toLocaleDateString("cs-CZ")}`;
-                  if (isTestStripe) detail += " · ⚠ test mode";
-                  else if (p.kind === "staff") detail += " · staff (admin)";
-                  else if (p.kind === "comp") detail += " · grant od admina";
-                  else if (p.paymentMethod === "stripe") detail += " · Stripe";
-                  else if (p.paymentMethod === "fio") detail += " · FIO";
+
+                  if (isGrant) {
+                    if (p.kind === "staff") {
+                      detail += " · staff (admin)";
+                    } else {
+                      detail += " · grant od admina";
+                      if (p.grantedBy) detail += ` (${p.grantedBy})`;
+                      if (p.compReason) detail += ` — ${p.compReason}`;
+                    }
+                  } else {
+                    if (isTestStripe) detail += " · ⚠ test mode";
+                    else if (p.paymentMethod === "stripe") detail += " · Stripe";
+                    else if (p.paymentMethod === "fio") detail += " · FIO";
+                  }
+
                   statusBadge = isGrant
                     ? {
                         label: "zdarma (grant)",
