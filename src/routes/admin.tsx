@@ -21,6 +21,7 @@ import {
   extendAdminPurchase,
 } from "../lib/admin-users";
 import { AdminUsersList, AdminUserDetailView } from "../views/admin-users";
+import { AdminStatsPage } from "../views/admin-stats";
 import {
   triggerTranscribe,
   fetchBunnyVideo,
@@ -684,6 +685,82 @@ admin.get("/admin", async (c) => {
         </div>
       </div>
     </Layout>
+  );
+});
+
+admin.get("/admin/stats", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+
+  const buyerRow = (await db.get(sql`
+    SELECT
+      (SELECT count(*) FROM purchase WHERE kind='paid') AS paidCount,
+      (SELECT coalesce(sum(amountPaid),0) FROM purchase WHERE kind='paid') AS revenue,
+      (SELECT count(*) FROM purchase WHERE kind='paid' AND status='active' AND paymentMethod='stripe') AS stripeActive,
+      (SELECT count(*) FROM purchase WHERE kind='paid' AND status='active' AND paymentMethod='fio') AS fioActive,
+      (SELECT count(*) FROM purchase WHERE kind='paid' AND companyIco IS NOT NULL AND companyIco<>'') AS withIco,
+      (SELECT count(*) FROM user) AS accounts,
+      (SELECT count(*) FROM purchase WHERE kind='paid' AND status='active' AND userId IS NULL) AS noAccount,
+      (SELECT count(*) FROM (SELECT DISTINCT p.userId FROM purchase p WHERE p.kind='paid' AND p.status='active' AND p.userId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM progress pr WHERE pr.userId=p.userId AND pr.completed=1))) AS notStarted
+  `)) as {
+    paidCount: number; revenue: number; stripeActive: number; fioActive: number;
+    withIco: number; accounts: number; noAccount: number; notStarted: number;
+  } | undefined;
+
+  const funnelRows = (await db.all(sql`
+    SELECT l.title AS title, l.durationSeconds AS durationSeconds,
+      (SELECT count(*) FROM progress pr WHERE pr.lessonId=l.id AND pr.completed=1) AS completions
+    FROM lesson l INNER JOIN module m ON l.moduleId=m.id
+    ORDER BY m.sortOrder, l.sortOrder
+  `)) as Array<{ title: string; durationSeconds: number; completions: number }>;
+
+  const videoRows = (await db.all(sql`
+    SELECT l.title AS title,
+      coalesce(vs.views,0) AS views,
+      coalesce(vs.watchTimeSeconds,0) AS watchTimeSeconds,
+      coalesce(vs.engagementScore,0) AS engagementScore,
+      (SELECT count(*) FROM progress pr WHERE pr.lessonId=l.id AND pr.completed=1) AS completions
+    FROM lesson l
+    INNER JOIN module m ON l.moduleId=m.id
+    LEFT JOIN video_stats vs ON vs.videoGuid = l.bunnyVideoId
+    WHERE l.bunnyVideoId IS NOT NULL
+    ORDER BY m.sortOrder, l.sortOrder
+  `)) as Array<{ title: string; views: number; watchTimeSeconds: number; engagementScore: number; completions: number }>;
+
+  const syncRow = (await db.get(sql`SELECT max(syncedAt) AS lastSync FROM video_stats`)) as
+    | { lastSync: number | null }
+    | undefined;
+
+  return c.html(
+    <AdminStatsPage
+      user={currentUser}
+      lastSync={syncRow?.lastSync ?? null}
+      data={{
+        buyers: {
+          paidCount: Number(buyerRow?.paidCount ?? 0),
+          revenueCzk: Number(buyerRow?.revenue ?? 0),
+          stripeActive: Number(buyerRow?.stripeActive ?? 0),
+          fioActive: Number(buyerRow?.fioActive ?? 0),
+          withIco: Number(buyerRow?.withIco ?? 0),
+          accounts: Number(buyerRow?.accounts ?? 0),
+          noAccount: Number(buyerRow?.noAccount ?? 0),
+          notStarted: Number(buyerRow?.notStarted ?? 0),
+        },
+        funnel: funnelRows.map((r) => ({
+          title: r.title,
+          durationSeconds: Number(r.durationSeconds),
+          completions: Number(r.completions),
+        })),
+        videos: videoRows.map((r) => ({
+          title: r.title,
+          views: Number(r.views),
+          watchTimeSeconds: Number(r.watchTimeSeconds),
+          engagementScore: Number(r.engagementScore),
+          completions: Number(r.completions),
+          syncedAt: null,
+        })),
+      }}
+    />,
   );
 });
 
