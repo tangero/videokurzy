@@ -130,6 +130,7 @@ export function AdminUsersList({
               <th class="px-4 py-2 text-left">Jméno</th>
               <th class="px-4 py-2 text-left">Role</th>
               <th class="px-4 py-2 text-left">Přístup</th>
+              <th class="px-4 py-2 text-left">Poslední aktivita</th>
               <th class="px-4 py-2 text-left">Vytvořen</th>
               <th class="px-4 py-2 text-right">Akce</th>
             </tr>
@@ -155,6 +156,9 @@ export function AdminUsersList({
                   </span>
                 </td>
                 <td class="px-4 py-2">{accessBadge(u.activeAccess, u.accessExpiresAt, u.accessSource, u.role)}</td>
+                <td class="px-4 py-2 text-gray-500">
+                  {u.lastActivityAt ? formatDate(u.lastActivityAt) : "—"}
+                </td>
                 <td class="px-4 py-2 text-gray-500">{formatDate(u.createdAt)}</td>
                 <td class="px-4 py-2 text-right">
                   <a href={`/admin/users/${u.id}`} class="text-indigo-600 hover:underline text-xs">

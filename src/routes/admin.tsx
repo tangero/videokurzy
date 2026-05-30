@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { FC } from "hono/jsx";
-import { and, desc, eq, asc, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, asc, inArray, or, sql, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
-import { course, module, lesson, organization, purchase, user, siteConfig } from "../db/schema";
+import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch } from "../db/schema";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml } from "../lib/email";
 import {
@@ -311,8 +311,64 @@ admin.get("/admin", async (c) => {
     const rank = (s: string) => (s === "active" ? 3 : s === "pending" ? 2 : 1);
     if (rank(p.status) > rank(prev.status)) purchaseByEmail.set(e, p);
   }
+
+  // Poslední aktivita z lesson_watch pro recent users (klíčový signál "pokračuje v koukání")
+  const recentUserIds = recentUsers.map((u) => u.id);
+  const recentLastActivity = recentUserIds.length > 0
+    ? await db
+        .select({
+          userId: lessonWatch.userId,
+          lastActivity: sql<Date>`max(${lessonWatch.updatedAt})`,
+        })
+        .from(lessonWatch)
+        .where(inArray(lessonWatch.userId, recentUserIds))
+        .groupBy(lessonWatch.userId)
+    : [];
+  const lastActivityByUserId = new Map(recentLastActivity.map((r) => [r.userId, r.lastActivity]));
   const orgs = await db.select().from(organization).orderBy(asc(organization.createdAt));
   const userCreated = c.req.query("userCreated");
+
+  // === Nové aktivity metriky z lesson_watch (pro "pokračují v koukání?") ===
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const [activeLast7d] = await db
+    .select({ count: sql<number>`count(distinct ${lessonWatch.userId})` })
+    .from(lessonWatch)
+    .where(gt(lessonWatch.updatedAt, sevenDaysAgo));
+
+  const usersWithAnyWatch = await db
+    .select({ userId: lessonWatch.userId })
+    .from(lessonWatch)
+    .groupBy(lessonWatch.userId);
+
+  const neverWatchedCount = Math.max(0, userCount.count - usersWithAnyWatch.length);
+
+  // Nejaktivnější uživatelé (podle počtu sledovaných lekcí)
+  const topActiveRaw = await db
+    .select({
+      userId: lessonWatch.userId,
+      lessonsWatched: sql<number>`count(*)`,
+      lastActivity: sql<Date>`max(${lessonWatch.updatedAt})`,
+    })
+    .from(lessonWatch)
+    .groupBy(lessonWatch.userId)
+    .orderBy(desc(sql`count(*)`))
+    .limit(6);
+
+  const topActiveUserIds = topActiveRaw.map((r) => r.userId);
+  const topActiveUsersInfo = topActiveUserIds.length > 0
+    ? await db
+        .select({ id: user.id, email: user.email, name: user.name })
+        .from(user)
+        .where(inArray(user.id, topActiveUserIds))
+    : [];
+  const userInfoMap = new Map(topActiveUsersInfo.map((u) => [u.id, u]));
+
+  const topActive = topActiveRaw.map((r) => ({
+    ...r,
+    email: userInfoMap.get(r.userId)?.email ?? "",
+    name: userInfoMap.get(r.userId)?.name ?? null,
+  }));
 
   const lastFioScan = await readLastFioScan(c.env);
   const nowMs = Date.now();
@@ -430,6 +486,25 @@ admin.get("/admin", async (c) => {
           </div>
         </div>
 
+        {/* Aktivita ze sledování videa (klíčový signál "pokračují v koukání?") */}
+        <div class="grid grid-cols-3 gap-4 mb-8">
+          <div class="bg-white p-4 rounded-lg border" title="Uživatelé, kteří měli nějakou aktivitu u videa v posledních 7 dnech (z lesson_watch).">
+            <p class="text-sm text-gray-500">Aktivní posledních 7 dní</p>
+            <p class="text-2xl font-bold text-emerald-700">{activeLast7d?.count ?? 0}</p>
+            <p class="text-xs text-gray-500 mt-1">sledovali nějakou lekci</p>
+          </div>
+          <div class="bg-white p-4 rounded-lg border" title="Uživatelé, kteří zatím nespustili žádné video (žádný záznam v lesson_watch).">
+            <p class="text-sm text-gray-500">Nikdy nezačali sledovat</p>
+            <p class="text-2xl font-bold text-amber-600">{neverWatchedCount}</p>
+            <p class="text-xs text-gray-500 mt-1">z celkového počtu uživatelů</p>
+          </div>
+          <div class="bg-white p-4 rounded-lg border">
+            <p class="text-sm text-gray-500">Sledovali alespoň 1 lekci</p>
+            <p class="text-2xl font-bold">{usersWithAnyWatch.length}</p>
+            <p class="text-xs text-gray-500 mt-1">mají záznam o sledování</p>
+          </div>
+        </div>
+
         {/* FIO manual scan — hx-boost="false" obchází htmx interceptor, jinak
            form submit projde jako AJAX a 303 redirect neproběhne čistě. */}
         <div class="mb-8 bg-white border rounded-lg p-4">
@@ -524,7 +599,7 @@ admin.get("/admin", async (c) => {
                 <th class="px-4 py-2 text-left">E-mail</th>
                 <th class="px-4 py-2 text-left">Role</th>
                 <th class="px-4 py-2 text-left">Stav objednávky</th>
-                <th class="px-4 py-2 text-left">Detail</th>
+                <th class="px-4 py-2 text-left">Poslední aktivita</th>
                 <th class="px-4 py-2 text-left">Vytvořen</th>
               </tr>
             </thead>
@@ -605,6 +680,11 @@ admin.get("/admin", async (c) => {
                     </td>
                     <td class="px-4 py-2 text-xs text-gray-600">{statusBadge.detail}</td>
                     <td class="px-4 py-2 text-gray-500">
+                      {lastActivityByUserId.get(u.id)
+                        ? lastActivityByUserId.get(u.id)!.toLocaleDateString("cs-CZ")
+                        : "—"}
+                    </td>
+                    <td class="px-4 py-2 text-gray-500">
                       {u.createdAt.toLocaleDateString("cs-CZ")}
                     </td>
                   </tr>
@@ -619,6 +699,50 @@ admin.get("/admin", async (c) => {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Nejaktivnější uživatelé (podle počtu sledovaných lekcí) */}
+        <div class="mb-8">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-xl font-bold">Nejaktivnější uživatelé</h2>
+            <span class="text-xs text-gray-500">podle počtu lekcí, které sledovali</span>
+          </div>
+          <div class="bg-white rounded-lg border overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-4 py-2 text-left">E-mail</th>
+                  <th class="px-4 py-2 text-left">Lekcí sledováno</th>
+                  <th class="px-4 py-2 text-left">Poslední aktivita</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topActive.map((u) => (
+                  <tr class="border-t" key={u.userId}>
+                    <td class="px-4 py-2 font-medium">
+                      <a href={`/admin/users/${u.userId}`} class="text-indigo-600 hover:underline no-underline">
+                        {u.email}
+                      </a>
+                      {u.name && <span class="block text-xs text-gray-500">{u.name}</span>}
+                    </td>
+                    <td class="px-4 py-2">
+                      <span class="font-semibold">{u.lessonsWatched}</span>
+                    </td>
+                    <td class="px-4 py-2 text-gray-500">
+                      {u.lastActivity ? u.lastActivity.toLocaleDateString("cs-CZ") : "—"}
+                    </td>
+                  </tr>
+                ))}
+                {topActive.length === 0 && (
+                  <tr>
+                    <td colspan={3} class="px-4 py-4 text-gray-500 text-center">
+                      Zatím žádná data o sledování
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Organizations */}

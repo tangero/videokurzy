@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
-import { user } from "../db/schema";
+import { user, lessonWatch } from "../db/schema";
 import { purchase, progress } from "../db/schema";
 import { userEmails } from "../db/identity-schema";
 import { ensureUserEmailRecord, normalizeEmail } from "./user-emails";
@@ -136,6 +136,8 @@ export type AdminUserListItem = {
   // 'paid' = reálně zaplaceno (Stripe/FIO), 'grant' = comp/staff od admina,
   // null = bez aktivního přístupu (jen registrace nebo expired).
   accessSource: "paid" | "grant" | null;
+  /** Poslední reálné sledování videa (z lesson_watch.updatedAt). Nejlepší signál aktivity. */
+  lastActivityAt: Date | null;
 };
 
 export async function listAdminUsers(
@@ -174,9 +176,8 @@ export async function listAdminUsers(
 
   const ids = rows.map((r) => r.id);
   const emails = rows.map((r) => r.email);
-  // Pokud purchase nemá nastavený userId (linkPurchasesToUser nedoběhl), zachyť
-  // ho přes email match. Tím nevypadne uživatel, který má active purchase
-  // s nepřiřazeným userId.
+
+  // Aktivní přístup (stávající logika)
   const activePurchases = await db
     .select({
       userId: purchase.userId,
@@ -192,6 +193,18 @@ export async function listAdminUsers(
         or(inArray(purchase.userId, ids), inArray(purchase.email, emails)),
       ),
     );
+
+  // Poslední aktivita ze sledování videa (nejlepší signál "pokračuje v koukání")
+  const lastActivityRows = ids.length > 0
+    ? await db
+        .select({
+          userId: lessonWatch.userId,
+          last: sql<Date>`max(${lessonWatch.updatedAt})`,
+        })
+        .from(lessonWatch)
+        .where(inArray(lessonWatch.userId, ids))
+        .groupBy(lessonWatch.userId)
+    : [];
 
   const emailToId = new Map(rows.map((r) => [r.email.toLowerCase(), r.id]));
   const activeByUser = new Map<string, {
@@ -213,6 +226,11 @@ export async function listAdminUsers(
     }
   }
 
+  const lastActivityByUser = new Map<string, Date>();
+  for (const row of lastActivityRows) {
+    if (row.last) lastActivityByUser.set(row.userId, row.last);
+  }
+
   return {
     rows: rows.map((r) => {
       const active = activeByUser.get(r.id);
@@ -221,6 +239,7 @@ export async function listAdminUsers(
         activeAccess: active?.type ?? null,
         accessExpiresAt: active?.expiresAt ?? null,
         accessSource: active?.source ?? null,
+        lastActivityAt: lastActivityByUser.get(r.id) ?? null,
       };
     }),
     total,
@@ -249,6 +268,7 @@ export type AdminUserDetail = {
     grantedBy: string | null;
   }[];
   progressCount: number;
+  lastActivityAt: Date | null;
 };
 
 export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserDetail | null> {
@@ -272,6 +292,12 @@ export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserD
     .select({ c: sql<number>`count(*)` })
     .from(progress)
     .where(eq(progress.userId, id))
+    .get();
+
+  const lastActivityRow = await db
+    .select({ last: sql<Date>`max(${lessonWatch.updatedAt})` })
+    .from(lessonWatch)
+    .where(eq(lessonWatch.userId, id))
     .get();
 
   return {
@@ -302,6 +328,7 @@ export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserD
       grantedBy: p.grantedBy ?? null,
     })),
     progressCount: progressRow?.c ?? 0,
+    lastActivityAt: lastActivityRow?.last ?? null,
   };
 }
 
