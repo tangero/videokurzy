@@ -6,6 +6,7 @@ import { requireAuth } from "../middleware/auth";
 import { progress, lesson, module } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { sendResendEvent } from "../lib/resend";
+import { recordWatch } from "../lib/watch-stats";
 import { ProgressComplete } from "../views/watch";
 
 const progressRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -118,6 +119,39 @@ progressRoutes.post("/api/progress/:lessonId", requireAuth, async (c) => {
 
   // Return partial HTML for htmx swap
   return c.html(<ProgressComplete lessonId={lessonId} />);
+});
+
+// Watch-time / retenční tracking — volá player.js heartbeat (fetch / sendBeacon).
+// Tělo: { maxSegment, watchedSeconds }. Idempotentní upsert (posun jen nahoru).
+progressRoutes.post("/api/watch/:lessonId", requireAuth, async (c) => {
+  const user = c.get("user")!;
+  const lessonId = parseInt(c.req.param("lessonId"), 10);
+  if (!Number.isFinite(lessonId)) return c.body(null, 400);
+
+  let maxSegment = 0;
+  let watchedSeconds = 0;
+  try {
+    const body = (await c.req.json()) as { maxSegment?: unknown; watchedSeconds?: unknown };
+    maxSegment = Number(body.maxSegment) || 0;
+    watchedSeconds = Number(body.watchedSeconds) || 0;
+  } catch {
+    return c.body(null, 400);
+  }
+
+  const db = drizzle(c.env.DB);
+  const { started } = await recordWatch(db, { userId: user.id, lessonId, maxSegment, watchedSeconds }, new Date());
+
+  // První spuštění lekce → lesson.started pro re-engagement automation
+  // (chytá i diváky, co video pustili, ale nedokončili).
+  if (started) {
+    c.executionCtx.waitUntil(
+      sendResendEvent(c.env.RESEND_API_KEY, "lesson.started", user.email, { lessonId }).catch(
+        (err) => console.error("Resend lesson.started event failed:", err)
+      )
+    );
+  }
+
+  return c.body(null, 204);
 });
 
 export { progressRoutes };

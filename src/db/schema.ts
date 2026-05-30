@@ -159,4 +159,24 @@ export const videoStats = sqliteTable("video_stats", {
   syncedAt: integer("syncedAt", { mode: "timestamp" }).notNull(),
 });
 
+// Per-user sledování lekce — z maxSegment se počítá retenční křivka
+// (pro segment s = count uživatelů s maxSegment >= s), watchedSeconds = reálně
+// odsledovaný čas. SEGMENTS=20 (křivka po 5 % délky). Viz Track ② spec.
+export const lessonWatch = sqliteTable(
+  "lesson_watch",
+  {
+    userId: text("userId")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    lessonId: integer("lessonId")
+      .notNull()
+      .references(() => lesson.id, { onDelete: "cascade" }),
+    maxSegment: integer("maxSegment").notNull().default(0),
+    watchedSeconds: integer("watchedSeconds").notNull().default(0),
+    startedAt: integer("startedAt", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.lessonId] })]
+);
+
 export { user, session, account, verification } from "./auth-schema";
