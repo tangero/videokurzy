@@ -333,14 +333,14 @@ export const WatchPage: FC<WatchProps> = ({
           .watch-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
-      {embedUrl && chapters.length > 0 && (
+      {embedUrl && (
         <>
           <script src="https://assets.mediadelivery.net/playerjs/playerjs-latest.min.js"></script>
           <script dangerouslySetInnerHTML={{ __html: `
             (function () {
               var iframe = document.getElementById('lesson-video-player');
+              if (!iframe || !window.playerjs) return;
               var buttons = Array.prototype.slice.call(document.querySelectorAll('.chapter-item'));
-              if (!iframe || !buttons.length || !window.playerjs) return;
 
               var player = new window.playerjs.Player(iframe);
 
@@ -379,6 +379,48 @@ export const WatchPage: FC<WatchProps> = ({
                   setActive(typeof seconds === 'number' ? seconds : 0);
                 });
               });
+
+              // ── Watch-time / retenční tracking (jen přihlášení) ────────
+              var loggedIn = ${loggedIn ? "true" : "false"};
+              if (loggedIn) {
+                var SEGMENTS = 20;
+                var lessonId = ${lesson.id};
+                var maxSegment = 0, watchedSeconds = 0, lastTime = 0;
+                var dirty = false, started = false;
+
+                player.on('timeupdate', function (event) {
+                  var data = event && event.data ? event.data : event;
+                  var cur = data && typeof data.seconds === 'number' ? data.seconds : 0;
+                  var dur = data && typeof data.duration === 'number' ? data.duration : 0;
+                  if (dur > 0) {
+                    var seg = Math.floor((cur / dur) * SEGMENTS);
+                    if (seg > maxSegment) { maxSegment = seg; dirty = true; }
+                  }
+                  var delta = cur - lastTime;
+                  if (delta > 0 && delta < 2) { watchedSeconds += delta; dirty = true; }
+                  lastTime = cur;
+                });
+
+                var send = function (useBeacon) {
+                  if (!dirty) return;
+                  dirty = false;
+                  var url = '/api/watch/' + lessonId;
+                  var payload = JSON.stringify({ maxSegment: maxSegment, watchedSeconds: Math.round(watchedSeconds) });
+                  if (useBeacon && navigator.sendBeacon) {
+                    navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+                  } else {
+                    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(function () {});
+                  }
+                };
+
+                player.on('play', function () {
+                  if (!started) { started = true; dirty = true; send(false); }
+                });
+                setInterval(function () { send(false); }, 20000);
+                player.on('ended', function () { send(true); });
+                document.addEventListener('visibilitychange', function () { if (document.hidden) send(true); });
+                window.addEventListener('pagehide', function () { send(true); });
+              }
             })();
           ` }} />
         </>
