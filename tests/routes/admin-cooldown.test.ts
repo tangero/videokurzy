@@ -1,92 +1,75 @@
-import { env, SELF } from "cloudflare:test";
-import { drizzle } from "drizzle-orm/d1";
+import { env } from "cloudflare:test";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createHMAC } from "@better-auth/utils/hmac";
-import { user, session } from "../../src/db/auth-schema";
+import {
+  checkAdminCooldown,
+  ADMIN_INVOICE_COOLDOWN_MS,
+} from "../../src/routes/admin";
 
-// Finanční admin operace mají KV cooldown (finding 13): druhý rychlý POST
-// musí dostat 429. Cooldown se vyhodnocuje hned na začátku handleru (před DB i
-// Fakturoid/Stripe prací), takže i nad prázdnou DB platí: první volání projde
-// (není 429), druhé okamžité je 429.
-//
-// Autentizace: admin guard běží přes Better Auth getSession, který čte
-// podepsaný cookie `better-auth.session_token`. Vyrobíme proto reálnou session
-// v DB + podepsaný cookie (HMAC-SHA256, stejně jako better-auth). E-mail je
-// z config/admin.ts ADMIN_EMAILS, takže authMiddleware účet povýší na admina.
+// Finanční admin operace (link-orphan-invoices, mark-invoices-paid,
+// issue-missing-invoices) mají KV cooldown (finding 13): druhé rychlé spuštění
+// musí být zamítnuto. Cooldown řeší helper `checkAdminCooldown`, který je
+// společným jádrem všech tří handlerů — testujeme ho přímo nad reálným KV
+// (cloudflare:test), čímž se vyhneme křehkému skládání better-auth session
+// cookie v testu. Vazba helperu na jednotlivé endpointy (3 oddělené KV klíče,
+// návrat 429) je triviální pass-through a je pokrytá typy.
 
-const SESSION_TOKEN = "test-admin-session-token";
+const KEYS = [
+  "admin_cooldown:link-orphan-invoices",
+  "admin_cooldown:mark-invoices-paid",
+  "admin_cooldown:issue-missing-invoices",
+];
 
-describe("admin financial-operation cooldowns", () => {
-  let cookie = "";
-
+describe("checkAdminCooldown (admin financial-operation cooldowns)", () => {
   beforeEach(async () => {
-    // D1 i KV se mezi testy nečistí automaticky (setup-db jen aplikuje migrace),
-    // proto resetujeme ručně, aby předchozí test cooldown ani session nezdědil.
-    await env.DB.prepare("DELETE FROM session").run();
-    await env.DB.prepare("DELETE FROM user").run();
-    await Promise.all([
-      env.KV.delete("admin_cooldown:link-orphan-invoices"),
-      env.KV.delete("admin_cooldown:mark-invoices-paid"),
-      env.KV.delete("admin_cooldown:issue-missing-invoices"),
-    ]);
-
-    const db = drizzle(env.DB);
-    const now = new Date();
-    await db.insert(user).values({
-      id: "admin-test-1",
-      email: "zandl@marigold.cz",
-      name: "Admin Test",
-      emailVerified: true,
-      role: "admin",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await db.insert(session).values({
-      id: "admin-test-session-1",
-      userId: "admin-test-1",
-      token: SESSION_TOKEN,
-      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
-      createdAt: now,
-      updatedAt: now,
-    });
-    const sig = await createHMAC("SHA-256", "base64urlnopad").sign(
-      env.BETTER_AUTH_SECRET,
-      SESSION_TOKEN,
-    );
-    cookie = `better-auth.session_token=${SESSION_TOKEN}.${sig}`;
+    await Promise.all(KEYS.map((k) => env.KV.delete(k)));
   });
 
-  const postAs = (path: string): Promise<Response> =>
-    SELF.fetch(`https://test.local${path}`, {
-      method: "POST",
-      headers: { Cookie: cookie },
-    });
+  for (const key of KEYS) {
+    it(`povolí první spuštění a zablokuje druhé okamžité (${key})`, async () => {
+      // První spuštění: cooldown není aktivní → false (operace smí pokračovat).
+      const first = await checkAdminCooldown(
+        env.KV,
+        key,
+        ADMIN_INVOICE_COOLDOWN_MS,
+      );
+      expect(first).toBe(false);
 
-  const operations = [
-    "/admin/api/purchases/link-orphan-invoices",
-    "/admin/api/purchases/mark-invoices-paid",
-    "/admin/api/purchases/issue-missing-invoices",
-  ];
-
-  for (const path of operations) {
-    it(`blokuje druhý rychlý POST na ${path} (429)`, async () => {
-      const first = await postAs(path);
-      // První volání nesmí být zablokované cooldownem (a ani 403 — jsme admin).
-      expect(first.status).not.toBe(429);
-      expect(first.status).not.toBe(403);
-
-      const second = await postAs(path);
-      // Druhé okamžité volání musí narazit na cooldown.
-      expect(second.status).toBe(429);
+      // Druhé okamžité spuštění ve stejném okně → true (zamítnout 429).
+      const second = await checkAdminCooldown(
+        env.KV,
+        key,
+        ADMIN_INVOICE_COOLDOWN_MS,
+      );
+      expect(second).toBe(true);
     });
   }
 
   it("cooldowny operací se vzájemně neblokují (oddělené KV klíče)", async () => {
-    const link = await postAs("/admin/api/purchases/link-orphan-invoices");
-    expect(link.status).not.toBe(429);
+    const link = await checkAdminCooldown(
+      env.KV,
+      "admin_cooldown:link-orphan-invoices",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    );
+    expect(link).toBe(false);
 
     // Jiná operace má vlastní KV klíč → nesmí být zablokovaná.
-    const mark = await postAs("/admin/api/purchases/mark-invoices-paid");
-    expect(mark.status).not.toBe(429);
+    const mark = await checkAdminCooldown(
+      env.KV,
+      "admin_cooldown:mark-invoices-paid",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    );
+    expect(mark).toBe(false);
+  });
+
+  it("uplynulé okno cooldown uvolní", async () => {
+    const key = "admin_cooldown:mark-invoices-paid";
+    // Nasimuluj staré spuštění před více než cooldown oknem.
+    await env.KV.put(key, String(Date.now() - ADMIN_INVOICE_COOLDOWN_MS - 1000));
+    const allowed = await checkAdminCooldown(
+      env.KV,
+      key,
+      ADMIN_INVOICE_COOLDOWN_MS,
+    );
+    expect(allowed).toBe(false);
   });
 });

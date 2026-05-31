@@ -2192,4 +2192,4 @@ admin.post("/admin/settings", async (c) => {
   );
 });
 
-export { admin as adminRoutes };
+export { admin as adminRoutes, checkAdminCooldown, ADMIN_INVOICE_COOLDOWN_MS };
