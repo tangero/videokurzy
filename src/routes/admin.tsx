@@ -319,13 +319,15 @@ admin.get("/admin", async (c) => {
     ? await db
         .select({
           userId: lessonWatch.userId,
-          lastActivity: sql<Date>`max(${lessonWatch.updatedAt})`,
+          lastActivity: sql<Date | number | string | null>`max(${lessonWatch.updatedAt})`,
         })
         .from(lessonWatch)
         .where(inArray(lessonWatch.userId, recentUserIds))
         .groupBy(lessonWatch.userId)
     : [];
-  const lastActivityByUserId = new Map(recentLastActivity.map((r) => [r.userId, r.lastActivity]));
+  const lastActivityByUserId = new Map(
+    recentLastActivity.map((r) => [r.userId, normalizeSqlTimestampDate(r.lastActivity)]),
+  );
   const orgs = await db.select().from(organization).orderBy(asc(organization.createdAt));
   const userCreated = c.req.query("userCreated");
 
@@ -349,7 +351,7 @@ admin.get("/admin", async (c) => {
     .select({
       userId: lessonWatch.userId,
       lessonsWatched: sql<number>`count(*)`,
-      lastActivity: sql<Date>`max(${lessonWatch.updatedAt})`,
+      lastActivity: sql<Date | number | string | null>`max(${lessonWatch.updatedAt})`,
     })
     .from(lessonWatch)
     .groupBy(lessonWatch.userId)
@@ -367,6 +369,7 @@ admin.get("/admin", async (c) => {
 
   const topActive = topActiveRaw.map((r) => ({
     ...r,
+    lastActivity: normalizeSqlTimestampDate(r.lastActivity),
     email: userInfoMap.get(r.userId)?.email ?? "",
     name: userInfoMap.get(r.userId)?.name ?? null,
   }));
@@ -1533,6 +1536,16 @@ admin.get("/admin/api/fio/diagnose", async (c) => {
 
 const FIO_SCAN_COOLDOWN_MS = 60 * 1000; // FIO API rate limit ~30s, držíme 60s buffer.
 const FIO_SCAN_KV_KEY = "fio:lastScan";
+
+export function normalizeSqlTimestampDate(value: Date | number | string | null | undefined): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const milliseconds = numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
 type FioScanRecord = {
   at: number;
