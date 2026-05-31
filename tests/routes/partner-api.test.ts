@@ -57,6 +57,13 @@ async function clearSiteConfig() {
   await env.DB.prepare("DELETE FROM site_config WHERE key IN ('price_individual', 'price_organization')").run();
 }
 
+// Per-key rate-limit counters žijí v KV. Mezi testy je promazáváme, ať
+// jeden test nevyčerpá okno pro další (sdílíme jediný platný klíč).
+async function clearRateLimit() {
+  const list = await env.KV.list({ prefix: "partner_rate:" });
+  await Promise.all(list.keys.map((k) => env.KV.delete(k.name)));
+}
+
 async function setPrices(individual: number, organization: number) {
   await env.DB.prepare(
     "INSERT OR REPLACE INTO site_config (key, value) VALUES ('price_individual', ?), ('price_organization', ?)"
@@ -84,6 +91,7 @@ describe("partner-api /api/partner/purchases", () => {
   beforeEach(async () => {
     await clearPurchases();
     await clearSiteConfig();
+    await clearRateLimit();
   });
 
   it("403 without key", async () => {
@@ -310,6 +318,7 @@ describe("partner-api /api/partner/purchases/:id", () => {
   beforeEach(async () => {
     await clearPurchases();
     await clearSiteConfig();
+    await clearRateLimit();
   });
 
   it("403 without key", async () => {
@@ -322,13 +331,19 @@ describe("partner-api /api/partner/purchases/:id", () => {
       headers: { "X-Partner-Key": PARTNER_KEY },
     });
     expect(res.status).toBe(404);
+    const body = await res.json<{ error: string }>();
+    expect(body).toEqual({ error: "not_found" });
   });
 
-  it("400 for non-numeric id", async () => {
+  it("404 not_found for non-numeric id (no enumeration signal)", async () => {
     const res = await SELF.fetch("https://test.local/api/partner/purchases/abc", {
       headers: { "X-Partner-Key": PARTNER_KEY },
     });
-    expect(res.status).toBe(400);
+    // Neplatný formát id musí být nerozlišitelný od neexistujícího id, aby
+    // útočník nedokázal odlišit "špatný formát" od "neexistuje".
+    expect(res.status).toBe(404);
+    const body = await res.json<{ error: string }>();
+    expect(body).toEqual({ error: "not_found" });
   });
 
   it("returns detail", async () => {
@@ -357,5 +372,26 @@ describe("partner-api /api/partner/purchases/:id", () => {
       amount: 13500, // skutečně přijatá platba
       discount_percent: 10,
     });
+  });
+});
+
+describe("partner-api rate limiting", () => {
+  beforeEach(async () => {
+    await clearPurchases();
+    await clearSiteConfig();
+    await clearRateLimit();
+  });
+
+  it("429 rate_limited after exceeding per-key limit", async () => {
+    // Limit je 20 požadavků na okno; 21. (poslední) musí spadnout na 429.
+    let lastRes: Response | undefined;
+    for (let i = 0; i < 21; i++) {
+      lastRes = await SELF.fetch("https://test.local/api/partner/purchases", {
+        headers: { "X-Partner-Key": PARTNER_KEY },
+      });
+    }
+    expect(lastRes!.status).toBe(429);
+    const body = await lastRes!.json<{ error: string }>();
+    expect(body).toEqual({ error: "rate_limited" });
   });
 });

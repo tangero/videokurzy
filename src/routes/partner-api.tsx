@@ -24,6 +24,36 @@ const partner = new Hono<{ Bindings: Env }>();
 
 partner.use("/api/partner/*", requirePartnerKey);
 
+// Per-key frekvenční limit: i s platným klíčem nelze rychle vyexfiltrovat
+// celou DB objednávek. Pevné okno (tumbling bucket) je tu dostatečné.
+const PARTNER_RATE_LIMIT_WINDOW_SECONDS = 60;
+const PARTNER_RATE_LIMIT_MAX = 20;
+
+partner.use("/api/partner/*", async (c, next) => {
+  // Běží až PO ověření klíče — neautentizované požadavky odpadnou dřív
+  // a counter tak vždy klíčujeme reálným autentizovaným klíčem.
+  const key = c.req.header("X-Partner-Key") ?? "unknown";
+  // Klíč hashujeme, ať v KV neleží surový secret.
+  const hashBuffer = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(key),
+  );
+  const keyHash = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+  const bucket = Math.floor(Date.now() / (PARTNER_RATE_LIMIT_WINDOW_SECONDS * 1000));
+  const kvKey = `partner_rate:${keyHash}:${bucket}`;
+  const current = Number((await c.env.KV.get(kvKey)) ?? "0");
+  if (current >= PARTNER_RATE_LIMIT_MAX) {
+    return c.json({ error: "rate_limited" }, 429);
+  }
+  await c.env.KV.put(kvKey, String(current + 1), {
+    expirationTtl: PARTNER_RATE_LIMIT_WINDOW_SECONDS * 2,
+  });
+  await next();
+});
+
 const VALID_STATUSES = ["pending", "active", "expired", "refunded"] as const;
 type PurchaseStatus = (typeof VALID_STATUSES)[number];
 
@@ -257,7 +287,9 @@ partner.get("/api/partner/purchases", async (c) => {
 partner.get("/api/partner/purchases/:id", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!Number.isFinite(id)) {
-    return c.json({ error: "invalid_id" }, 400);
+    // Záměrně stejná odpověď jako u neexistujícího id — útočník nesmí
+    // rozlišit "špatný formát" od "neexistuje" (žádný enumeration signál).
+    return c.json({ error: "not_found" }, 404);
   }
   const db = drizzle(c.env.DB);
   const prices = await loadPrices(db);
