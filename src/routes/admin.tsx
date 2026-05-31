@@ -216,6 +216,8 @@ const AdminUserForm: FC<{
   </div>
 );
 
+admin.get("/admin/", (c) => c.redirect("/admin"));
+
 // All admin routes require admin role
 admin.use("/admin/*", requireAdmin);
 
