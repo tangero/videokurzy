@@ -33,6 +33,7 @@ import {
   vttToPlainText,
 } from "../lib/transcribe";
 import { countDiscountedActivePurchases } from "../lib/discount";
+import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
 import { scanFioPayments } from "../scheduled";
 import {
   exportPurchaseInvoice,
@@ -220,6 +221,27 @@ admin.get("/admin/", (c) => c.redirect("/admin"));
 
 // All admin routes require admin role
 admin.use("/admin/*", requireAdmin);
+
+// Cooldown pro IO-náročné finanční admin operace (Stripe/Fakturoid/e-mail).
+// Chrání před insiderem / kompromitovaným adminem, který by endpoint "tloukl"
+// (finding 13). Stejná konvence jako FIO scan: KV timestamp + odmítnutí 429.
+const ADMIN_INVOICE_COOLDOWN_MS = 60 * 1000;
+
+// Vrací true, pokud je cooldown aktivní (požadavek se má zamítnout 429).
+// Jinak uloží nový timestamp a vrací false (operace smí pokračovat).
+async function checkAdminCooldown(
+  kv: KVNamespace,
+  key: string,
+  cooldownMs: number,
+): Promise<boolean> {
+  const now = Date.now();
+  const raw = await kv.get(key);
+  if (raw && now - Number(raw) < cooldownMs) {
+    return true;
+  }
+  await kv.put(key, String(now), { expirationTtl: 120 });
+  return false;
+}
 
 // Admin dashboard
 admin.get("/admin", async (c) => {
@@ -1275,6 +1297,15 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
  * uložit fakturoidInvoiceId, ačkoli Fakturoid fakturu vytvořil.
  */
 admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
+  if (
+    await checkAdminCooldown(
+      c.env.KV,
+      "admin_cooldown:link-orphan-invoices",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    )
+  ) {
+    return c.text("Počkej chvíli před dalším spuštěním.", 429);
+  }
   const db = drizzle(c.env.DB);
   const candidates = await db
     .select()
@@ -1293,8 +1324,8 @@ admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
   // Načti aktuální ceny pro výpočet expected amountu u FIO purchases.
   const cfgRows = await db.select().from(siteConfig);
   const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
-  const priceIndividual = parseInt(cfg.price_individual ?? "2000", 10);
-  const priceOrganization = parseInt(cfg.price_organization ?? "15000", 10);
+  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
 
   for (const p of candidates) {
     if (p.fakturoidInvoiceId) { skipped++; continue; }
@@ -1349,6 +1380,15 @@ admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
  * předchozí verze createPaidInvoice (mark_as_sent / payments.json).
  */
 admin.post("/admin/api/purchases/mark-invoices-paid", async (c) => {
+  if (
+    await checkAdminCooldown(
+      c.env.KV,
+      "admin_cooldown:mark-invoices-paid",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    )
+  ) {
+    return c.text("Počkej chvíli před dalším spuštěním.", 429);
+  }
   const db = drizzle(c.env.DB);
   const candidates = await db
     .select()
@@ -1413,6 +1453,15 @@ admin.post("/admin/api/purchases/mark-invoices-paid", async (c) => {
  * přeskočí ji.
  */
 admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
+  if (
+    await checkAdminCooldown(
+      c.env.KV,
+      "admin_cooldown:issue-missing-invoices",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    )
+  ) {
+    return c.text("Počkej chvíli před dalším spuštěním.", 429);
+  }
   const db = drizzle(c.env.DB);
   const candidates = await db
     .select()
@@ -1422,8 +1471,8 @@ admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
   // Pro FIO purchases potřebujeme aktuální ceny (Stripe má amount_total v session).
   const cfgRows = await db.select().from(siteConfig);
   const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
-  const priceIndividual = parseInt(cfg.price_individual ?? "2000", 10);
-  const priceOrganization = parseInt(cfg.price_organization ?? "15000", 10);
+  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
 
   const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
   let issued = 0;
@@ -2058,8 +2107,8 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
   const codeExpiresRaw = cfg.discount_code_expires_at ?? "";
   const codeExpiresAt = codeExpiresRaw ? new Date(codeExpiresRaw) : null;
   return {
-    priceIndividual: parseInt(cfg.price_individual ?? "2000", 10),
-    priceOrganization: parseInt(cfg.price_organization ?? "15000", 10),
+    priceIndividual: parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10),
+    priceOrganization: parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10),
     benefitsIndividual: JSON.parse(cfg.benefits_individual ?? "[]") as string[],
     benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
     discount: {
@@ -2071,11 +2120,6 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
       label: cfg.discount_label ?? "",
     },
   };
-}
-
-export async function loadDiscountSettings(db: ReturnType<typeof drizzle>) {
-  const s = await loadSettings(db);
-  return s.discount;
 }
 
 admin.get("/admin/settings", async (c) => {
@@ -2094,8 +2138,8 @@ admin.post("/admin/settings", async (c) => {
   const db = drizzle(c.env.DB);
   const body = await c.req.parseBody();
 
-  const priceIndividual = Math.max(0, parseInt(String(body.price_individual ?? "2000"), 10));
-  const priceOrganization = Math.max(0, parseInt(String(body.price_organization ?? "15000"), 10));
+  const priceIndividual = Math.max(0, parseInt(String(body.price_individual ?? String(PRICE_INDIVIDUAL)), 10));
+  const priceOrganization = Math.max(0, parseInt(String(body.price_organization ?? String(PRICE_ORGANIZATION)), 10));
   const benefitsIndividual = String(body.benefits_individual ?? "[]");
   const benefitsOrganization = String(body.benefits_organization ?? "[]");
 
@@ -2148,4 +2192,4 @@ admin.post("/admin/settings", async (c) => {
   );
 });
 
-export { admin as adminRoutes, loadSettings };
+export { admin as adminRoutes, checkAdminCooldown, ADMIN_INVOICE_COOLDOWN_MS };

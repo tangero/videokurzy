@@ -703,13 +703,22 @@ export function AdminLessonForm({
             return m + ':' + String(s%60).padStart(2,'0');
           }
 
+          function escapeAttr(value) {
+            return String(value == null ? '' : value)
+              .replace(/&/g, '&amp;')
+              .replace(/"/g, '&quot;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/'/g, '&#39;');
+          }
+
           function addChapterRow(title, start, end) {
             var div = document.createElement('div');
             div.className = 'chapter-row flex gap-2 items-start';
             div.innerHTML =
-              '<input type="text" placeholder="Název" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (title||'').replace(/"/g,'&quot;') + '">' +
-              '<input type="number" placeholder="Začátek (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (start||0) + '">' +
-              '<input type="number" placeholder="Konec (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (end||0) + '">' +
+              '<input type="text" placeholder="Název" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" value="' + escapeAttr(title) + '">' +
+              '<input type="number" placeholder="Začátek (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + escapeAttr(start||0) + '">' +
+              '<input type="number" placeholder="Konec (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + escapeAttr(end||0) + '">' +
               '<button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg leading-none px-1">✕</button>';
             div.querySelector('.remove-row').addEventListener('click', function(){ div.remove(); serializeChapters(); });
             div.querySelectorAll('input').forEach(function(el){ el.addEventListener('change', serializeChapters); el.addEventListener('input', serializeChapters); });
@@ -721,8 +730,8 @@ export function AdminLessonForm({
             var div = document.createElement('div');
             div.className = 'moment-row flex gap-2 items-start';
             div.innerHTML =
-              '<input type="text" placeholder="Popisek" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (label||'').replace(/"/g,'&quot;') + '">' +
-              '<input type="number" placeholder="Čas (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + (timestamp||0) + '">' +
+              '<input type="text" placeholder="Popisek" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" value="' + escapeAttr(label) + '">' +
+              '<input type="number" placeholder="Čas (s)" class="w-24 border border-gray-300 rounded px-2 py-1 text-sm" value="' + escapeAttr(timestamp||0) + '">' +
               '<button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg leading-none px-1">✕</button>';
             div.querySelector('.remove-row').addEventListener('click', function(){ div.remove(); serializeMoments(); });
             div.querySelectorAll('input').forEach(function(el){ el.addEventListener('change', serializeMoments); el.addEventListener('input', serializeMoments); });
@@ -1140,7 +1149,15 @@ export function AdminSettingsForm({
             return function addRow(val) {
               var div = document.createElement('div');
               div.className = rowClass + ' flex gap-2';
-              div.innerHTML = '<input type="text" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" value="' + (val||'').replace(/"/g,'&quot;') + '"><button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg px-1">✕</button>';
+              var escapeAttr = function (value) {
+                return String(value == null ? '' : value)
+                  .replace(/&/g, '&amp;')
+                  .replace(/"/g, '&quot;')
+                  .replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;')
+                  .replace(/'/g, '&#39;');
+              };
+              div.innerHTML = '<input type="text" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500" value="' + escapeAttr(val) + '"><button type="button" class="remove-row text-gray-400 hover:text-red-500 text-lg px-1">✕</button>';
               div.querySelector('.remove-row').addEventListener('click', function(){ div.remove(); ser(); });
               div.querySelector('input').addEventListener('input', ser);
               list.appendChild(div);

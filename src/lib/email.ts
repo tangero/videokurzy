@@ -41,7 +41,7 @@ export async function sendEmail(env: Env, opts: SendEmailOptions): Promise<boole
       }),
     });
     if (!res.ok) {
-      console.error(`[email] Resend ${res.status}: ${await res.text()}`);
+      console.error("[email] Resend API error:", res.status);
       return false;
     }
     return true;

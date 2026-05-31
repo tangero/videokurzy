@@ -4,6 +4,22 @@ import { sendResendEvent } from "../lib/resend";
 
 const leadRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+// Per-IP rate limit (Finding 19): leads endpointy mají jen KV dedup podle emailu,
+// nemají per-IP limit — každé odeslání spustí Resend event → email bombing.
+// Povol 5 požadavků za minutu na (IP, scope), 6. zablokuj. Scope drží nezávislé
+// kbelíky pro jednotlivé endpointy.
+async function checkIpRateLimit(
+  env: Env,
+  ip: string,
+  scope: string,
+): Promise<boolean> {
+  const key = `leads_rate:${scope}:${ip}`;
+  const count = Number((await env.KV.get(key)) ?? "0");
+  if (count >= 5) return false;
+  await env.KV.put(key, String(count + 1), { expirationTtl: 60 });
+  return true;
+}
+
 /**
  * Email capture for non-logged-in users after completing free preview.
  * Fires a Resend Automation event and deduplicates via KV.
@@ -15,6 +31,15 @@ leadRoutes.post("/api/leads/preview-completed", async (c) => {
   if (!email || !email.includes("@")) {
     return c.html(
       <p class="text-red-600 text-sm">Zadejte platný email.</p>
+    );
+  }
+
+  const ip =
+    c.req.header("CF-Connecting-IP") || c.req.header("x-forwarded-for") || "unknown";
+  if (!(await checkIpRateLimit(c.env, ip, "preview"))) {
+    return c.html(
+      <p class="text-red-600 text-sm">Příliš mnoho požadavků. Zkuste to za chvíli.</p>,
+      429,
     );
   }
 
@@ -52,6 +77,15 @@ leadRoutes.post("/api/leads/newsletter", async (c) => {
   if (!email || !email.includes("@")) {
     return c.html(
       <p class="text-red-600 text-sm">Zadejte platný email.</p>
+    );
+  }
+
+  const ip =
+    c.req.header("CF-Connecting-IP") || c.req.header("x-forwarded-for") || "unknown";
+  if (!(await checkIpRateLimit(c.env, ip, "newsletter"))) {
+    return c.html(
+      <p class="text-red-600 text-sm">Příliš mnoho požadavků. Zkuste to za chvíli.</p>,
+      429,
     );
   }
 

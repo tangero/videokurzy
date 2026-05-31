@@ -168,7 +168,9 @@ export async function scanFioPayments(
             email: p.email,
             type: p.type as "individual" | "organization",
             domain,
-            amount: expectedAmount,
+            // Fakturuj skutečně přijatou bankovní částku, ne nakonfigurované
+            // očekávání — banka mohla spárovat přesnou, ale jinak vyjádřenou částku.
+            amount: result.transaction.amount,
             variableSymbol: p.variableSymbol,
             companyName: p.companyName,
             companyIco: p.companyIco,
