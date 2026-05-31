@@ -279,7 +279,7 @@ export const CheckoutSelect: FC<{
             class={`group w-full flex items-center justify-center gap-3 font-semibold px-8 py-5 rounded-2xl text-white text-lg shadow-lg transition-all duration-200 active:scale-[0.985] focus:outline-none focus:ring-2 focus:ring-offset-2 ${
               isOrg
                 ? "bg-amber-600 hover:bg-amber-700 focus:ring-amber-500 shadow-amber-900/30"
-                : "bg-indigo-600 hover:bg-indigo-700 hover:shadow-xl focus:ring-indigo-500 shadow-indigo-900/30"
+                : "bg-[#2f7a5b] hover:bg-[#1f4f3b] focus:ring-[#2f7a5b] shadow-[#2f7a5b]/30 hover:shadow-xl"
             }`}
           >
             <span>Objednat — {finalFormatted} Kč</span>
