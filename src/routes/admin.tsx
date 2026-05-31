@@ -222,6 +222,27 @@ admin.get("/admin/", (c) => c.redirect("/admin"));
 // All admin routes require admin role
 admin.use("/admin/*", requireAdmin);
 
+// Cooldown pro IO-náročné finanční admin operace (Stripe/Fakturoid/e-mail).
+// Chrání před insiderem / kompromitovaným adminem, který by endpoint "tloukl"
+// (finding 13). Stejná konvence jako FIO scan: KV timestamp + odmítnutí 429.
+const ADMIN_INVOICE_COOLDOWN_MS = 60 * 1000;
+
+// Vrací true, pokud je cooldown aktivní (požadavek se má zamítnout 429).
+// Jinak uloží nový timestamp a vrací false (operace smí pokračovat).
+async function checkAdminCooldown(
+  kv: KVNamespace,
+  key: string,
+  cooldownMs: number,
+): Promise<boolean> {
+  const now = Date.now();
+  const raw = await kv.get(key);
+  if (raw && now - Number(raw) < cooldownMs) {
+    return true;
+  }
+  await kv.put(key, String(now), { expirationTtl: 120 });
+  return false;
+}
+
 // Admin dashboard
 admin.get("/admin", async (c) => {
   const currentUser = c.get("user")!;
@@ -1276,6 +1297,15 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
  * uložit fakturoidInvoiceId, ačkoli Fakturoid fakturu vytvořil.
  */
 admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
+  if (
+    await checkAdminCooldown(
+      c.env.KV,
+      "admin_cooldown:link-orphan-invoices",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    )
+  ) {
+    return c.text("Počkej chvíli před dalším spuštěním.", 429);
+  }
   const db = drizzle(c.env.DB);
   const candidates = await db
     .select()
@@ -1350,6 +1380,15 @@ admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
  * předchozí verze createPaidInvoice (mark_as_sent / payments.json).
  */
 admin.post("/admin/api/purchases/mark-invoices-paid", async (c) => {
+  if (
+    await checkAdminCooldown(
+      c.env.KV,
+      "admin_cooldown:mark-invoices-paid",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    )
+  ) {
+    return c.text("Počkej chvíli před dalším spuštěním.", 429);
+  }
   const db = drizzle(c.env.DB);
   const candidates = await db
     .select()
@@ -1414,6 +1453,15 @@ admin.post("/admin/api/purchases/mark-invoices-paid", async (c) => {
  * přeskočí ji.
  */
 admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
+  if (
+    await checkAdminCooldown(
+      c.env.KV,
+      "admin_cooldown:issue-missing-invoices",
+      ADMIN_INVOICE_COOLDOWN_MS,
+    )
+  ) {
+    return c.text("Počkej chvíli před dalším spuštěním.", 429);
+  }
   const db = drizzle(c.env.DB);
   const candidates = await db
     .select()

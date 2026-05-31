@@ -1,5 +1,5 @@
-import { sqliteTable, text, integer, primaryKey } from "drizzle-orm/sqlite-core";
-import { relations } from "drizzle-orm";
+import { sqliteTable, text, integer, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { relations, sql } from "drizzle-orm";
 import { user } from "./auth-schema";
 
 export const organization = sqliteTable("organization", {
@@ -116,7 +116,14 @@ export const purchase = sqliteTable("purchase", {
   // tam stačí finální faktura). Formát: ZD-YYYY-NNN, unikátní napříč rokem.
   proformaNumber: text("proformaNumber").unique(),
   proformaIssuedAt: integer("proformaIssuedAt", { mode: "timestamp" }),
-});
+}, (table) => [
+  // Partial unique index: zabraňuje dvojímu spárování stejné FIO transakce
+  // (defense-in-depth proti double-spend, finding 28). NULL je povolen
+  // vícekrát (pending / Stripe nákupy). Vynuceno migrací 0019.
+  uniqueIndex("purchase_fioTransactionId_unique")
+    .on(table.fioTransactionId)
+    .where(sql`${table.fioTransactionId} IS NOT NULL`),
+]);
 
 // ─── Relations ────────────────────────────────────────────────────
 
