@@ -53,6 +53,27 @@ auth.post("/login/send", async (c) => {
     return c.html(<LoginPage prefillEmail={email} error={msg} />, 400);
   }
 
+  // Per-email throttle (Finding 8): /login/send proxuje na better-auth, ale
+  // nepatří do jeho route namespace, takže nedědí jeho per-IP rate limit. Email
+  // je už znormalizovaný (lowercase+trim výše), takže klíč nelze obejít změnou
+  // velikosti písmen. Povol 3 odeslání, 4. zablokuj (120s okno) — to brání spamu
+  // magic-linků (DoS doručitelnosti / obtěžování uživatele).
+  const loginKey = `login_send:${email}`;
+  const sentCount = Number((await c.env.KV.get(loginKey)) ?? "0");
+  if (sentCount >= 3) {
+    const msg = "Odkaz už byl odeslán. Zkuste to prosím za chvíli znovu.";
+    if (isHtmx) {
+      return c.html(
+        <div style="background:var(--error-bg);color:var(--error-text);padding:12px;border-radius:8px;border:1px solid var(--error-border);font-size:0.95rem">
+          {msg}
+        </div>,
+        429
+      );
+    }
+    return c.html(<LoginPage prefillEmail={email} error={msg} />, 429);
+  }
+  await c.env.KV.put(loginKey, String(sentCount + 1), { expirationTtl: 120 });
+
   const authInstance = createAuth(c.env, c.executionCtx);
   const res = await authInstance.handler(
     new Request(new URL("/api/auth/sign-in/magic-link", c.req.url).toString(), {
