@@ -42,10 +42,10 @@ function accessBadge(
     : access === "organization"
       ? "bg-purple-100 text-purple-700"
       : "bg-emerald-100 text-emerald-700";
-  const sourceLabel = isGrant ? "grant zdarma" : "zaplaceno";
+  const sourceLabel = isGrant ? "zdarma" : null;
   const expired = expiresAt && expiresAt < new Date();
-  const title = `${sourceLabel}${expiresAt ? ` · platnost do ${formatDate(expiresAt)}` : ""}`;
-  const label = `${typeLabel} · ${sourceLabel}${expiresAt ? ` · do ${formatDate(expiresAt)}` : ""}`;
+  const title = `${sourceLabel ? `${sourceLabel} · ` : ""}${expiresAt ? `platnost do ${formatDate(expiresAt)}` : "aktivní přístup"}`;
+  const label = `${typeLabel}${sourceLabel ? ` · ${sourceLabel}` : ""}${expiresAt ? ` · do ${formatDate(expiresAt)}` : ""}`;
   return (
     <span
       class={`inline-flex items-center whitespace-nowrap px-2 py-1 rounded-full text-xs font-medium ${cls} ${expired ? "opacity-60 line-through" : ""}`}
@@ -123,7 +123,6 @@ export function AdminUsersList({
           <thead class="bg-gray-50">
             <tr>
               <th class="px-4 py-2 text-left">E-mail</th>
-              <th class="px-4 py-2 text-left">Jméno</th>
               <th class="px-4 py-2 text-left">Role</th>
               <th class="px-4 py-2 text-left">Přístup</th>
               <th class="px-4 py-2 text-left">Poslední aktivita</th>
@@ -139,7 +138,6 @@ export function AdminUsersList({
                     {u.email}
                   </a>
                 </td>
-                <td class="px-4 py-2 text-gray-600">{u.name ?? "—"}</td>
                 <td class="px-4 py-2">
                   <span
                     class={`px-2 py-1 rounded-full text-xs font-medium ${

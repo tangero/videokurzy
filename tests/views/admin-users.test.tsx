@@ -45,6 +45,22 @@ describe("AdminUsersList", () => {
     );
 
     expect(html).toContain("whitespace-nowrap");
-    expect(html).toContain("soukromá · zaplaceno · do 31. 5. 2027");
+    expect(html).toContain("soukromá · do 31. 5. 2027");
+    expect(html).not.toContain("zaplaceno");
+  });
+
+  it("omits the unused name column from the table", () => {
+    const html = renderToString(
+      <AdminUsersList
+        rows={[userRow({ name: "Nepouzite jmeno" })]}
+        total={1}
+        search=""
+        page={1}
+        pageSize={50}
+      />,
+    );
+
+    expect(html).not.toContain("<th class=\"px-4 py-2 text-left\">Jméno</th>");
+    expect(html).not.toContain("Nepouzite jmeno");
   });
 });
