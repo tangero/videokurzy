@@ -457,6 +457,10 @@ async function startFioCheckout(
         status: "pending",
         expiresAt,
         createdAt,
+        // Uložíme očekávanou částku z doby objednávky. Drží se až do reálného
+        // spárování platby, kdy ji přepíše skutečná částka z banky. Díky tomu
+        // pay/proforma stránka neukáže driftující cenu, když se mezitím změní ceník.
+        amountPaid: price,
         discountPercent: discount?.percent ?? 0,
         discountCode: discount?.code ?? null,
         companyName: billing?.companyName ?? null,
@@ -553,7 +557,10 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
 
   const prices = await getPrices(db);
   const fullPrice = p.type === "organization" ? prices.organization : prices.individual;
-  const price = applyDiscount(fullPrice, p.discountPercent ?? 0);
+  // Preferuj uloženou částku z doby objednávky (amountPaid); na recompute z
+  // aktuálního ceníku spadni jen u starých objednávek bez uložené částky.
+  const fallbackPrice = applyDiscount(fullPrice, p.discountPercent ?? 0);
+  const price = p.amountPaid > 0 ? p.amountPaid : fallbackPrice;
   const dueDays = Math.round((p.expiresAt.getTime() - p.createdAt.getTime()) / 86400000);
   const isExtended = dueDays > FIO_DEFAULT_DUE_DAYS;
   const spd = generateSPD(PAYMENT_IBAN, price, p.variableSymbol!, `Videokurz ${p.email}`);
@@ -731,7 +738,10 @@ checkoutRoutes.get("/checkout/proforma/:vs", async (c) => {
   const p = rows[0];
   const prices = await getPrices(db);
   const fullPrice = p.type === "organization" ? prices.organization : prices.individual;
-  const amount = applyDiscount(fullPrice, p.discountPercent ?? 0);
+  // Preferuj uloženou částku z doby objednávky; recompute z aktuálního ceníku
+  // je jen fallback pro staré objednávky bez uložené amountPaid.
+  const fallbackPrice = applyDiscount(fullPrice, p.discountPercent ?? 0);
+  const amount = p.amountPaid > 0 ? p.amountPaid : fallbackPrice;
   const domain = p.type === "organization" ? emailDomain(p.email) : null;
 
   const html = generateProformaHtml({
