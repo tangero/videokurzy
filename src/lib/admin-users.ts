@@ -188,21 +188,29 @@ export async function listAdminUsers(
   const emails = rows.map((r) => r.email);
 
   // Aktivní přístup (stávající logika)
-  const activePurchases = await db
+  const activePurchaseFields = {
+    userId: purchase.userId,
+    email: purchase.email,
+    type: purchase.type,
+    expiresAt: purchase.expiresAt,
+    kind: purchase.kind,
+  };
+
+  const activePurchasesByUserId = await db
     .select({
-      userId: purchase.userId,
-      email: purchase.email,
-      type: purchase.type,
-      expiresAt: purchase.expiresAt,
-      kind: purchase.kind,
+      ...activePurchaseFields,
     })
     .from(purchase)
-    .where(
-      and(
-        eq(purchase.status, "active"),
-        or(inArray(purchase.userId, ids), inArray(purchase.email, emails)),
-      ),
-    );
+    .where(and(eq(purchase.status, "active"), inArray(purchase.userId, ids)));
+
+  const activePurchasesByEmail = await db
+    .select({
+      ...activePurchaseFields,
+    })
+    .from(purchase)
+    .where(and(eq(purchase.status, "active"), inArray(purchase.email, emails)));
+
+  const activePurchases = [...activePurchasesByUserId, ...activePurchasesByEmail];
 
   // Poslední aktivita ze sledování videa (nejlepší signál "pokračuje v koukání")
   const lastActivityRows = ids.length > 0
@@ -226,11 +234,13 @@ export async function listAdminUsers(
     const userId = p.userId ?? emailToId.get(p.email.toLowerCase()) ?? null;
     if (!userId) continue;
     const source: "paid" | "grant" = p.kind === "paid" ? "paid" : "grant";
+    const expiresAt = normalizeSqlTimestampDate(p.expiresAt);
+    if (!expiresAt) continue;
     const prev = activeByUser.get(userId);
-    if (!prev || prev.expiresAt < p.expiresAt) {
+    if (!prev || prev.expiresAt < expiresAt) {
       activeByUser.set(userId, {
         type: p.type as AdminAccess,
-        expiresAt: p.expiresAt,
+        expiresAt,
         source,
       });
     }
@@ -247,6 +257,7 @@ export async function listAdminUsers(
       const active = activeByUser.get(r.id);
       return {
         ...r,
+        createdAt: normalizeSqlTimestampDate(r.createdAt) ?? new Date(0),
         activeAccess: active?.type ?? null,
         accessExpiresAt: active?.expiresAt ?? null,
         accessSource: active?.source ?? null,

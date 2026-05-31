@@ -209,7 +209,41 @@ describe("createAdminUser", () => {
     const result = await listAdminUsers(db, { search: "watcher@example.cz" });
 
     expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].createdAt).toBeInstanceOf(Date);
     expect(result.rows[0].lastActivityAt).toBeInstanceOf(Date);
     expect(result.rows[0].lastActivityAt?.toISOString()).toBe("2026-05-31T06:53:03.000Z");
+  });
+
+  it("lists a full page of users with purchases without a wide OR query", async () => {
+    const createdAt = new Date("2026-05-31T08:00:00.000Z");
+    const expiresAt = new Date("2027-05-31T08:00:00.000Z");
+    for (let i = 0; i < 50; i++) {
+      const id = `bulk-user-${String(i).padStart(2, "0")}`;
+      const email = `bulk-${String(i).padStart(2, "0")}@example.cz`;
+      await db.insert(authSchema.user).values({
+        id,
+        email,
+        name: null,
+        role: "user",
+        emailVerified: true,
+        createdAt: new Date(createdAt.getTime() + i * 1000),
+        updatedAt: createdAt,
+      });
+      await db.insert(appSchema.purchase).values({
+        email,
+        userId: id,
+        type: "individual",
+        paymentMethod: "stripe",
+        stripePaymentId: `bulk-session-${i}`,
+        status: "active",
+        expiresAt,
+        createdAt,
+      });
+    }
+
+    const result = await listAdminUsers(db, { limit: 50 });
+
+    expect(result.rows).toHaveLength(50);
+    expect(result.rows.every((row) => row.activeAccess === "individual")).toBe(true);
   });
 });
