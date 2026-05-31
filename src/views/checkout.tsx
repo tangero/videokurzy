@@ -276,13 +276,18 @@ export const CheckoutSelect: FC<{
 
           <button
             type="submit"
-            class={`w-full font-semibold px-6 py-4 rounded-lg text-white text-base transition-[transform,background-color] duration-150 active:scale-[0.98] ${
+            class={`group w-full flex items-center justify-center gap-3 font-semibold px-8 py-5 rounded-2xl text-white text-lg shadow-lg transition-all duration-200 active:scale-[0.985] focus:outline-none focus:ring-2 focus:ring-offset-2 ${
               isOrg
-                ? "bg-amber-600 hover:bg-amber-700"
-                : "bg-indigo-600 hover:bg-indigo-700"
+                ? "bg-amber-600 hover:bg-amber-700 focus:ring-amber-500 shadow-amber-900/30"
+                : "bg-indigo-600 hover:bg-indigo-700 hover:shadow-xl focus:ring-indigo-500 shadow-indigo-900/30"
             }`}
           >
-            Objednat — {finalFormatted} Kč
+            <span>Objednat — {finalFormatted} Kč</span>
+            <span class="inline-flex items-center transition-transform duration-200 group-hover:translate-x-0.5">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7-7 7" />
+              </svg>
+            </span>
           </button>
         </form>
 
