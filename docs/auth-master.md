@@ -78,13 +78,14 @@ Idempotent logout. Returns `{ "ok": true, "setCookie": "..." | null }`.
 
 ### `POST /internal/auth/verify-add-email`
 
-**Security contract:** Caller must guarantee `body.userId` matches the
-currently-authenticated session user. This endpoint trusts the caller.
+**Security contract:** The target account is authorized by a server-signed
+add-email intent generated when the logged-in user starts the flow. The raw
+`userId` sent by the caller is only a backwards-compatible mismatch check.
 
-Attaches a magic-link-verified email to the specified user account and
+Attaches a magic-link-verified email to the intent-bound user account and
 revokes the ad-hoc session produced by the verify flow.
 
-Body: `{ "token": "...", "userId": "..." }`
+Body: `{ "token": "...", "intent": "...", "userId": "..." }`
 
 Response: `200 { "ok": true, "email": "..." }` or `401`.
 
@@ -102,12 +103,13 @@ Response: `{ "emails": [{ id, email, isPrimary, verifiedAt, addedVia, ... }] }`.
 ### `POST /api/profile/emails`
 
 Start the "add secondary email" flow — sends a magic link to the new
-address with `?intent=add-email&userId=<current-user-id>` in the callback.
+address with `?intent=add-email&userId=<current-user-id>&addEmailIntent=<signed-intent>`
+in the callback.
 
 Body: `{ "email": "new@private.cz", "callbackUrl": "https://vibecoding.cz/auth/verify" }`
 
 Consumer handles the callback: calls `/internal/auth/verify-add-email`
-with `{ token, userId }` to complete the attachment.
+with `{ token, intent: addEmailIntent, userId }` to complete the attachment.
 
 ### `PATCH /api/profile/emails`
 

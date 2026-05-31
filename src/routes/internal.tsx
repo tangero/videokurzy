@@ -4,7 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { createAuth } from "../lib/auth";
 import { isAllowedCallback } from "../lib/callback-allowlist";
 import { requireInternalSecret } from "../middleware/internal-auth";
-import { addUserEmail } from "../lib/user-emails";
+import { addUserEmail, normalizeEmail } from "../lib/user-emails";
 import { logIdentityEvent } from "../lib/audit";
 import { purchase } from "../db/schema";
 import type { Env } from "../types";
@@ -20,6 +20,105 @@ import type { Env } from "../types";
 const internal = new Hono<{ Bindings: Env }>();
 
 internal.use("/internal/*", requireInternalSecret);
+
+export interface AddEmailIntentPayload {
+  userId: string;
+  email: string;
+  expiresAt: number;
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlEncodeText(value: string): string {
+  return base64UrlEncodeBytes(new TextEncoder().encode(value));
+}
+
+function base64UrlDecodeText(value: string): string | null {
+  try {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+async function hmacSha256Base64Url(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  return base64UrlEncodeBytes(new Uint8Array(sig));
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const left = new TextEncoder().encode(a);
+  const right = new TextEncoder().encode(b);
+  const length = Math.max(left.length, right.length);
+  let diff = left.length ^ right.length;
+  for (let i = 0; i < length; i++) {
+    diff |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  }
+  return diff === 0;
+}
+
+export async function signAddEmailIntent(
+  env: Pick<Env, "AUTH_INTERNAL_SECRET">,
+  payload: AddEmailIntentPayload,
+): Promise<string> {
+  const body = base64UrlEncodeText(JSON.stringify({
+    userId: payload.userId,
+    email: normalizeEmail(payload.email),
+    expiresAt: payload.expiresAt,
+  }));
+  const sig = await hmacSha256Base64Url(env.AUTH_INTERNAL_SECRET, body);
+  return `${body}.${sig}`;
+}
+
+export async function verifyAddEmailIntent(
+  env: Pick<Env, "AUTH_INTERNAL_SECRET">,
+  token: string,
+): Promise<AddEmailIntentPayload | null> {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
+  if (!body || !sig) return null;
+
+  const expectedSig = await hmacSha256Base64Url(env.AUTH_INTERNAL_SECRET, body);
+  if (!constantTimeEqual(sig, expectedSig)) return null;
+
+  const decoded = base64UrlDecodeText(body);
+  if (!decoded) return null;
+
+  let payload: Partial<AddEmailIntentPayload>;
+  try {
+    payload = JSON.parse(decoded) as Partial<AddEmailIntentPayload>;
+  } catch {
+    return null;
+  }
+
+  if (!payload.userId || !payload.email || typeof payload.expiresAt !== "number") return null;
+  if (payload.expiresAt < Date.now()) return null;
+
+  return {
+    userId: payload.userId,
+    email: normalizeEmail(payload.email),
+    expiresAt: payload.expiresAt,
+  };
+}
+
+export const signAddEmailIntentForTest = signAddEmailIntent;
+export const verifyAddEmailIntentForTest = verifyAddEmailIntent;
 
 async function validateMagicLinkToken(
   env: Env,
@@ -73,7 +172,6 @@ internal.post("/internal/auth/magic-link", async (c) => {
       scope: "internal/magic-link",
       event: "send_failed",
       correlationId,
-      email,
       status,
       message: (err as Error)?.message,
     }));
@@ -188,34 +286,15 @@ internal.post("/internal/auth/revoke", async (c) => {
 });
 
 /**
- * Attaches a magic-link-verified email to a specified user account.
- *
- * @security
- * **CRITICAL CONTRACT:** The caller (consumer Worker) is trusted with the
- * internal secret AND must guarantee that `body.userId` matches the
- * currently-authenticated session user in the consumer's context. This
- * endpoint does not verify the connection between `body.userId` and any
- * session — a malicious caller with the internal secret could otherwise
- * attach an email to an arbitrary userId.
- *
- * Consumer-side check (required): `session.user.id === body.userId` before
- * forwarding to this endpoint.
- *
- * Flow:
- * 1. User is logged in as primary user_A (consumer-held session cookie).
- * 2. User submits form to add email B. Consumer sends magic link to B with
- *    callbackUrl carrying ?intent=add-email&userId=<user_A.id>.
- * 3. User clicks link. Consumer's /auth/verify route calls this endpoint
- *    with { token, userId: user_A.id }.
- * 4. This endpoint verifies the token, extracts verified email, attaches
- *    to user_A, and discards the ad-hoc session for B.
+ * Attaches a magic-link-verified email to the userId carried by a signed
+ * add-email intent. The optional body.userId is only a compatibility check.
  */
 internal.post("/internal/auth/verify-add-email", async (c) => {
   const body = await c.req
-    .json<{ token?: string; userId?: string }>()
-    .catch(() => ({}) as { token?: string; userId?: string });
-  if (!body.token || !body.userId) {
-    return c.json({ error: "token and userId required" }, 400);
+    .json<{ token?: string; userId?: string; intent?: string }>()
+    .catch(() => ({}) as { token?: string; userId?: string; intent?: string });
+  if (!body.token) {
+    return c.json({ error: "token required" }, 400);
   }
 
   if ((await validateMagicLinkToken(c.env, body.token)) === "invalid") {
@@ -246,11 +325,32 @@ internal.post("/internal/auth/verify-add-email", async (c) => {
       return c.json({ error: "invalid_token", correlationId }, 401);
     }
 
+    if (!body.intent) {
+      return c.json({ error: "intent required" }, 400);
+    }
+    const intent = await verifyAddEmailIntent(c.env, body.intent);
+    if (!intent) {
+      const correlationId = crypto.randomUUID();
+      console.warn(JSON.stringify({
+        scope: "internal/verify-add-email",
+        event: "invalid_intent",
+        correlationId,
+      }));
+      return c.json({ error: "invalid_intent", correlationId }, 401);
+    }
+    if (body.userId && body.userId !== intent.userId) {
+      return c.json({ error: "user_mismatch" }, 401);
+    }
+    const verifiedEmail = normalizeEmail(session.user.email);
+    if (normalizeEmail(intent.email) !== verifiedEmail) {
+      return c.json({ error: "email_mismatch" }, 401);
+    }
+
     const db = drizzle(c.env.DB);
     try {
       await addUserEmail(db, {
-        userId: body.userId,
-        email: session.user.email,
+        userId: intent.userId,
+        email: verifiedEmail,
         via: "self-add",
         verified: true,
       });
@@ -266,10 +366,10 @@ internal.post("/internal/auth/verify-add-email", async (c) => {
     }
 
     await logIdentityEvent(db, {
-      userId: body.userId,
+      userId: intent.userId,
       action: "email_added",
       actor: "self",
-      details: { email: session.user.email },
+      details: { email: verifiedEmail },
     });
 
     // Revoke the ad-hoc session created by verify. Consumer keeps the
@@ -278,7 +378,7 @@ internal.post("/internal/auth/verify-add-email", async (c) => {
       .signOut({ headers: result.headers })
       .catch(() => {});
 
-    return c.json({ ok: true, email: session.user.email });
+    return c.json({ ok: true, email: verifiedEmail });
   } catch (err) {
     const correlationId = crypto.randomUUID();
     console.warn(JSON.stringify({

@@ -64,6 +64,36 @@ async function getPrices(db: ReturnType<typeof drizzle>) {
   };
 }
 
+export function fioRateLimitTtlSeconds(): number {
+  return Math.ceil(FIO_RATE_LIMIT_MS / 1000);
+}
+
+export async function activateFioPurchaseIfPending(
+  db: ReturnType<typeof drizzle>,
+  opts: {
+    purchaseId: number;
+    expiresAt: Date;
+    transactionId: number;
+    amountPaid: number;
+  },
+): Promise<boolean> {
+  const updated = await db
+    .update(purchase)
+    .set({
+      status: "active",
+      expiresAt: opts.expiresAt,
+      fioTransactionId: String(opts.transactionId),
+      amountPaid: opts.amountPaid,
+    })
+    .where(and(eq(purchase.id, opts.purchaseId), eq(purchase.status, "pending")))
+    .returning({ id: purchase.id });
+
+  return updated.length > 0;
+}
+
+export const fioRateLimitTtlSecondsForTest = fioRateLimitTtlSeconds;
+export const activateFioPurchaseIfPendingForTest = activateFioPurchaseIfPending;
+
 async function getDiscountSettings(db: ReturnType<typeof drizzle>): Promise<DiscountSettings> {
   const rows = await db.select().from(siteConfig);
   const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
@@ -574,6 +604,16 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
 
 checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   const vs = c.req.param("vs");
+  const origin = c.req.header("Origin");
+  const requestOrigin = new URL(c.req.url).origin;
+  const isHtmx = c.req.header("HX-Request") === "true";
+  if (!isHtmx) {
+    return c.html(<VerifyError message="Ověření platby spusťte z platební stránky." />, 403);
+  }
+  if (origin && origin !== requestOrigin) {
+    return c.html(<VerifyError message="Ověření platby není povoleno z této stránky." />, 403);
+  }
+
   const db = drizzle(c.env.DB);
 
   const rateLimitKey = `fio_rate_limit:${vs}`;
@@ -584,7 +624,9 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
       return c.html(<VerifyRateLimit waitSeconds={Math.ceil(waitMs / 1000)} />);
     }
   }
-  await c.env.KV.put(rateLimitKey, String(Date.now()), { expirationTtl: 60 });
+  await c.env.KV.put(rateLimitKey, String(Date.now()), {
+    expirationTtl: fioRateLimitTtlSeconds(),
+  });
 
   const rows = await db
     .select()
@@ -623,14 +665,16 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
 
   const now = new Date();
   const newExpiresAt = new Date(now.getTime() + ACCESS_DURATION_DAYS * 86400 * 1000);
-  await db
-    .update(purchase)
-    .set({
-      status: "active",
-      expiresAt: newExpiresAt,
-      fioTransactionId: String(match.transaction.id),
-    })
-    .where(eq(purchase.id, p.id));
+  const activated = await activateFioPurchaseIfPending(db, {
+    purchaseId: p.id,
+    expiresAt: newExpiresAt,
+    transactionId: match.transaction.id,
+    amountPaid: match.transaction.amount,
+  });
+
+  if (!activated) {
+    return c.html(<VerifySuccess email={p.email} />);
+  }
 
   c.executionCtx.waitUntil(
     sendEmail(c.env, {

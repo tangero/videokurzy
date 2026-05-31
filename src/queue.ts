@@ -3,11 +3,16 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
-import { exportPurchaseInvoice } from "./lib/fakturoid";
+import { exportPurchaseInvoice, type FakturoidEnv } from "./lib/fakturoid";
 import type { Env } from "./types";
 
+type WebhookMessageType =
+  | "checkout.session.completed"
+  | "customer.subscription.deleted"
+  | "invoice.paid";
+
 interface WebhookMessage {
-  type: string;
+  type: WebhookMessageType;
   data: Record<string, unknown>;
 }
 
@@ -32,6 +37,10 @@ export async function handleQueue(
 
         case "invoice.paid":
           await handleInvoicePaid(db, data);
+          break;
+
+        default:
+          console.warn(`[queue] Unknown webhook message type: ${type}`);
           break;
       }
       message.ack();
@@ -200,7 +209,7 @@ async function handleCheckoutCompleted(
  */
 async function issueFakturoidInvoice(
   db: ReturnType<typeof drizzle>,
-  env: Env,
+  env: FakturoidEnv,
   opts: {
     sessionId: string;
     email: string;
@@ -211,6 +220,14 @@ async function issueFakturoidInvoice(
   },
 ): Promise<void> {
   try {
+    const [existing] = await db
+      .select({ fakturoidInvoiceId: purchase.fakturoidInvoiceId })
+      .from(purchase)
+      .where(eq(purchase.stripePaymentId, opts.sessionId))
+      .limit(1);
+
+    if (!existing || existing.fakturoidInvoiceId) return;
+
     const res = await exportPurchaseInvoice(
       env,
       {
@@ -238,6 +255,8 @@ async function issueFakturoidInvoice(
     console.error(`[stripe] Fakturoid threw for ${opts.email}:`, err);
   }
 }
+
+export const issueFakturoidInvoiceForTest = issueFakturoidInvoice;
 
 async function handleSubscriptionDeleted(
   db: ReturnType<typeof drizzle>,

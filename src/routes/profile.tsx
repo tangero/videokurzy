@@ -12,6 +12,7 @@ import { logIdentityEvent } from "../lib/audit";
 import { createAuth } from "../lib/auth";
 import { isAllowedCallback } from "../lib/callback-allowlist";
 import { user as userTable } from "../db/auth-schema";
+import { signAddEmailIntent } from "./internal";
 import type { Env, Variables } from "../types";
 
 /**
@@ -51,12 +52,16 @@ profile.post("/api/profile/emails", async (c) => {
   }
 
   const auth = createAuth(c.env, c.executionCtx);
-  // Bake intent + userId into the callback so the consumer knows this verify
-  // is for an "add email" flow targeting the ORIGINAL user (not the ad-hoc
-  // session created by magicLinkVerify).
+  // Bake a signed add-email intent into the callback. The internal verify
+  // endpoint uses it as the server-side authorization source for target user.
   const verifyCallback = new URL(callbackUrl);
   verifyCallback.searchParams.set("intent", "add-email");
   verifyCallback.searchParams.set("userId", user.id);
+  verifyCallback.searchParams.set("addEmailIntent", await signAddEmailIntent(c.env, {
+    userId: user.id,
+    email,
+    expiresAt: Date.now() + 15 * 60 * 1000,
+  }));
 
   try {
     await auth.api.signInMagicLink({
