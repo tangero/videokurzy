@@ -45,14 +45,13 @@ function accessBadge(
   const sourceLabel = isGrant ? "grant zdarma" : "zaplaceno";
   const expired = expiresAt && expiresAt < new Date();
   const title = `${sourceLabel}${expiresAt ? ` · platnost do ${formatDate(expiresAt)}` : ""}`;
+  const label = `${typeLabel} · ${sourceLabel}${expiresAt ? ` · do ${formatDate(expiresAt)}` : ""}`;
   return (
     <span
-      class={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${cls} ${expired ? "opacity-60 line-through" : ""}`}
+      class={`inline-flex items-center whitespace-nowrap px-2 py-1 rounded-full text-xs font-medium ${cls} ${expired ? "opacity-60 line-through" : ""}`}
       title={title}
     >
-      <span>{typeLabel}</span>
-      <span class="font-normal opacity-80">· {sourceLabel}</span>
-      {expiresAt && <span class="font-normal opacity-70">do {formatDate(expiresAt)}</span>}
+      {label}
     </span>
   );
 }
@@ -99,9 +98,6 @@ export function AdminUsersList({
 
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 class="text-xl font-bold">Uživatelé <span class="text-sm font-normal text-gray-500">({total})</span></h2>
-        <a href="/admin/users/new" class="text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700 no-underline">
-          + Přidat uživatele
-        </a>
       </div>
 
       <form method="get" action="/admin/users" class="mb-4 flex gap-2">
