@@ -276,10 +276,10 @@ export const CheckoutSelect: FC<{
 
           <button
             type="submit"
-            class={`group w-full flex items-center justify-center gap-3 font-semibold px-8 py-5 rounded-2xl text-white text-lg shadow-lg transition-all duration-200 active:scale-[0.985] focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+            class={`btn btn-lg btn-block group text-lg shadow-lg transition-all duration-200 active:scale-[0.985] focus:outline-none focus:ring-2 focus:ring-offset-2 ${
               isOrg
                 ? "bg-amber-600 hover:bg-amber-700 focus:ring-amber-500 shadow-amber-900/30"
-                : "bg-[color:var(--accent)] hover:bg-[color:var(--accent-2)] focus:ring-[color:var(--accent)] shadow-[color:var(--accent)]/30 hover:shadow-xl"
+                : "focus:ring-[color:var(--accent)] hover:shadow-xl"
             }`}
           >
             <span>Objednat — {finalFormatted} Kč</span>
