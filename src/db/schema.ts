@@ -98,6 +98,9 @@ export const purchase = sqliteTable("purchase", {
   grantedBy: text("grantedBy"),
   // Skutečně přijatá částka v Kč. Stripe = amount_total / 100, FIO = tx.amount.
   // Granty (comp/staff) a pending = 0.
+  // POZOR — duální sémantika u FIO: pending FIO objednávka zde drží OČEKÁVANOU
+  // částku z doby objednání; teprve po napárování bankovní platby se přepíše na
+  // REÁLNĚ zaplacenou částku. Pending amountPaid tedy NENÍ důkaz platby.
   amountPaid: integer("amountPaid").notNull().default(0),
   // Firemní fakturační údaje (nullable — uvádí jen B2B / OSVČ, kteří chtějí
   // fakturu na firmu). Při FIO objednávce se promítnou na zálohový doklad,

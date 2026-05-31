@@ -7,7 +7,10 @@ import { linkPurchasesToUser } from "../lib/access";
 import { user } from "../db/schema";
 import { ADMIN_EMAILS } from "../config/admin";
 
-const ADMIN_EMAIL_SET = new Set<string>(ADMIN_EMAILS);
+// Normalize on both sides (set entries + lookup) so a mixed-case login email
+// matches regardless of how better-auth/the config casing happens to be.
+const normalizeEmail = (raw: string) => raw.trim().toLowerCase();
+const ADMIN_EMAIL_SET = new Set<string>(ADMIN_EMAILS.map(normalizeEmail));
 
 export const authMiddleware = createMiddleware<{
   Bindings: Env;
@@ -23,7 +26,7 @@ export const authMiddleware = createMiddleware<{
   if (session?.user) {
     const email = session.user.email;
     const currentRole = (session.user as Record<string, unknown>).role as string ?? "user";
-    const shouldPromote = ADMIN_EMAIL_SET.has(email) && currentRole !== "admin";
+    const shouldPromote = ADMIN_EMAIL_SET.has(normalizeEmail(email)) && currentRole !== "admin";
     const effectiveRole = shouldPromote ? "admin" : currentRole;
 
     const userObj = {

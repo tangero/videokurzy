@@ -33,6 +33,7 @@ import {
   vttToPlainText,
 } from "../lib/transcribe";
 import { countDiscountedActivePurchases } from "../lib/discount";
+import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
 import { scanFioPayments } from "../scheduled";
 import {
   exportPurchaseInvoice,
@@ -1293,8 +1294,8 @@ admin.post("/admin/api/purchases/link-orphan-invoices", async (c) => {
   // Načti aktuální ceny pro výpočet expected amountu u FIO purchases.
   const cfgRows = await db.select().from(siteConfig);
   const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
-  const priceIndividual = parseInt(cfg.price_individual ?? "2000", 10);
-  const priceOrganization = parseInt(cfg.price_organization ?? "15000", 10);
+  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
 
   for (const p of candidates) {
     if (p.fakturoidInvoiceId) { skipped++; continue; }
@@ -1422,8 +1423,8 @@ admin.post("/admin/api/purchases/issue-missing-invoices", async (c) => {
   // Pro FIO purchases potřebujeme aktuální ceny (Stripe má amount_total v session).
   const cfgRows = await db.select().from(siteConfig);
   const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
-  const priceIndividual = parseInt(cfg.price_individual ?? "2000", 10);
-  const priceOrganization = parseInt(cfg.price_organization ?? "15000", 10);
+  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
 
   const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { apiVersion: "2026-03-25.dahlia" });
   let issued = 0;
@@ -2058,8 +2059,8 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
   const codeExpiresRaw = cfg.discount_code_expires_at ?? "";
   const codeExpiresAt = codeExpiresRaw ? new Date(codeExpiresRaw) : null;
   return {
-    priceIndividual: parseInt(cfg.price_individual ?? "2000", 10),
-    priceOrganization: parseInt(cfg.price_organization ?? "15000", 10),
+    priceIndividual: parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10),
+    priceOrganization: parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10),
     benefitsIndividual: JSON.parse(cfg.benefits_individual ?? "[]") as string[],
     benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
     discount: {
@@ -2071,11 +2072,6 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
       label: cfg.discount_label ?? "",
     },
   };
-}
-
-export async function loadDiscountSettings(db: ReturnType<typeof drizzle>) {
-  const s = await loadSettings(db);
-  return s.discount;
 }
 
 admin.get("/admin/settings", async (c) => {
@@ -2094,8 +2090,8 @@ admin.post("/admin/settings", async (c) => {
   const db = drizzle(c.env.DB);
   const body = await c.req.parseBody();
 
-  const priceIndividual = Math.max(0, parseInt(String(body.price_individual ?? "2000"), 10));
-  const priceOrganization = Math.max(0, parseInt(String(body.price_organization ?? "15000"), 10));
+  const priceIndividual = Math.max(0, parseInt(String(body.price_individual ?? String(PRICE_INDIVIDUAL)), 10));
+  const priceOrganization = Math.max(0, parseInt(String(body.price_organization ?? String(PRICE_ORGANIZATION)), 10));
   const benefitsIndividual = String(body.benefits_individual ?? "[]");
   const benefitsOrganization = String(body.benefits_organization ?? "[]");
 
@@ -2148,4 +2144,4 @@ admin.post("/admin/settings", async (c) => {
   );
 });
 
-export { admin as adminRoutes, loadSettings };
+export { admin as adminRoutes };
