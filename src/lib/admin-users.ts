@@ -16,6 +16,16 @@ const VALID_ACCESS = new Set<AdminAccess>(["free", "individual", "organization"]
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const ADMIN_GRANT_DEFAULT_DAYS = 90;
 
+export function normalizeSqlTimestampDate(value: Date | number | string | null | undefined): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const milliseconds = numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function defaultAdminGrantExpiresAt(now = new Date()): Date {
   return new Date(now.getTime() + ADMIN_GRANT_DEFAULT_DAYS * DAY_MS);
 }
@@ -199,7 +209,7 @@ export async function listAdminUsers(
     ? await db
         .select({
           userId: lessonWatch.userId,
-          last: sql<Date>`max(${lessonWatch.updatedAt})`,
+          last: sql<Date | number | string | null>`max(${lessonWatch.updatedAt})`,
         })
         .from(lessonWatch)
         .where(inArray(lessonWatch.userId, ids))
@@ -228,7 +238,8 @@ export async function listAdminUsers(
 
   const lastActivityByUser = new Map<string, Date>();
   for (const row of lastActivityRows) {
-    if (row.last) lastActivityByUser.set(row.userId, row.last);
+    const last = normalizeSqlTimestampDate(row.last);
+    if (last) lastActivityByUser.set(row.userId, last);
   }
 
   return {
@@ -295,7 +306,7 @@ export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserD
     .get();
 
   const lastActivityRow = await db
-    .select({ last: sql<Date>`max(${lessonWatch.updatedAt})` })
+    .select({ last: sql<Date | number | string | null>`max(${lessonWatch.updatedAt})` })
     .from(lessonWatch)
     .where(eq(lessonWatch.userId, id))
     .get();
@@ -328,7 +339,7 @@ export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserD
       grantedBy: p.grantedBy ?? null,
     })),
     progressCount: progressRow?.c ?? 0,
-    lastActivityAt: lastActivityRow?.last ?? null,
+    lastActivityAt: normalizeSqlTimestampDate(lastActivityRow?.last),
   };
 }
 

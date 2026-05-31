@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSqlTimestampDate } from "../../src/routes/admin";
+import { normalizeSqlTimestampDate } from "../../src/lib/admin-users";
 
 describe("normalizeSqlTimestampDate", () => {
   it("converts D1 aggregate integer seconds to Date", () => {

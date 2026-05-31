@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import * as authSchema from "../../src/db/auth-schema";
 import * as identitySchema from "../../src/db/identity-schema";
 import * as appSchema from "../../src/db/schema";
-import { createAdminUser, createAdminUsers } from "../../src/lib/admin-users";
+import { createAdminUser, createAdminUsers, listAdminUsers } from "../../src/lib/admin-users";
 
 describe("createAdminUser", () => {
   let db: ReturnType<typeof drizzle>;
@@ -16,6 +16,10 @@ describe("createAdminUser", () => {
 
   beforeEach(async () => {
     await env.DB.exec("DELETE FROM user_emails");
+    await env.DB.exec("DELETE FROM lesson_watch");
+    await env.DB.exec("DELETE FROM lesson");
+    await env.DB.exec("DELETE FROM module");
+    await env.DB.exec("DELETE FROM course");
     await env.DB.exec("DELETE FROM purchase");
     await env.DB.exec("DELETE FROM session");
     await env.DB.exec("DELETE FROM account");
@@ -161,5 +165,51 @@ describe("createAdminUser", () => {
     await expect(
       createAdminUser(db, { email: "buyer@example.cz" }),
     ).rejects.toThrow(/už existuje/i);
+  });
+
+  it("normalizes aggregated lesson_watch timestamps in the user list", async () => {
+    const created = await createAdminUser(db, { email: "watcher@example.cz" });
+    const [course] = await db
+      .insert(appSchema.course)
+      .values({
+        title: "Kurz",
+        slug: "kurz",
+        description: "",
+        published: true,
+      })
+      .returning({ id: appSchema.course.id });
+    const [module] = await db
+      .insert(appSchema.module)
+      .values({
+        courseId: course.id,
+        title: "Modul",
+        slug: "modul",
+        sortOrder: 1,
+      })
+      .returning({ id: appSchema.module.id });
+    const [lesson] = await db
+      .insert(appSchema.lesson)
+      .values({
+        moduleId: module.id,
+        publicId: "lesson-admin-users-watch",
+        title: "Lekce",
+        slug: "lekce",
+        sortOrder: 1,
+      })
+      .returning({ id: appSchema.lesson.id });
+    await db.insert(appSchema.lessonWatch).values({
+      userId: created.id,
+      lessonId: lesson.id,
+      maxSegment: 2,
+      watchedSeconds: 120,
+      startedAt: new Date("2026-05-31T06:00:00.000Z"),
+      updatedAt: new Date("2026-05-31T06:53:03.000Z"),
+    });
+
+    const result = await listAdminUsers(db, { search: "watcher@example.cz" });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].lastActivityAt).toBeInstanceOf(Date);
+    expect(result.rows[0].lastActivityAt?.toISOString()).toBe("2026-05-31T06:53:03.000Z");
   });
 });
