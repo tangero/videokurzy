@@ -10,6 +10,7 @@ export interface RecordWatchInput {
   lessonId: number;
   maxSegment: number;
   watchedSeconds: number;
+  positionSeconds: number;
 }
 
 /**
@@ -27,6 +28,7 @@ export async function recordWatch(
 ): Promise<{ started: boolean }> {
   const maxSegment = clampSegment(input.maxSegment);
   const watchedSeconds = Math.max(0, Math.floor(input.watchedSeconds));
+  const lastPositionSeconds = Math.max(0, Math.floor(input.positionSeconds));
 
   const existing = await db
     .select({ userId: lessonWatch.userId })
@@ -45,6 +47,7 @@ export async function recordWatch(
       lessonId: input.lessonId,
       maxSegment,
       watchedSeconds,
+      lastPositionSeconds,
       startedAt: now,
       updatedAt: now,
     })
@@ -53,6 +56,7 @@ export async function recordWatch(
       set: {
         maxSegment: sql`max(${lessonWatch.maxSegment}, ${maxSegment})`,
         watchedSeconds: sql`max(${lessonWatch.watchedSeconds}, ${watchedSeconds})`,
+        lastPositionSeconds: lastPositionSeconds,
         updatedAt: now,
       },
     });

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { WATCH_SEGMENTS, shouldResume } from "../../src/lib/watch-stats";
+import { env } from "cloudflare:test";
+import { drizzle } from "drizzle-orm/d1";
+import { WATCH_SEGMENTS, shouldResume, recordWatch } from "../../src/lib/watch-stats";
 
 // Čistá jednotka pro výpočet retenční křivky z pole maxSegment hodnot
 // (stejná logika jako getRetentionCurve, bez DB — ověřuje matematiku).
@@ -66,5 +68,37 @@ describe("shouldResume", () => {
   it("neresumuje při nulové/neznámé pozici nebo délce", () => {
     expect(shouldResume(0, 600, false)).toBe(false);
     expect(shouldResume(323, 0, false)).toBe(false);
+  });
+});
+
+describe("recordWatch — pozice", () => {
+  it("ukládá lastPositionSeconds přepisem, segment/watched jen nahoru", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO course (id, title, slug, description, published) VALUES (810, 'c', 'c-810', '', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO module (id, courseId, title, slug, sortOrder) VALUES (820, 810, 'm', 'm-820', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, durationSeconds, isFree, sortOrder) VALUES (830, 820, 'p-830', 'l', 'l-830', 600, 1, 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u-rw', 'U', 'u-rw@test.cz', 1, 0, 0)"
+    ).run();
+
+    const t = new Date(1_000_000);
+    await recordWatch(db, { userId: "u-rw", lessonId: 830, maxSegment: 5, watchedSeconds: 120, positionSeconds: 150 }, t);
+    // posun zpět (přetočení): pozice klesne, ale segment/watched zůstanou nahoře
+    await recordWatch(db, { userId: "u-rw", lessonId: 830, maxSegment: 2, watchedSeconds: 60, positionSeconds: 40 }, t);
+
+    const { results } = await env.DB.prepare(
+      "SELECT maxSegment, watchedSeconds, lastPositionSeconds FROM lesson_watch WHERE userId='u-rw' AND lessonId=830"
+    ).all<{ maxSegment: number; watchedSeconds: number; lastPositionSeconds: number }>();
+    const row = results[0];
+
+    expect(row.maxSegment).toBe(5); // jen nahoru
+    expect(row.watchedSeconds).toBe(120); // jen nahoru
+    expect(row.lastPositionSeconds).toBe(40); // přepis poslední hodnotou
   });
 });
