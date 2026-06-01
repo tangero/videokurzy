@@ -183,6 +183,7 @@ export const lessonWatch = sqliteTable(
       .references(() => lesson.id, { onDelete: "cascade" }),
     maxSegment: integer("maxSegment").notNull().default(0),
     watchedSeconds: integer("watchedSeconds").notNull().default(0),
+    lastPositionSeconds: integer("lastPositionSeconds").notNull().default(0),
     startedAt: integer("startedAt", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
   },
