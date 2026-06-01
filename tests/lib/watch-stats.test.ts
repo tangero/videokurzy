@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
-import { WATCH_SEGMENTS, shouldResume, recordWatch } from "../../src/lib/watch-stats";
+import { WATCH_SEGMENTS, shouldResume, recordWatch, resetWatchPosition } from "../../src/lib/watch-stats";
 
 // Čistá jednotka pro výpočet retenční křivky z pole maxSegment hodnot
 // (stejná logika jako getRetentionCurve, bez DB — ověřuje matematiku).
@@ -150,5 +150,34 @@ describe("recordWatch — pozice", () => {
       "SELECT lastPositionSeconds FROM lesson_watch WHERE userId='u-rw3' AND lessonId=832"
     ).all<{ lastPositionSeconds: number }>();
     expect(results[0].lastPositionSeconds).toBe(86400);
+  });
+});
+
+describe("resetWatchPosition", () => {
+  it("vynuluje uloženou pozici (i když je nenulová)", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO course (id, title, slug, description, published) VALUES (813, 'c', 'c-813', '', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO module (id, courseId, title, slug, sortOrder) VALUES (823, 813, 'm', 'm-823', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, durationSeconds, isFree, sortOrder) VALUES (833, 823, 'p-833', 'l', 'l-833', 600, 1, 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u-rst', 'U', 'u-rst@test.cz', 1, 0, 0)"
+    ).run();
+
+    // uložená reálná pozice 300
+    await recordWatch(db, { userId: "u-rst", lessonId: 833, maxSegment: 8, watchedSeconds: 250, positionSeconds: 300 }, new Date(1_000_000));
+    // explicitní reset
+    await resetWatchPosition(db, "u-rst", 833);
+
+    const { results } = await env.DB.prepare(
+      "SELECT lastPositionSeconds, maxSegment FROM lesson_watch WHERE userId='u-rst' AND lessonId=833"
+    ).all<{ lastPositionSeconds: number; maxSegment: number }>();
+    expect(results[0].lastPositionSeconds).toBe(0); // pozice vynulována (obejde zero-guard)
+    expect(results[0].maxSegment).toBe(8); // ostatní metriky netknuté
   });
 });

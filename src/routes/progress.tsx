@@ -6,7 +6,7 @@ import { requireAuth } from "../middleware/auth";
 import { progress, lesson, module } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { sendResendEvent } from "../lib/resend";
-import { recordWatch } from "../lib/watch-stats";
+import { recordWatch, resetWatchPosition } from "../lib/watch-stats";
 import { ProgressComplete } from "../views/watch";
 
 const progressRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -131,16 +131,25 @@ progressRoutes.post("/api/watch/:lessonId", requireAuth, async (c) => {
   let maxSegment = 0;
   let watchedSeconds = 0;
   let positionSeconds = 0;
+  let resetPosition = false;
   try {
-    const body = (await c.req.json()) as { maxSegment?: unknown; watchedSeconds?: unknown; positionSeconds?: unknown };
+    const body = (await c.req.json()) as { maxSegment?: unknown; watchedSeconds?: unknown; positionSeconds?: unknown; resetPosition?: unknown };
     maxSegment = Number(body.maxSegment) || 0;
     watchedSeconds = Number(body.watchedSeconds) || 0;
     positionSeconds = Number(body.positionSeconds) || 0;
+    resetPosition = body.resetPosition === true;
   } catch {
     return c.body(null, 400);
   }
 
   const db = drizzle(c.env.DB);
+
+  // Explicitní akce „přehrát od začátku": vynuluj uloženou pozici a skonči.
+  if (resetPosition) {
+    await resetWatchPosition(db, user.id, lessonId);
+    return c.body(null, 204);
+  }
+
   const { started } = await recordWatch(db, { userId: user.id, lessonId, maxSegment, watchedSeconds, positionSeconds }, new Date());
 
   // První spuštění lekce → lesson.started pro re-engagement automation
