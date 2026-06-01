@@ -85,3 +85,24 @@ function clampSegment(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(WATCH_SEGMENTS - 1, Math.max(0, Math.floor(value)));
 }
+
+/** Práh (v s) od začátku a před koncem, kdy ještě má smysl resumovat. */
+const RESUME_EDGE_SECONDS = 15;
+
+/**
+ * Rozhodne, jestli při otevření lekce naskočit na uloženou pozici.
+ * Resume jen pro nedokončenou lekci, pozici aspoň RESUME_EDGE_SECONDS do videa
+ * a aspoň RESUME_EDGE_SECONDS před koncem (jinak start od 0).
+ */
+export function shouldResume(
+  positionSeconds: number,
+  durationSeconds: number,
+  completed: boolean
+): boolean {
+  if (completed) return false;
+  if (!Number.isFinite(positionSeconds) || !Number.isFinite(durationSeconds)) return false;
+  if (durationSeconds <= 0) return false;
+  if (positionSeconds <= RESUME_EDGE_SECONDS) return false;
+  if (positionSeconds >= durationSeconds - RESUME_EDGE_SECONDS) return false;
+  return true;
+}

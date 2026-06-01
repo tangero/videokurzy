@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { WATCH_SEGMENTS } from "../../src/lib/watch-stats";
+import { WATCH_SEGMENTS, shouldResume } from "../../src/lib/watch-stats";
 
 // Čistá jednotka pro výpočet retenční křivky z pole maxSegment hodnot
 // (stejná logika jako getRetentionCurve, bez DB — ověřuje matematiku).
@@ -33,5 +33,30 @@ describe("retenční křivka", () => {
     const curve = curveFrom([100, -5]); // 100→19, -5→0
     expect(curve[19]).toBe(1);
     expect(curve[0]).toBe(2);
+  });
+});
+
+describe("shouldResume", () => {
+  it("resumuje uprostřed nedokončené lekce", () => {
+    expect(shouldResume(323, 600, false)).toBe(true);
+  });
+
+  it("neresumuje dokončenou lekci", () => {
+    expect(shouldResume(323, 600, true)).toBe(false);
+  });
+
+  it("neresumuje, když je pozice příliš na začátku (<=15 s)", () => {
+    expect(shouldResume(15, 600, false)).toBe(false);
+    expect(shouldResume(5, 600, false)).toBe(false);
+  });
+
+  it("neresumuje, když je pozice blízko konce (<15 s do konce)", () => {
+    expect(shouldResume(590, 600, false)).toBe(false);
+    expect(shouldResume(600, 600, false)).toBe(false);
+  });
+
+  it("neresumuje při nulové/neznámé pozici nebo délce", () => {
+    expect(shouldResume(0, 600, false)).toBe(false);
+    expect(shouldResume(323, 0, false)).toBe(false);
   });
 });
