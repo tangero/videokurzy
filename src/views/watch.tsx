@@ -40,6 +40,7 @@ interface WatchProps {
   isLastFreeLesson?: boolean;
   nearbyLessons?: SidebarLesson[];
   lessonGlobalIndex?: number;
+  resumePosition?: number | null;
 }
 
 function formatDuration(seconds: number): string {
@@ -101,6 +102,7 @@ export const WatchPage: FC<WatchProps> = ({
   isLastFreeLesson,
   nearbyLessons,
   lessonGlobalIndex,
+  resumePosition,
 }) => {
   const idx = lessonGlobalIndex ?? 0;
   const moduleNum = String(lesson.moduleId).padStart(2, "0");
@@ -147,6 +149,17 @@ export const WatchPage: FC<WatchProps> = ({
                 </div>
               )}
             </div>
+
+            {embedUrl && resumePosition ? (
+              <div id="resume-bar" class="resume-bar">
+                <span class="resume-bar-text">
+                  <PlaySmIcon /> Pokračuješ od {formatDuration(resumePosition)}
+                </span>
+                <button type="button" id="resume-restart" class="btn btn-ghost btn-sm">
+                  od začátku
+                </button>
+              </div>
+            ) : null}
 
             {/* Lesson info */}
             <div style="margin-top:24px">
@@ -332,6 +345,14 @@ export const WatchPage: FC<WatchProps> = ({
         @media (max-width: 900px) {
           .watch-grid { grid-template-columns: 1fr !important; }
         }
+        .resume-bar {
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 12px; margin-top: 10px; padding: 8px 12px;
+          background: var(--surface, rgba(255,255,255,0.04));
+          border: 1px solid var(--border); border-radius: 8px;
+          font-family: var(--font-mono); font-size: 0.82rem; color: var(--muted);
+        }
+        .resume-bar-text { display: inline-flex; align-items: center; gap: 6px; }
       `}</style>
       {embedUrl && (
         <>
@@ -343,6 +364,18 @@ export const WatchPage: FC<WatchProps> = ({
               var buttons = Array.prototype.slice.call(document.querySelectorAll('.chapter-item'));
 
               var player = new window.playerjs.Player(iframe);
+
+              var resumeBar = document.getElementById('resume-bar');
+              var restartBtn = document.getElementById('resume-restart');
+              if (restartBtn) {
+                restartBtn.addEventListener('click', function () {
+                  player.setCurrentTime(0);
+                  if (resumeBar) resumeBar.style.display = 'none';
+                });
+              }
+              if (resumeBar) {
+                player.on('play', function () { resumeBar.style.display = 'none'; });
+              }
 
               function setActive(seconds) {
                 var active = null;
@@ -405,7 +438,7 @@ export const WatchPage: FC<WatchProps> = ({
                   if (!dirty) return;
                   dirty = false;
                   var url = '/api/watch/' + lessonId;
-                  var payload = JSON.stringify({ maxSegment: maxSegment, watchedSeconds: Math.round(watchedSeconds) });
+                  var payload = JSON.stringify({ maxSegment: maxSegment, watchedSeconds: Math.round(watchedSeconds), positionSeconds: Math.round(lastTime) });
                   if (useBeacon && navigator.sendBeacon) {
                     navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
                   } else {
