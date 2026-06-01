@@ -5,6 +5,9 @@ import { lessonWatch } from "../db/schema";
 /** Počet segmentů, na které dělíme každé video (křivka po 5 % délky). */
 export const WATCH_SEGMENTS = 20;
 
+/** Horní strop ukládané pozice (24 h) — obrana proti nesmyslné hodnotě z klienta. */
+const MAX_POSITION_SECONDS = 86400;
+
 export interface RecordWatchInput {
   userId: string;
   lessonId: number;
@@ -28,7 +31,10 @@ export async function recordWatch(
 ): Promise<{ started: boolean }> {
   const maxSegment = clampSegment(input.maxSegment);
   const watchedSeconds = Math.max(0, Math.floor(input.watchedSeconds));
-  const lastPositionSeconds = Math.max(0, Math.floor(input.positionSeconds));
+  const lastPositionSeconds = Math.min(
+    MAX_POSITION_SECONDS,
+    Math.max(0, Math.floor(input.positionSeconds))
+  );
 
   const existing = await db
     .select({ userId: lessonWatch.userId })

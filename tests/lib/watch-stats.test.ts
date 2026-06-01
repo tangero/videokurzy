@@ -128,4 +128,27 @@ describe("recordWatch — pozice", () => {
     ).all<{ lastPositionSeconds: number }>();
     expect(results[0].lastPositionSeconds).toBe(200); // nula nepřepsala
   });
+
+  it("ořízne nesmyslně velkou pozici na 24 h (86400 s)", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO course (id, title, slug, description, published) VALUES (812, 'c', 'c-812', '', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO module (id, courseId, title, slug, sortOrder) VALUES (822, 812, 'm', 'm-822', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, durationSeconds, isFree, sortOrder) VALUES (832, 822, 'p-832', 'l', 'l-832', 600, 1, 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u-rw3', 'U', 'u-rw3@test.cz', 1, 0, 0)"
+    ).run();
+
+    await recordWatch(db, { userId: "u-rw3", lessonId: 832, maxSegment: 5, watchedSeconds: 120, positionSeconds: 9_999_999 }, new Date(1_000_000));
+
+    const { results } = await env.DB.prepare(
+      "SELECT lastPositionSeconds FROM lesson_watch WHERE userId='u-rw3' AND lessonId=832"
+    ).all<{ lastPositionSeconds: number }>();
+    expect(results[0].lastPositionSeconds).toBe(86400);
+  });
 });

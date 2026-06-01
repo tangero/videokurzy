@@ -150,7 +150,7 @@ export const WatchPage: FC<WatchProps> = ({
               )}
             </div>
 
-            {embedUrl && resumePosition ? (
+            {embedUrl && resumePosition != null ? (
               <div id="resume-bar" class="resume-bar">
                 <span class="resume-bar-text">
                   <PlaySmIcon /> Pokračuješ od {formatDuration(resumePosition)}
