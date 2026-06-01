@@ -1,9 +1,10 @@
 import { Hono } from "hono";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Env, Variables } from "../types";
 import { authMiddleware, requireAuth } from "../middleware/auth";
-import { lesson, module, progress } from "../db/schema";
+import { lesson, module, progress, lessonWatch } from "../db/schema";
+import { shouldResume } from "../lib/watch-stats";
 import { hasAccess } from "../lib/access";
 import { generateSignedEmbedUrl } from "../lib/bunny";
 import { WatchPage } from "../views/watch";
@@ -88,15 +89,7 @@ watch.get("/watch/:slug", async (c) => {
     hasPaidAccess = await hasAccess(user, db);
   }
 
-  const embedUrl = found.bunnyVideoId
-    ? generateSignedEmbedUrl(
-        c.env.BUNNY_LIBRARY_ID,
-        found.bunnyVideoId,
-        c.env.BUNNY_TOKEN_KEY
-      )
-    : "";
-
-  const [allLessons, allProgressRaw, moduleRow] = await Promise.all([
+  const [allLessons, allProgressRaw, moduleRow, watchRow] = await Promise.all([
     db
       .select({
         id: lesson.id,
@@ -121,12 +114,36 @@ watch.get("/watch/:slug", async (c) => {
       .from(module)
       .where(eq(module.id, found.moduleId))
       .limit(1),
+    user
+      ? db
+          .select({ lastPositionSeconds: lessonWatch.lastPositionSeconds })
+          .from(lessonWatch)
+          .where(
+            and(eq(lessonWatch.userId, user.id), eq(lessonWatch.lessonId, found.id))
+          )
+          .limit(1)
+      : Promise.resolve([] as { lastPositionSeconds: number }[]),
   ]);
 
   const allProgressIds = new Set(
     allProgressRaw.filter((p) => p.completed).map((p) => p.lessonId)
   );
   const completed = allProgressIds.has(found.id);
+
+  const lastPosition = watchRow[0]?.lastPositionSeconds ?? 0;
+  const resumePosition = shouldResume(lastPosition, found.durationSeconds, completed)
+    ? lastPosition
+    : null;
+
+  const embedUrl = found.bunnyVideoId
+    ? generateSignedEmbedUrl(
+        c.env.BUNNY_LIBRARY_ID,
+        found.bunnyVideoId,
+        c.env.BUNNY_TOKEN_KEY,
+        4,
+        resumePosition ?? 0
+      )
+    : "";
 
   const globalIdx = allLessons.findIndex((l) => l.id === found.id);
   const prevSlug = globalIdx > 0 ? allLessons[globalIdx - 1].slug : null;
@@ -154,6 +171,7 @@ watch.get("/watch/:slug", async (c) => {
       nextSlug={nextSlug}
       hasPaidAccess={hasPaidAccess}
       loggedIn={Boolean(user)}
+      resumePosition={resumePosition}
       isLastFreeLesson={isLastFreeLesson}
       nearbyLessons={nearbyLessons}
       lessonGlobalIndex={globalIdx}

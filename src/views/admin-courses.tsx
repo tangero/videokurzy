@@ -491,6 +491,37 @@ function TranscribeSection({ lesson: les }: { lesson: Lesson }) {
           <span class="text-xs text-gray-500">~{minutes} min · ${estPrice}</span>
         </div>
       )}
+
+      {les.bunnyVideoId && (
+        <div class="pt-3 border-t border-gray-100 space-y-2">
+          <label class="block text-sm font-medium text-gray-700">
+            Náhledový obrázek (poster)
+          </label>
+          <p class="text-xs text-gray-500">
+            URL obrázku (nahraj ho na Bunny / jiný veřejný CDN). Bunny ho použije jako
+            náhled v přehrávači v klidovém stavu.
+          </p>
+          <form
+            method="post"
+            action={`/admin/api/lessons/${les.id}/thumbnail`}
+            class="flex flex-wrap items-center gap-2"
+          >
+            <input
+              type="url"
+              name="thumbnailUrl"
+              required
+              placeholder="https://…/poster.jpg"
+              class="flex-1 min-w-[16rem] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            <button
+              type="submit"
+              class="bg-gray-900 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-700"
+            >
+              Nastavit náhled
+            </button>
+          </form>
+        </div>
+      )}
     </section>
   );
 }

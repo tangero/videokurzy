@@ -6,7 +6,8 @@ export function generateSignedEmbedUrl(
   libraryId: string,
   videoId: string,
   tokenKey: string,
-  expiryHours = 4
+  expiryHours = 4,
+  startSeconds = 0
 ): string {
   const expires = Math.floor(Date.now() / 1000) + expiryHours * 3600;
   const url = `${BUNNY_EMBED_BASE}/${libraryId}/${videoId}`;
@@ -16,5 +17,10 @@ export function generateSignedEmbedUrl(
     .update(hashableBase)
     .digest("hex");
 
-  return `${url}?token=${token}&expires=${expires}`;
+  // autoplay=false: video se po načtení stránky NEspouští automaticky
+  // (Bunny default je sice false, ale nastavujeme explicitně pro jistotu).
+  let embed = `${url}?token=${token}&expires=${expires}&autoplay=false`;
+  // t=<vteřiny>: video naběhne na uloženou pozici (resume z lesson_watch).
+  if (startSeconds > 0) embed += `&t=${Math.floor(startSeconds)}`;
+  return embed;
 }

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { WATCH_SEGMENTS } from "../../src/lib/watch-stats";
+import { env } from "cloudflare:test";
+import { drizzle } from "drizzle-orm/d1";
+import { WATCH_SEGMENTS, shouldResume, recordWatch } from "../../src/lib/watch-stats";
 
 // Čistá jednotka pro výpočet retenční křivky z pole maxSegment hodnot
 // (stejná logika jako getRetentionCurve, bez DB — ověřuje matematiku).
@@ -33,5 +35,120 @@ describe("retenční křivka", () => {
     const curve = curveFrom([100, -5]); // 100→19, -5→0
     expect(curve[19]).toBe(1);
     expect(curve[0]).toBe(2);
+  });
+});
+
+describe("shouldResume", () => {
+  it("resumuje uprostřed nedokončené lekce", () => {
+    expect(shouldResume(323, 600, false)).toBe(true);
+  });
+
+  it("neresumuje dokončenou lekci", () => {
+    expect(shouldResume(323, 600, true)).toBe(false);
+  });
+
+  it("neresumuje, když je pozice příliš na začátku (<=15 s)", () => {
+    expect(shouldResume(15, 600, false)).toBe(false);
+    expect(shouldResume(5, 600, false)).toBe(false);
+  });
+
+  it("neresumuje, když je pozice blízko konce (<=15 s do konce)", () => {
+    expect(shouldResume(590, 600, false)).toBe(false);
+    expect(shouldResume(600, 600, false)).toBe(false);
+  });
+
+  it("hraniční hodnoty prahů (16 s start, 585/584 s konec) a neplatné vstupy", () => {
+    expect(shouldResume(16, 600, false)).toBe(true);   // první resumovatelná pozice
+    expect(shouldResume(585, 600, false)).toBe(false);  // přesně 15 s do konce → blok
+    expect(shouldResume(584, 600, false)).toBe(true);   // těsně pod horní hranou
+    expect(shouldResume(-5, 600, false)).toBe(false);   // záporná pozice
+    expect(shouldResume(NaN, 600, false)).toBe(false);  // NaN pozice
+  });
+
+  it("neresumuje při nulové/neznámé pozici nebo délce", () => {
+    expect(shouldResume(0, 600, false)).toBe(false);
+    expect(shouldResume(323, 0, false)).toBe(false);
+  });
+});
+
+describe("recordWatch — pozice", () => {
+  it("ukládá lastPositionSeconds přepisem, segment/watched jen nahoru", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO course (id, title, slug, description, published) VALUES (810, 'c', 'c-810', '', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO module (id, courseId, title, slug, sortOrder) VALUES (820, 810, 'm', 'm-820', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, durationSeconds, isFree, sortOrder) VALUES (830, 820, 'p-830', 'l', 'l-830', 600, 1, 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u-rw', 'U', 'u-rw@test.cz', 1, 0, 0)"
+    ).run();
+
+    const t = new Date(1_000_000);
+    await recordWatch(db, { userId: "u-rw", lessonId: 830, maxSegment: 5, watchedSeconds: 120, positionSeconds: 150 }, t);
+    // posun zpět (přetočení): pozice klesne, ale segment/watched zůstanou nahoře
+    await recordWatch(db, { userId: "u-rw", lessonId: 830, maxSegment: 2, watchedSeconds: 60, positionSeconds: 40 }, t);
+
+    const { results } = await env.DB.prepare(
+      "SELECT maxSegment, watchedSeconds, lastPositionSeconds FROM lesson_watch WHERE userId='u-rw' AND lessonId=830"
+    ).all<{ maxSegment: number; watchedSeconds: number; lastPositionSeconds: number }>();
+    const row = results[0];
+
+    expect(row.maxSegment).toBe(5); // jen nahoru
+    expect(row.watchedSeconds).toBe(120); // jen nahoru
+    expect(row.lastPositionSeconds).toBe(40); // přepis poslední hodnotou
+  });
+
+  it("nepřepíše uloženou pozici nulou (první play heartbeat s lastTime=0)", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO course (id, title, slug, description, published) VALUES (811, 'c', 'c-811', '', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO module (id, courseId, title, slug, sortOrder) VALUES (821, 811, 'm', 'm-821', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, durationSeconds, isFree, sortOrder) VALUES (831, 821, 'p-831', 'l', 'l-831', 600, 1, 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u-rw2', 'U', 'u-rw2@test.cz', 1, 0, 0)"
+    ).run();
+
+    const t = new Date(1_000_000);
+    // uložená reálná pozice
+    await recordWatch(db, { userId: "u-rw2", lessonId: 831, maxSegment: 5, watchedSeconds: 120, positionSeconds: 200 }, t);
+    // první play heartbeat: lastTime=0 → positionSeconds 0 NESMÍ přepsat uloženou 200
+    await recordWatch(db, { userId: "u-rw2", lessonId: 831, maxSegment: 5, watchedSeconds: 120, positionSeconds: 0 }, t);
+
+    const { results } = await env.DB.prepare(
+      "SELECT lastPositionSeconds FROM lesson_watch WHERE userId='u-rw2' AND lessonId=831"
+    ).all<{ lastPositionSeconds: number }>();
+    expect(results[0].lastPositionSeconds).toBe(200); // nula nepřepsala
+  });
+
+  it("ořízne nesmyslně velkou pozici na 24 h (86400 s)", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO course (id, title, slug, description, published) VALUES (812, 'c', 'c-812', '', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO module (id, courseId, title, slug, sortOrder) VALUES (822, 812, 'm', 'm-822', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, durationSeconds, isFree, sortOrder) VALUES (832, 822, 'p-832', 'l', 'l-832', 600, 1, 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u-rw3', 'U', 'u-rw3@test.cz', 1, 0, 0)"
+    ).run();
+
+    await recordWatch(db, { userId: "u-rw3", lessonId: 832, maxSegment: 5, watchedSeconds: 120, positionSeconds: 9_999_999 }, new Date(1_000_000));
+
+    const { results } = await env.DB.prepare(
+      "SELECT lastPositionSeconds FROM lesson_watch WHERE userId='u-rw3' AND lessonId=832"
+    ).all<{ lastPositionSeconds: number }>();
+    expect(results[0].lastPositionSeconds).toBe(86400);
   });
 });

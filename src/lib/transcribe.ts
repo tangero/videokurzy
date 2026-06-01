@@ -58,6 +58,32 @@ export async function triggerTranscribe(
   }
 }
 
+/**
+ * Nastaví videu vlastní náhledový obrázek (thumbnail / poster). Bunny stáhne
+ * obrázek z dané URL a použije ho v přehrávači v klidovém stavu.
+ * Docs: https://docs.bunny.net/reference/video_setthumbnail
+ * Loguje jen status (ne tělo) — vstup je admin-only, ale držíme hygienu logů.
+ */
+export async function setBunnyThumbnail(
+  env: Env,
+  videoId: string,
+  thumbnailUrl: string,
+): Promise<{ ok: boolean; status: number }> {
+  const url = new URL(
+    `${BUNNY_API_BASE}/library/${env.BUNNY_LIBRARY_ID}/videos/${videoId}/thumbnail`,
+  );
+  url.searchParams.set("thumbnailUrl", thumbnailUrl);
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { AccessKey: env.BUNNY_API_KEY, Accept: "application/json" },
+  });
+  if (!res.ok) {
+    console.error(`[bunny] set thumbnail ${res.status}`);
+  }
+  return { ok: res.ok, status: res.status };
+}
+
 /** Načte metadata videa včetně dostupných caption tracků. */
 export async function fetchBunnyVideo(env: Env, videoId: string): Promise<BunnyVideo> {
   const res = await fetch(

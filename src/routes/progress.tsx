@@ -122,7 +122,7 @@ progressRoutes.post("/api/progress/:lessonId", requireAuth, async (c) => {
 });
 
 // Watch-time / retenční tracking — volá player.js heartbeat (fetch / sendBeacon).
-// Tělo: { maxSegment, watchedSeconds }. Idempotentní upsert (posun jen nahoru).
+// Tělo: { maxSegment, watchedSeconds, positionSeconds }. Upsert: segment/watched jen nahoru, pozice se přepisuje.
 progressRoutes.post("/api/watch/:lessonId", requireAuth, async (c) => {
   const user = c.get("user")!;
   const lessonId = parseInt(c.req.param("lessonId"), 10);
@@ -130,16 +130,18 @@ progressRoutes.post("/api/watch/:lessonId", requireAuth, async (c) => {
 
   let maxSegment = 0;
   let watchedSeconds = 0;
+  let positionSeconds = 0;
   try {
-    const body = (await c.req.json()) as { maxSegment?: unknown; watchedSeconds?: unknown };
+    const body = (await c.req.json()) as { maxSegment?: unknown; watchedSeconds?: unknown; positionSeconds?: unknown };
     maxSegment = Number(body.maxSegment) || 0;
     watchedSeconds = Number(body.watchedSeconds) || 0;
+    positionSeconds = Number(body.positionSeconds) || 0;
   } catch {
     return c.body(null, 400);
   }
 
   const db = drizzle(c.env.DB);
-  const { started } = await recordWatch(db, { userId: user.id, lessonId, maxSegment, watchedSeconds }, new Date());
+  const { started } = await recordWatch(db, { userId: user.id, lessonId, maxSegment, watchedSeconds, positionSeconds }, new Date());
 
   // První spuštění lekce → lesson.started pro re-engagement automation
   // (chytá i diváky, co video pustili, ale nedokončili).

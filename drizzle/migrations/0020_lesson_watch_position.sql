@@ -1,0 +1,1 @@
+ALTER TABLE lesson_watch ADD COLUMN lastPositionSeconds INTEGER NOT NULL DEFAULT 0;

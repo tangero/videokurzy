@@ -31,6 +31,7 @@ import {
   fetchCaptionVtt,
   findCzechCaption,
   vttToPlainText,
+  setBunnyThumbnail,
 } from "../lib/transcribe";
 import { countDiscountedActivePurchases } from "../lib/discount";
 import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
@@ -1695,6 +1696,32 @@ admin.post("/admin/api/lessons/:id/transcribe", async (c) => {
       502,
     );
   }
+});
+
+admin.post("/admin/api/lessons/:id/thumbnail", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const [row] = await db
+    .select({ id: lesson.id, bunnyVideoId: lesson.bunnyVideoId })
+    .from(lesson)
+    .where(eq(lesson.id, id))
+    .limit(1);
+  if (!row) return c.text("Not found", 404);
+  if (!row.bunnyVideoId) {
+    return c.json({ error: "Lekce nemá přiřazené Bunny video." }, 400);
+  }
+
+  const body = await c.req.parseBody();
+  const thumbnailUrl = String(body.thumbnailUrl ?? "").trim();
+  if (!/^https?:\/\//i.test(thumbnailUrl)) {
+    return c.json({ error: "Zadej platnou http(s) URL obrázku." }, 400);
+  }
+
+  const result = await setBunnyThumbnail(c.env, row.bunnyVideoId, thumbnailUrl);
+  const note = result.ok
+    ? "thumbOk"
+    : `thumbErr-${result.status}`;
+  return c.redirect(`/admin/lessons/${id}/edit?${note}=1#transkripce`);
 });
 
 admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {

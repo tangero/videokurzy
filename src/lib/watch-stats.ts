@@ -5,11 +5,15 @@ import { lessonWatch } from "../db/schema";
 /** Počet segmentů, na které dělíme každé video (křivka po 5 % délky). */
 export const WATCH_SEGMENTS = 20;
 
+/** Horní strop ukládané pozice (24 h) — obrana proti nesmyslné hodnotě z klienta. */
+const MAX_POSITION_SECONDS = 86400;
+
 export interface RecordWatchInput {
   userId: string;
   lessonId: number;
   maxSegment: number;
   watchedSeconds: number;
+  positionSeconds: number;
 }
 
 /**
@@ -27,6 +31,10 @@ export async function recordWatch(
 ): Promise<{ started: boolean }> {
   const maxSegment = clampSegment(input.maxSegment);
   const watchedSeconds = Math.max(0, Math.floor(input.watchedSeconds));
+  const lastPositionSeconds = Math.min(
+    MAX_POSITION_SECONDS,
+    Math.max(0, Math.floor(input.positionSeconds))
+  );
 
   const existing = await db
     .select({ userId: lessonWatch.userId })
@@ -45,6 +53,7 @@ export async function recordWatch(
       lessonId: input.lessonId,
       maxSegment,
       watchedSeconds,
+      lastPositionSeconds,
       startedAt: now,
       updatedAt: now,
     })
@@ -53,6 +62,12 @@ export async function recordWatch(
       set: {
         maxSegment: sql`max(${lessonWatch.maxSegment}, ${maxSegment})`,
         watchedSeconds: sql`max(${lessonWatch.watchedSeconds}, ${watchedSeconds})`,
+        // pozice se přepisuje na novou hodnotu (respektuje přetočení zpět), ALE
+        // nulu ignorujeme — první play heartbeat má lastTime=0 a nesmí smazat uloženou pozici.
+        lastPositionSeconds:
+          lastPositionSeconds > 0
+            ? lastPositionSeconds
+            : sql`${lessonWatch.lastPositionSeconds}`,
         updatedAt: now,
       },
     });
@@ -84,4 +99,25 @@ export async function getRetentionCurve(
 function clampSegment(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(WATCH_SEGMENTS - 1, Math.max(0, Math.floor(value)));
+}
+
+/** Práh (v s) od začátku a před koncem, kdy ještě má smysl resumovat. */
+const RESUME_EDGE_SECONDS = 15;
+
+/**
+ * Rozhodne, jestli při otevření lekce naskočit na uloženou pozici.
+ * Resume jen pro nedokončenou lekci, pozici aspoň RESUME_EDGE_SECONDS do videa
+ * a aspoň RESUME_EDGE_SECONDS před koncem (jinak start od 0).
+ */
+export function shouldResume(
+  positionSeconds: number,
+  durationSeconds: number,
+  completed: boolean
+): boolean {
+  if (completed) return false;
+  if (!Number.isFinite(positionSeconds) || !Number.isFinite(durationSeconds)) return false;
+  if (durationSeconds <= 0) return false;
+  if (positionSeconds <= RESUME_EDGE_SECONDS) return false;
+  if (positionSeconds >= durationSeconds - RESUME_EDGE_SECONDS) return false;
+  return true;
 }
