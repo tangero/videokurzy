@@ -148,20 +148,18 @@ export const WatchPage: FC<WatchProps> = ({
                   </div>
                 </div>
               )}
-              {embedUrl && resumePosition != null ? (
-                <div id="resume-overlay" class="resume-overlay" role="dialog" aria-modal="true" aria-label="Pokračovat ve sledování">
-                  <div class="resume-card">
-                    <span class="resume-eyebrow">Minule v {formatDuration(resumePosition)}</span>
-                    <button type="button" id="resume-continue" class="btn">
-                      <PlaySmIcon /> Pokračovat
-                    </button>
-                    <button type="button" id="resume-restart" class="btn btn-ghost btn-sm">
-                      Přehrát od začátku
-                    </button>
-                  </div>
-                </div>
-              ) : null}
             </div>
+
+            {embedUrl && resumePosition != null ? (
+              <div id="resume-bar" class="resume-bar">
+                <span class="resume-bar-text">
+                  <PlaySmIcon /> Pokračuj v přehrávání od {formatDuration(resumePosition)}
+                </span>
+                <button type="button" id="resume-restart" class="btn btn-ghost btn-sm">
+                  Přehrát od začátku
+                </button>
+              </div>
+            ) : null}
 
             {/* Lesson info */}
             <div style="margin-top:24px">
@@ -347,24 +345,14 @@ export const WatchPage: FC<WatchProps> = ({
         @media (max-width: 900px) {
           .watch-grid { grid-template-columns: 1fr !important; }
         }
-        .resume-overlay {
-          position: absolute; inset: 0; z-index: 3;
-          display: flex; align-items: center; justify-content: center;
-          padding: 16px;
-          background: rgba(8, 12, 10, 0.55);
-          -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+        .resume-bar {
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 12px; margin-top: 10px; padding: 8px 12px;
+          background: var(--surface, rgba(255,255,255,0.04));
+          border: 1px solid var(--border); border-radius: 8px;
+          font-family: var(--font-mono); font-size: 0.82rem; color: var(--muted);
         }
-        .resume-card {
-          display: flex; flex-direction: column; align-items: center; gap: 12px;
-          max-width: 320px; padding: 22px 26px; border-radius: 14px;
-          background: rgba(16, 20, 18, 0.94); border: 1px solid var(--border);
-          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45); text-align: center;
-        }
-        .resume-eyebrow {
-          font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted);
-          letter-spacing: 0.03em;
-        }
-        .resume-card .btn { min-width: 200px; justify-content: center; }
+        .resume-bar-text { display: inline-flex; align-items: center; gap: 6px; }
       `}</style>
       {embedUrl && (
         <>
@@ -377,21 +365,15 @@ export const WatchPage: FC<WatchProps> = ({
 
               var player = new window.playerjs.Player(iframe);
 
-              var resumeOverlay = document.getElementById('resume-overlay');
-              var continueBtn = document.getElementById('resume-continue');
+              // Resume lišta pod videem: nativní (oranžový) play button přehrávače
+              // pokračuje od uložené pozice (video už na ní stojí díky t= param).
+              var resumeBar = document.getElementById('resume-bar');
               var restartBtn = document.getElementById('resume-restart');
-              function hideResume() { if (resumeOverlay) resumeOverlay.style.display = 'none'; }
-              if (continueBtn) {
-                continueBtn.addEventListener('click', function () {
-                  hideResume();
-                  player.play(); // video už stojí na uložené pozici (t= param)
-                });
-              }
+              function hideResumeBar() { if (resumeBar) resumeBar.style.display = 'none'; }
               if (restartBtn) {
                 restartBtn.addEventListener('click', function () {
-                  hideResume();
                   player.setCurrentTime(0);
-                  player.play();
+                  hideResumeBar();
                   // explicitně vymaž uloženou pozici, ať se příště resume nenabízí
                   var payload = JSON.stringify({ resetPosition: true });
                   if (navigator.sendBeacon) {
@@ -401,8 +383,8 @@ export const WatchPage: FC<WatchProps> = ({
                   }
                 });
               }
-              if (resumeOverlay) {
-                player.on('play', hideResume); // pojistka když divák spustí přehrávač sám
+              if (resumeBar) {
+                player.on('play', hideResumeBar); // jakmile divák spustí přehrávání, lišta zmizí
               }
 
               function setActive(seconds) {
