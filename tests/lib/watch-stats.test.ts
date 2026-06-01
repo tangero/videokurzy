@@ -101,4 +101,31 @@ describe("recordWatch — pozice", () => {
     expect(row.watchedSeconds).toBe(120); // jen nahoru
     expect(row.lastPositionSeconds).toBe(40); // přepis poslední hodnotou
   });
+
+  it("nepřepíše uloženou pozici nulou (první play heartbeat s lastTime=0)", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.prepare(
+      "INSERT INTO course (id, title, slug, description, published) VALUES (811, 'c', 'c-811', '', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO module (id, courseId, title, slug, sortOrder) VALUES (821, 811, 'm', 'm-821', 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO lesson (id, moduleId, publicId, title, slug, durationSeconds, isFree, sortOrder) VALUES (831, 821, 'p-831', 'l', 'l-831', 600, 1, 1)"
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u-rw2', 'U', 'u-rw2@test.cz', 1, 0, 0)"
+    ).run();
+
+    const t = new Date(1_000_000);
+    // uložená reálná pozice
+    await recordWatch(db, { userId: "u-rw2", lessonId: 831, maxSegment: 5, watchedSeconds: 120, positionSeconds: 200 }, t);
+    // první play heartbeat: lastTime=0 → positionSeconds 0 NESMÍ přepsat uloženou 200
+    await recordWatch(db, { userId: "u-rw2", lessonId: 831, maxSegment: 5, watchedSeconds: 120, positionSeconds: 0 }, t);
+
+    const { results } = await env.DB.prepare(
+      "SELECT lastPositionSeconds FROM lesson_watch WHERE userId='u-rw2' AND lessonId=831"
+    ).all<{ lastPositionSeconds: number }>();
+    expect(results[0].lastPositionSeconds).toBe(200); // nula nepřepsala
+  });
 });

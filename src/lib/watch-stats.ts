@@ -56,8 +56,12 @@ export async function recordWatch(
       set: {
         maxSegment: sql`max(${lessonWatch.maxSegment}, ${maxSegment})`,
         watchedSeconds: sql`max(${lessonWatch.watchedSeconds}, ${watchedSeconds})`,
-        // pozice se přepisuje — sledujeme, kde divák aktuálně je, ne maximum (přetočení zpět je legitimní)
-        lastPositionSeconds: lastPositionSeconds,
+        // pozice se přepisuje na novou hodnotu (respektuje přetočení zpět), ALE
+        // nulu ignorujeme — první play heartbeat má lastTime=0 a nesmí smazat uloženou pozici.
+        lastPositionSeconds:
+          lastPositionSeconds > 0
+            ? lastPositionSeconds
+            : sql`${lessonWatch.lastPositionSeconds}`,
         updatedAt: now,
       },
     });
