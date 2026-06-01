@@ -122,7 +122,7 @@ progressRoutes.post("/api/progress/:lessonId", requireAuth, async (c) => {
 });
 
 // Watch-time / retenční tracking — volá player.js heartbeat (fetch / sendBeacon).
-// Tělo: { maxSegment, watchedSeconds }. Idempotentní upsert (posun jen nahoru).
+// Tělo: { maxSegment, watchedSeconds, positionSeconds }. Upsert: segment/watched jen nahoru, pozice se přepisuje.
 progressRoutes.post("/api/watch/:lessonId", requireAuth, async (c) => {
   const user = c.get("user")!;
   const lessonId = parseInt(c.req.param("lessonId"), 10);
