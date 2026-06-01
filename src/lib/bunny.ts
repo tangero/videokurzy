@@ -16,5 +16,7 @@ export function generateSignedEmbedUrl(
     .update(hashableBase)
     .digest("hex");
 
-  return `${url}?token=${token}&expires=${expires}`;
+  // autoplay=false: video se po načtení stránky NEspouští automaticky
+  // (Bunny default je sice false, ale nastavujeme explicitně pro jistotu).
+  return `${url}?token=${token}&expires=${expires}&autoplay=false`;
 }
