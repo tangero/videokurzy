@@ -76,6 +76,23 @@ export async function recordWatch(
 }
 
 /**
+ * Explicitně vynuluje uloženou pozici přehrávání (akce uživatele „přehrát od
+ * začátku"). Na rozdíl od heartbeatu, který nulu ignoruje (zero-guard), tohle
+ * pozici záměrně přepíše na 0. Ostatní metriky (maxSegment, watchedSeconds)
+ * nechává beze změny.
+ */
+export async function resetWatchPosition(
+  db: DrizzleD1Database,
+  userId: string,
+  lessonId: number
+): Promise<void> {
+  await db
+    .update(lessonWatch)
+    .set({ lastPositionSeconds: 0 })
+    .where(and(eq(lessonWatch.userId, userId), eq(lessonWatch.lessonId, lessonId)));
+}
+
+/**
  * Retenční křivka lekce: pole délky WATCH_SEGMENTS, kde index s = počet diváků,
  * kteří dosáhli segment s (tj. maxSegment >= s). Segment 0 = kolik vůbec spustilo.
  */
