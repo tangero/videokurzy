@@ -149,7 +149,7 @@ export const WatchPage: FC<WatchProps> = ({
                 </div>
               )}
               {embedUrl && resumePosition != null ? (
-                <div id="resume-overlay" class="resume-overlay">
+                <div id="resume-overlay" class="resume-overlay" role="dialog" aria-modal="true" aria-label="Pokračovat ve sledování">
                   <div class="resume-card">
                     <span class="resume-eyebrow">Minule v {formatDuration(resumePosition)}</span>
                     <button type="button" id="resume-continue" class="btn">
