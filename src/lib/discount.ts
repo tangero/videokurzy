@@ -46,7 +46,7 @@ export type DiscountStage =
 export type AppliedDiscount = {
   percent: number;
   code: string | null;
-  source: "auto" | "code";
+  source: "auto" | "code" | "invite";
 };
 
 export type InviteDiscount = {
@@ -105,8 +105,19 @@ export async function resolveCheckoutDiscount(
   db: Db,
   settings: DiscountSettings,
   providedCode: string | null,
+  inviteToken: string | null = null,
   now = new Date(),
 ): Promise<AppliedDiscount | null> {
+  // Invite token má vždy přednost a funguje i když je globální sleva vypnutá.
+  const invite = await resolveInviteDiscount(db, inviteToken, now);
+  if (invite) {
+    return {
+      percent: invite.percent,
+      code: `invite:${invite.token}`,
+      source: "invite",
+    };
+  }
+
   const stage = await getDiscountState(db, settings, now);
   const normalizedCode = providedCode?.trim() || null;
   const codeMatches = !!(

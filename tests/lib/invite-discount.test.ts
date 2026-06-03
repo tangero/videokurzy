@@ -7,6 +7,7 @@ import {
   resolveInviteDiscount,
   consumeInviteToken,
 } from "../../src/lib/discount";
+import { resolveCheckoutDiscount, type DiscountSettings } from "../../src/lib/discount";
 
 const NOW = new Date("2026-06-03T10:00:00.000Z");
 
@@ -92,5 +93,64 @@ describe("consumeInviteToken", () => {
       .where(eq(discountInvite.token, "tok-c"));
     expect(row.usedByPurchaseId).toBe(555);
     expect(row.usedAt).not.toBeNull();
+  });
+});
+
+describe("resolveCheckoutDiscount with invite", () => {
+  const NOW2 = new Date("2026-06-03T10:00:00.000Z");
+  const offSettings: DiscountSettings = {
+    active: false,
+    percent: 0,
+    limit: 0,
+    code: "",
+    codeExpiresAt: null,
+    label: "",
+  };
+
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM discount_invite");
+    await env.DB.exec("DELETE FROM purchase");
+  });
+
+  it("applies invite discount even when global discount is off", async () => {
+    const db = drizzle(env.DB);
+    await db.insert(discountInvite).values({
+      token: "inv-1",
+      email: "x@y.cz",
+      percent: 50,
+      label: "Osobní sleva",
+      createdAt: NOW2,
+    });
+
+    const r = await resolveCheckoutDiscount(db, offSettings, null, "inv-1", NOW2);
+    expect(r).toEqual({ percent: 50, code: "invite:inv-1", source: "invite" });
+  });
+
+  it("invite takes precedence over an active global auto discount", async () => {
+    const db = drizzle(env.DB);
+    await db.insert(discountInvite).values({
+      token: "inv-2",
+      email: "x@y.cz",
+      percent: 50,
+      createdAt: NOW2,
+    });
+    const autoSettings: DiscountSettings = {
+      active: true,
+      percent: 30,
+      limit: 100,
+      code: "",
+      codeExpiresAt: null,
+      label: "Zaváděcí",
+    };
+
+    const r = await resolveCheckoutDiscount(db, autoSettings, null, "inv-2", NOW2);
+    expect(r?.source).toBe("invite");
+    expect(r?.percent).toBe(50);
+  });
+
+  it("falls back to global logic when invite token is invalid", async () => {
+    const db = drizzle(env.DB);
+    const r = await resolveCheckoutDiscount(db, offSettings, null, "nonexistent", NOW2);
+    expect(r).toBeNull();
   });
 });
