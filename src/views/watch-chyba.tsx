@@ -2,12 +2,14 @@ import type { FC } from "hono/jsx";
 import { WatchPage } from "./watch";
 
 // DEMO CHYBA pro výuku (Claude Code):
-// Stránka se vyrenderuje, ale je viditelně rozbitá — "odznak" s názvem modulu
-// zůstane viset na textu „Načítání modulu…", protože klientský <script> spadne na
+// Stránka se vyrenderuje, ale v hlavičce lekce zůstane "název modulu" viset na
+// textu „Načítání modulu…", protože klientský <script> spadne na
 //   TypeError: Cannot read properties of undefined (reading 'title')
 // kvůli chybějícímu optional chainingu při čtení `lessonData.module.title`.
 // `lessonData.module` je totiž `undefined`. Chyba je vidět v konzoli prohlížeče
 // (DevTools → Console). Oprava: `lessonData.module?.title` (viz komentář ve scriptu).
+
+const MODULE_TITLE_ID = "module-title-badge";
 
 // Props zrcadlí WatchPage; navíc předáváme data pro klientský script.
 type WatchChybaProps = Parameters<typeof WatchPage>[0] & {
@@ -20,22 +22,19 @@ type WatchChybaProps = Parameters<typeof WatchPage>[0] & {
 };
 
 export const WatchChybaPage: FC<WatchChybaProps> = (props) => {
-  const { lessonClientData, ...watchProps } = props;
+  const { lessonClientData, lesson, ...rest } = props;
   const dataJson = JSON.stringify(lessonClientData);
 
   return (
     <>
-      <WatchPage {...watchProps} />
-
-      {/* Viditelně rozbitý prvek: má ho doplnit klientský script, ale ten spadne. */}
-      <div
-        style="max-width:960px;margin:0 auto;padding:12px 24px;font-family:var(--font-mono);font-size:0.85rem;color:var(--muted)"
-      >
-        Modul:{" "}
-        <span id="module-title-badge" style="font-weight:600;color:var(--accent-2)">
-          Načítání modulu…
-        </span>
-      </div>
+      {/* Badge s názvem modulu v hlavičce začíná na placeholderu „Načítání
+          modulu…". Klientský script ho má doplnit, ale spadne — placeholder
+          tak zůstane viditelně viset hned nahoře vedle nadpisu lekce. */}
+      <WatchPage
+        {...rest}
+        lesson={{ ...lesson, moduleTitle: "Načítání modulu…" }}
+        moduleTitleId={MODULE_TITLE_ID}
+      />
 
       {/* DEMO CHYBA: klientský script spadne na chybějícím `?.`. */}
       <script
@@ -43,7 +42,7 @@ export const WatchChybaPage: FC<WatchChybaProps> = (props) => {
           __html: `
             (function () {
               var lessonData = ${dataJson};
-              var badge = document.getElementById('module-title-badge');
+              var badge = document.getElementById('${MODULE_TITLE_ID}');
 
               // DEMO CHYBA: chybí optional chaining (\`?.\`). \`lessonData.module\`
               // je undefined, takže čtení \`.title\` vyhodí v konzoli prohlížeče:

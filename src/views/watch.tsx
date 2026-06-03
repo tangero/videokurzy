@@ -41,6 +41,10 @@ interface WatchProps {
   nearbyLessons?: SidebarLesson[];
   lessonGlobalIndex?: number;
   resumePosition?: number | null;
+  // Volitelné `id` pro span s názvem modulu v hlavičce. Defaultně undefined
+  // (běžné /watch/ ho nepoužívá). Slouží jen k zacílení z klientského scriptu
+  // na demo routě /watch-chyba/.
+  moduleTitleId?: string;
 }
 
 function formatDuration(seconds: number): string {
@@ -103,6 +107,7 @@ export const WatchPage: FC<WatchProps> = ({
   nearbyLessons,
   lessonGlobalIndex,
   resumePosition,
+  moduleTitleId,
 }) => {
   const idx = lessonGlobalIndex ?? 0;
   const moduleNum = String(lesson.moduleId).padStart(2, "0");
@@ -166,7 +171,7 @@ export const WatchPage: FC<WatchProps> = ({
               <div class="hstack" style="margin-bottom:8px;gap:8px">
                 <span class="pill">modul {moduleNum}</span>
                 {lesson.moduleTitle && (
-                  <span class="mono muted">{lesson.moduleTitle}</span>
+                  <span class="mono muted" id={moduleTitleId}>{lesson.moduleTitle}</span>
                 )}
               </div>
               <h1
