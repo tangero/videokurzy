@@ -179,20 +179,20 @@ export async function resolveInviteDiscount(
   const normalized = token?.trim() || null;
   if (!normalized) return null;
 
+  // Filtr na nevyužitý token (usedAt IS NULL) řešíme rovnou v dotazu — sjednocuje
+  // záměr s consumeInviteToken a vrací použitý token jako "neexistující".
   const row = await db
     .select({
       token: discountInvite.token,
       percent: discountInvite.percent,
       label: discountInvite.label,
       expiresAt: discountInvite.expiresAt,
-      usedAt: discountInvite.usedAt,
     })
     .from(discountInvite)
-    .where(eq(discountInvite.token, normalized))
+    .where(and(eq(discountInvite.token, normalized), isNull(discountInvite.usedAt)))
     .get();
 
   if (!row) return null;
-  if (row.usedAt) return null;
   if (row.percent <= 0) return null;
   if (row.expiresAt && row.expiresAt.getTime() <= now.getTime()) return null;
 
