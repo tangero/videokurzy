@@ -6,13 +6,14 @@ import { lesson, module, progress, lessonWatch } from "../db/schema";
 import { shouldResume } from "../lib/watch-stats";
 import { hasAccess } from "../lib/access";
 import { generateSignedEmbedUrl } from "../lib/bunny";
-import { WatchPage } from "../views/watch";
+import { WatchChybaPage } from "../views/watch-chyba";
 
-// DEMO CHYBA: tato routa záměrně padá na
+// DEMO ROUTA pro výuku (Claude Code).
+// Stránka se vyrenderuje, ale je viditelně rozbitá: "odznak" s názvem modulu
+// zůstane na textu „Načítání modulu…", protože klientský <script> spadne na
 //   TypeError: Cannot read properties of undefined (reading 'title')
-// kvůli chybějícímu optional chainingu (`?.`) při čtení názvu modulu.
-// Slouží jako učební ukázka v kurzu — NEPOUŽÍVAT v produkci.
-// Původní funkční verze je v `watch.tsx` na URL /watch/:slug.
+// Chyba je vidět v konzoli prohlížeče (DevTools → Console). Logika i oprava
+// jsou ve view `views/watch-chyba.tsx`. Funkční verze: watch.tsx (/watch/:slug).
 
 const watchChyba = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -114,12 +115,10 @@ watchChyba.get("/watch-chyba/:slug", async (c) => {
           .from(progress)
           .where(eq(progress.userId, user.id))
       : Promise.resolve([] as { lessonId: number; completed: boolean }[]),
-    // DEMO CHYBA: filtrujeme na neexistující modul (id = -1), takže `moduleRow`
-    // je vždy prázdné pole a `moduleRow[0]` je `undefined`.
     db
       .select({ title: module.title })
       .from(module)
-      .where(eq(module.id, -1))
+      .where(eq(module.id, found.moduleId))
       .limit(1),
     user
       ? db
@@ -167,13 +166,9 @@ watchChyba.get("/watch-chyba/:slug", async (c) => {
   const isLastFreeLesson = found.isFree && (!nextLesson || !nextLesson.isFree);
 
   return c.html(
-    <WatchPage
+    <WatchChybaPage
       user={user ?? { name: null, email: "" }}
-      // DEMO CHYBA: chybí optional chaining (`?.`). `moduleRow[0]` je undefined,
-      // takže čtení `.title` vyhodí:
-      //   TypeError: Cannot read properties of undefined (reading 'title')
-      // Správně má být: moduleRow[0]?.title (viz watch.tsx).
-      lesson={{ ...found, moduleTitle: moduleRow[0].title }}
+      lesson={{ ...found, moduleTitle: moduleRow[0]?.title }}
       chapters={parseLessonChapters(found.chapters)}
       bodyMarkdown={found.bodyMarkdown}
       embedUrl={embedUrl}
@@ -186,6 +181,10 @@ watchChyba.get("/watch-chyba/:slug", async (c) => {
       isLastFreeLesson={isLastFreeLesson}
       nearbyLessons={nearbyLessons}
       lessonGlobalIndex={globalIdx}
+      // DEMO CHYBA: do klientských dat záměrně NEdáváme `module`, takže
+      // v prohlížeči je `lessonData.module === undefined`. Klientský script
+      // ve view pak spadne na `lessonData.module.title` (chybí `?.`).
+      lessonClientData={{ id: found.id, title: found.title }}
     />
   );
 });
