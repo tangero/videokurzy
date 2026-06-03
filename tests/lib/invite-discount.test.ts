@@ -6,8 +6,9 @@ import { discountInvite } from "../../src/db/schema";
 import {
   resolveInviteDiscount,
   consumeInviteToken,
+  resolveCheckoutDiscount,
+  type DiscountSettings,
 } from "../../src/lib/discount";
-import { resolveCheckoutDiscount, type DiscountSettings } from "../../src/lib/discount";
 
 const NOW = new Date("2026-06-03T10:00:00.000Z");
 
@@ -97,7 +98,6 @@ describe("consumeInviteToken", () => {
 });
 
 describe("resolveCheckoutDiscount with invite", () => {
-  const NOW2 = new Date("2026-06-03T10:00:00.000Z");
   const offSettings: DiscountSettings = {
     active: false,
     percent: 0,
@@ -119,10 +119,10 @@ describe("resolveCheckoutDiscount with invite", () => {
       email: "x@y.cz",
       percent: 50,
       label: "Osobní sleva",
-      createdAt: NOW2,
+      createdAt: NOW,
     });
 
-    const r = await resolveCheckoutDiscount(db, offSettings, null, "inv-1", NOW2);
+    const r = await resolveCheckoutDiscount(db, offSettings, null, "inv-1", NOW);
     expect(r).toEqual({ percent: 50, code: "invite:inv-1", source: "invite" });
   });
 
@@ -132,7 +132,7 @@ describe("resolveCheckoutDiscount with invite", () => {
       token: "inv-2",
       email: "x@y.cz",
       percent: 50,
-      createdAt: NOW2,
+      createdAt: NOW,
     });
     const autoSettings: DiscountSettings = {
       active: true,
@@ -143,14 +143,14 @@ describe("resolveCheckoutDiscount with invite", () => {
       label: "Zaváděcí",
     };
 
-    const r = await resolveCheckoutDiscount(db, autoSettings, null, "inv-2", NOW2);
+    const r = await resolveCheckoutDiscount(db, autoSettings, null, "inv-2", NOW);
     expect(r?.source).toBe("invite");
     expect(r?.percent).toBe(50);
   });
 
   it("falls back to global logic when invite token is invalid", async () => {
     const db = drizzle(env.DB);
-    const r = await resolveCheckoutDiscount(db, offSettings, null, "nonexistent", NOW2);
+    const r = await resolveCheckoutDiscount(db, offSettings, null, "nonexistent", NOW);
     expect(r).toBeNull();
   });
 });

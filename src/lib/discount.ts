@@ -11,7 +11,7 @@
 // nedorazí včas. Drobný overflow při race condition je akceptovatelný.
 
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { purchase, discountInvite } from "../db/schema";
 
 type Db = ReturnType<typeof drizzle>;
