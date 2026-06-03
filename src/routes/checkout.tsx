@@ -197,15 +197,16 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
 
   if (!email || !email.includes("@")) {
     const db = drizzle(c.env.DB);
+    const invite = inviteToken ? await resolveInviteDiscount(db, inviteToken) : null;
     const view = await checkoutSelectView(db, "individual", {
       error: "Zadejte platný email.",
       prefillEmail: email,
       prefillCode: promoCode,
       prefillCompany: billingToPrefill(billing),
       prefillBilling: !!billing,
-      inviteToken: inviteToken ?? undefined,
-      invitePercent: inviteToken ? (await resolveInviteDiscount(db, inviteToken))?.percent : undefined,
-      inviteLabel: inviteToken ? (await resolveInviteDiscount(db, inviteToken))?.label : undefined,
+      inviteToken: invite ? invite.token : undefined,
+      invitePercent: invite?.percent,
+      inviteLabel: invite?.label,
     });
     return c.html(<Layout title="Roční přístup">{view}</Layout>, 400);
   }
@@ -250,6 +251,7 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const billing = parseBilling(form);
   const db = drizzle(c.env.DB);
   const renderError = async (msg: string) => {
+    const invite = inviteToken ? await resolveInviteDiscount(db, inviteToken) : null;
     const view = await checkoutSelectView(db, "organization", {
       error: msg,
       prefillEmail: email,
@@ -257,9 +259,9 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
       prefillCode: promoCode,
       prefillCompany: billingToPrefill(billing),
       prefillBilling: !!billing,
-      inviteToken: inviteToken ?? undefined,
-      invitePercent: inviteToken ? (await resolveInviteDiscount(db, inviteToken))?.percent : undefined,
-      inviteLabel: inviteToken ? (await resolveInviteDiscount(db, inviteToken))?.label : undefined,
+      inviteToken: invite ? invite.token : undefined,
+      invitePercent: invite?.percent,
+      inviteLabel: invite?.label,
     });
     return c.html(<Layout title="Firemní licence">{view}</Layout>, 400);
   };
