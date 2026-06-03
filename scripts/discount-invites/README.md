@@ -37,7 +37,7 @@ Nejdřív dry-run a malý limit:
 
 ```bash
 node scripts/discount-invites/send.mjs --csv scripts/discount-invites/out/invites.csv \
-  --from "Videokurzy <andrea@vibecoding.cz>" --dry-run --limit 3
+  --from "Videokurzy <andrea@vibecoding.cz>" --signature "Tým vibecoding.cz" --dry-run --limit 3
 ```
 
 Pak ostře:
@@ -46,10 +46,13 @@ Pak ostře:
 RESEND_API_KEY=re_xxx node scripts/discount-invites/send.mjs \
   --csv scripts/discount-invites/out/invites.csv \
   --from "Videokurzy <andrea@vibecoding.cz>" \
-  --subject "Sleva 50 % na videokurz Claude Code"
+  --subject "Sleva 50 % na videokurz Claude Code" \
+  --signature "Tým vibecoding.cz"
 ```
 
-Volitelně `--reply-to "andrea@vibecoding.cz"` a `--limit N`.
+Volitelně `--reply-to "andrea@vibecoding.cz"` a `--limit N`. Podpis v patičce
+e-mailu řídí `--signature` (výchozí `"Tým vibecoding.cz"`) — ať sedí s `--from`.
+`--limit N` počítá úspěšně odeslané e-maily (ne pokusy).
 
 Pozn.: ostrý `RESEND_API_KEY` žije jen v Cloudflare; sem se dodává za běhu. Tvar
 volání Resend API odpovídá `src/lib/email.ts`.

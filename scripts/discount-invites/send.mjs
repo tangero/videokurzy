@@ -6,6 +6,7 @@
 //     --csv scripts/discount-invites/out/invites.csv \
 //     --from "Videokurzy <andrea@vibecoding.cz>" \
 //     --subject "Sleva 50 % na videokurz Claude Code" \
+//     --signature "Tým vibecoding.cz" \
 //     [--reply-to "andrea@vibecoding.cz"] [--dry-run] [--limit 5]
 //
 // CSV musí mít hlavičku: email,token,url
@@ -26,6 +27,8 @@ const from = arg("from");
 const subject = arg("subject", "Sleva 50 % na videokurz Claude Code");
 const replyToRaw = arg("reply-to", null);
 const replyTo = replyToRaw && replyToRaw !== true ? replyToRaw : null;
+const signatureRaw = arg("signature", "Tým vibecoding.cz");
+const signature = signatureRaw === true ? "Tým vibecoding.cz" : signatureRaw;
 const dryRun = process.argv.includes("--dry-run");
 const limitRaw = arg("limit", null);
 const limit = limitRaw && limitRaw !== true ? parseInt(limitRaw, 10) : Infinity;
@@ -47,7 +50,7 @@ if (!header || !header.startsWith("email,token,url")) {
   process.exit(1);
 }
 
-function htmlBody(url) {
+function htmlBody(url, signature) {
   return `<!doctype html><html lang="cs"><body style="font-family:system-ui,sans-serif;line-height:1.6;color:#1f2937">
   <p>Ahoj,</p>
   <p>jako absolventovi placeného kurzu na vibecoding.cz pro tebe mám <strong>osobní slevu 50 %</strong>
@@ -55,11 +58,12 @@ function htmlBody(url) {
   <p>Sleva se aktivuje automaticky přes tvůj osobní odkaz — nic nemusíš opisovat:</p>
   <p><a href="${url}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Získat kurz se slevou 50 %</a></p>
   <p style="font-size:13px;color:#6b7280">Odkaz je osobní a jednorázový. Nabídka platí jen do uvedeného data.</p>
-  <p>Patrick Zandl</p>
+  <p>${signature}</p>
   </body></html>`;
 }
 
 let sent = 0;
+let failed = 0;
 for (const line of lines) {
   if (sent >= limit) break;
   const [email, , url] = line.split(",");
@@ -71,7 +75,7 @@ for (const line of lines) {
     continue;
   }
 
-  const payload = { from, to: [email], subject, html: htmlBody(url) };
+  const payload = { from, to: [email], subject, html: htmlBody(url, signature) };
   if (replyTo) payload.reply_to = replyTo;
 
   const res = await fetch("https://api.resend.com/emails", {
@@ -84,6 +88,7 @@ for (const line of lines) {
   });
   if (!res.ok) {
     console.error(`CHYBA ${email}: ${res.status} ${await res.text()}`);
+    failed++;
   } else {
     console.log(`OK ${email}`);
     sent++;
@@ -91,4 +96,4 @@ for (const line of lines) {
   await new Promise((r) => setTimeout(r, 600));
 }
 
-console.log(`\nHotovo. ${dryRun ? "Dry-run" : "Odesláno"}: ${sent}.`);
+console.log(`\nHotovo. ${dryRun ? "Dry-run" : "Odesláno"}: ${sent}.${failed ? ` Selhalo: ${failed}.` : ""}`);
