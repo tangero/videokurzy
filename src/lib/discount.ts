@@ -11,8 +11,8 @@
 // nedorazí včas. Drobný overflow při race condition je akceptovatelný.
 
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, gt, sql } from "drizzle-orm";
-import { purchase } from "../db/schema";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { purchase, discountInvite } from "../db/schema";
 
 type Db = ReturnType<typeof drizzle>;
 
@@ -46,7 +46,13 @@ export type DiscountStage =
 export type AppliedDiscount = {
   percent: number;
   code: string | null;
-  source: "auto" | "code";
+  source: "auto" | "code" | "invite";
+};
+
+export type InviteDiscount = {
+  percent: number;
+  token: string;
+  label: string | null;
 };
 
 /** Načte aktuální stav slevy podle settings a počtu použitých slotů. */
@@ -99,8 +105,19 @@ export async function resolveCheckoutDiscount(
   db: Db,
   settings: DiscountSettings,
   providedCode: string | null,
+  inviteToken: string | null = null,
   now = new Date(),
 ): Promise<AppliedDiscount | null> {
+  // Invite token má vždy přednost a funguje i když je globální sleva vypnutá.
+  const invite = await resolveInviteDiscount(db, inviteToken, now);
+  if (invite) {
+    return {
+      percent: invite.percent,
+      code: `invite:${invite.token}`,
+      source: "invite",
+    };
+  }
+
   const stage = await getDiscountState(db, settings, now);
   const normalizedCode = providedCode?.trim() || null;
   const codeMatches = !!(
@@ -147,4 +164,55 @@ function isCodeActive(settings: DiscountSettings, now: Date): boolean {
   if (!settings.code.trim()) return false;
   if (!settings.codeExpiresAt) return true;
   return settings.codeExpiresAt.getTime() > now.getTime();
+}
+
+/**
+ * Načte invite slevu pro daný token, pokud je platná.
+ * Platný = existuje, není využitý (usedAt IS NULL) a buď nemá expiraci,
+ * nebo expirace ještě neuplynula.
+ */
+export async function resolveInviteDiscount(
+  db: Db,
+  token: string | null,
+  now = new Date(),
+): Promise<InviteDiscount | null> {
+  const normalized = token?.trim() || null;
+  if (!normalized) return null;
+
+  // Filtr na nevyužitý token (usedAt IS NULL) řešíme rovnou v dotazu — sjednocuje
+  // záměr s consumeInviteToken a vrací použitý token jako "neexistující".
+  const row = await db
+    .select({
+      token: discountInvite.token,
+      percent: discountInvite.percent,
+      label: discountInvite.label,
+      expiresAt: discountInvite.expiresAt,
+    })
+    .from(discountInvite)
+    .where(and(eq(discountInvite.token, normalized), isNull(discountInvite.usedAt)))
+    .get();
+
+  if (!row) return null;
+  if (row.percent <= 0) return null;
+  if (row.expiresAt && row.expiresAt.getTime() <= now.getTime()) return null;
+
+  return { percent: row.percent, token: row.token, label: row.label };
+}
+
+/**
+ * Spotřebuje invite token — atomicky a idempotentně. Označí usedAt + purchaseId
+ * jen pokud token ještě nebyl využit. Vrací true, když ho zrovna spotřeboval.
+ */
+export async function consumeInviteToken(
+  db: Db,
+  token: string,
+  purchaseId: number,
+  now = new Date(),
+): Promise<boolean> {
+  const updated = await db
+    .update(discountInvite)
+    .set({ usedAt: now, usedByPurchaseId: purchaseId })
+    .where(and(eq(discountInvite.token, token), isNull(discountInvite.usedAt)))
+    .returning({ token: discountInvite.token });
+  return updated.length > 0;
 }

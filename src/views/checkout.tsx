@@ -26,6 +26,7 @@ export const CheckoutSelect: FC<{
   discountPercent?: number;
   discountLabel?: string;
   showCodeInput?: boolean;
+  inviteToken?: string;
 }> = ({
   type,
   error,
@@ -39,6 +40,7 @@ export const CheckoutSelect: FC<{
   discountPercent = 0,
   discountLabel,
   showCodeInput = false,
+  inviteToken,
 }) => {
   const isOrg = type === "organization";
   const original = priceOriginal ?? (isOrg ? PRICE_ORGANIZATION : PRICE_INDIVIDUAL);
@@ -79,6 +81,9 @@ export const CheckoutSelect: FC<{
         )}
 
         <form method="post" hx-boost="false" class="space-y-5">
+          {inviteToken && (
+            <input type="hidden" name="inviteToken" value={inviteToken} />
+          )}
           <div>
             <label for="email" class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
             <input

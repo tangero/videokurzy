@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
+import { consumeInviteToken } from "./lib/discount";
 import { exportPurchaseInvoice, type FakturoidEnv } from "./lib/fakturoid";
 import type { Env } from "./types";
 
@@ -198,6 +199,21 @@ async function handleCheckoutCompleted(
         amount: paidAmountCzk,
         billing,
       });
+    }
+  }
+
+  // Invite token spotřebujeme až po aktivaci nákupu. purchase.id dohledáme podle
+  // stripePaymentId (insert je onConflictDoNothing bez returning). Idempotentní —
+  // duplicitní webhook token znovu nespálí.
+  const inviteToken = metadata.inviteToken;
+  if (inviteToken) {
+    const [createdPurchase] = await db
+      .select({ id: purchase.id })
+      .from(purchase)
+      .where(eq(purchase.stripePaymentId, sessionId))
+      .limit(1);
+    if (createdPurchase) {
+      await consumeInviteToken(db, inviteToken, createdPurchase.id);
     }
   }
 }

@@ -34,6 +34,8 @@ import {
   applyDiscount,
   getDiscountState,
   resolveCheckoutDiscount,
+  resolveInviteDiscount,
+  consumeInviteToken,
   type DiscountSettings,
   type AppliedDiscount,
 } from "../lib/discount";
@@ -174,7 +176,13 @@ function billingToStripeMetadata(b: BillingData | null): Record<string, string> 
 
 checkoutRoutes.get("/checkout/individual", async (c) => {
   const db = drizzle(c.env.DB);
-  const view = await checkoutSelectView(db, "individual", {});
+  const inviteToken = c.req.query("invite") ?? undefined;
+  const invite = await resolveInviteDiscount(db, inviteToken ?? null);
+  const view = await checkoutSelectView(db, "individual", {
+    inviteToken: invite ? invite.token : undefined,
+    inviteLabel: invite?.label,
+    invitePercent: invite?.percent,
+  });
   return c.html(<Layout title="Roční přístup — kurzy.vibecoding.cz">{view}</Layout>);
 });
 
@@ -184,16 +192,21 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const paymentMethod = String(form.get("paymentMethod") ?? "stripe");
   const extendedDeadline = form.get("extendedDeadline") === "1";
   const promoCode = String(form.get("promoCode") ?? "").trim();
+  const inviteToken = String(form.get("inviteToken") ?? "").trim() || null;
   const billing = parseBilling(form);
 
   if (!email || !email.includes("@")) {
     const db = drizzle(c.env.DB);
+    const invite = inviteToken ? await resolveInviteDiscount(db, inviteToken) : null;
     const view = await checkoutSelectView(db, "individual", {
       error: "Zadejte platný email.",
       prefillEmail: email,
       prefillCode: promoCode,
       prefillCompany: billingToPrefill(billing),
       prefillBilling: !!billing,
+      inviteToken: invite ? invite.token : undefined,
+      invitePercent: invite?.percent,
+      inviteLabel: invite?.label,
     });
     return c.html(<Layout title="Roční přístup">{view}</Layout>, 400);
   }
@@ -201,7 +214,7 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const db = drizzle(c.env.DB);
   const prices = await getPrices(db);
   const settings = await getDiscountSettings(db);
-  const discount = await resolveCheckoutDiscount(db, settings, promoCode || null);
+  const discount = await resolveCheckoutDiscount(db, settings, promoCode || null, inviteToken);
   const finalPrice = discount ? applyDiscount(prices.individual, discount.percent) : prices.individual;
   if (paymentMethod === "stripe") {
     return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount, billing);
@@ -216,7 +229,13 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
 
 checkoutRoutes.get("/checkout/organization", async (c) => {
   const db = drizzle(c.env.DB);
-  const view = await checkoutSelectView(db, "organization", {});
+  const inviteToken = c.req.query("invite") ?? undefined;
+  const invite = await resolveInviteDiscount(db, inviteToken ?? null);
+  const view = await checkoutSelectView(db, "organization", {
+    inviteToken: invite ? invite.token : undefined,
+    inviteLabel: invite?.label,
+    invitePercent: invite?.percent,
+  });
   return c.html(<Layout title="Firemní licence — kurzy.vibecoding.cz">{view}</Layout>);
 });
 
@@ -227,10 +246,12 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const paymentMethod = String(form.get("paymentMethod") ?? "stripe");
   const extendedDeadline = form.get("extendedDeadline") === "1";
   const promoCode = String(form.get("promoCode") ?? "").trim();
+  const inviteToken = String(form.get("inviteToken") ?? "").trim() || null;
 
   const billing = parseBilling(form);
   const db = drizzle(c.env.DB);
   const renderError = async (msg: string) => {
+    const invite = inviteToken ? await resolveInviteDiscount(db, inviteToken) : null;
     const view = await checkoutSelectView(db, "organization", {
       error: msg,
       prefillEmail: email,
@@ -238,6 +259,9 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
       prefillCode: promoCode,
       prefillCompany: billingToPrefill(billing),
       prefillBilling: !!billing,
+      inviteToken: invite ? invite.token : undefined,
+      invitePercent: invite?.percent,
+      inviteLabel: invite?.label,
     });
     return c.html(<Layout title="Firemní licence">{view}</Layout>, 400);
   };
@@ -248,7 +272,7 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
 
   const prices = await getPrices(db);
   const settings = await getDiscountSettings(db);
-  const discount = await resolveCheckoutDiscount(db, settings, promoCode || null);
+  const discount = await resolveCheckoutDiscount(db, settings, promoCode || null, inviteToken);
   const finalPrice = discount ? applyDiscount(prices.organization, discount.percent) : prices.organization;
   if (paymentMethod === "stripe") {
     return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount, billing);
@@ -291,18 +315,34 @@ async function checkoutSelectView(
       contactName?: string;
     };
     prefillBilling?: boolean;
+    inviteToken?: string;
+    inviteLabel?: string | null;
+    invitePercent?: number;
   },
 ) {
   const prices = await getPrices(db);
   const settings = await getDiscountSettings(db);
   const stage = await getDiscountState(db, settings);
   const priceOriginal = type === "organization" ? prices.organization : prices.individual;
-  // Auto sleva ovlivňuje viditelnou cenu rovnou. Code-only stage ukáže input
-  // na kód, ale finální cena se vyhodnotí až při submitu.
-  const priceFinal = stage.kind === "auto"
-    ? applyDiscount(priceOriginal, stage.percent)
+
+  // Invite token (pokud platný) má přednost a určí cenu i popisek rovnou.
+  const hasInvite = !!opts.inviteToken && (opts.invitePercent ?? 0) > 0;
+  const effectivePercent = hasInvite
+    ? (opts.invitePercent ?? 0)
+    : stage.kind === "auto"
+      ? stage.percent
+      : 0;
+  const priceFinal = effectivePercent > 0
+    ? applyDiscount(priceOriginal, effectivePercent)
     : priceOriginal;
-  const showCodeInput = (stage.kind === "auto" && stage.codeActive) || stage.kind === "code-only";
+  const effectiveLabel = hasInvite
+    ? (opts.inviteLabel || "Osobní sleva")
+    : stage.kind === "auto"
+      ? stage.label
+      : undefined;
+  // Promo input ukazujeme jen mimo invite režim.
+  const showCodeInput = !hasInvite && ((stage.kind === "auto" && stage.codeActive) || stage.kind === "code-only");
+
   return (
     <CheckoutSelect
       type={type}
@@ -314,9 +354,10 @@ async function checkoutSelectView(
       prefillBilling={opts.prefillBilling}
       priceOriginal={priceOriginal}
       priceFinal={priceFinal}
-      discountPercent={stage.kind === "auto" ? stage.percent : 0}
-      discountLabel={stage.kind === "auto" ? stage.label : undefined}
+      discountPercent={effectivePercent}
+      discountLabel={effectiveLabel}
       showCodeInput={showCodeInput}
+      inviteToken={opts.inviteToken}
     />
   );
 }
@@ -371,6 +412,9 @@ async function startStripeCheckout(
       ...(domain ? { prefillDomain: domain } : {}),
       ...(discount ? { discountPercent: String(discount.percent) } : {}),
       ...(discount?.code ? { discountCode: discount.code } : {}),
+      ...(discount?.source === "invite" && discount.code
+        ? { inviteToken: discount.code.replace(/^invite:/, "") }
+        : {}),
       ...billingToStripeMetadata(billing),
     },
   });
@@ -681,6 +725,13 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
 
   if (!activated) {
     return c.html(<VerifySuccess email={p.email} />);
+  }
+
+  // Invite token (uložený v discountCode jako "invite:<token>") se spotřebuje
+  // až teď, po napárování platby a aktivaci nákupu.
+  if (p.discountCode?.startsWith("invite:")) {
+    const token = p.discountCode.slice("invite:".length);
+    await consumeInviteToken(db, token, p.id);
   }
 
   c.executionCtx.waitUntil(

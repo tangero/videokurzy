@@ -125,6 +125,25 @@ export const purchase = sqliteTable("purchase", {
     .where(sql`${table.fioTransactionId} IS NOT NULL`),
 ]);
 
+export const discountInvite = sqliteTable("discount_invite", {
+  // Náhodný nanoid() token, nese se v URL jako ?invite=TOKEN.
+  token: text("token").primaryKey(),
+  // Komu byl vystaven — jen evidence, shoda e-mailu se při nákupu nevynucuje.
+  email: text("email").notNull(),
+  percent: integer("percent").notNull(),
+  // Popisek do checkoutu, např. "Osobní sleva pro absolventy".
+  label: text("label"),
+  // NULL = bez expirace; jinak token platí jen do tohoto data.
+  expiresAt: integer("expiresAt", { mode: "timestamp" }),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  // Označení dávky (např. "vibecoding-2026-06") pro reporting.
+  batch: text("batch"),
+  // NULL = nevyužitý; vyplní se při aktivaci zaplaceného nákupu.
+  usedAt: integer("usedAt", { mode: "timestamp" }),
+  // Který purchase token spotřeboval (FK na purchase.id, bez DB constraintu).
+  usedByPurchaseId: integer("usedByPurchaseId"),
+});
+
 // ─── Relations ────────────────────────────────────────────────────
 
 export const courseRelations = relations(course, ({ many }) => ({
