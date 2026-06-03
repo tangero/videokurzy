@@ -17,4 +17,9 @@ describe("generateSignedEmbedUrl — startSeconds", () => {
     const url = generateSignedEmbedUrl("lib1", "vid1", "key1", 4, 0);
     expect(url).not.toContain("&t=");
   });
+
+  it("vždy zapíná nativní ovládání rychlosti přehrávání", () => {
+    const url = generateSignedEmbedUrl("lib1", "vid1", "key1");
+    expect(url).toContain("showSpeed=true");
+  });
 });

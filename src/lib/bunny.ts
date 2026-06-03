@@ -19,7 +19,10 @@ export function generateSignedEmbedUrl(
 
   // autoplay=false: video se po načtení stránky NEspouští automaticky
   // (Bunny default je sice false, ale nastavujeme explicitně pro jistotu).
-  let embed = `${url}?token=${token}&expires=${expires}&autoplay=false`;
+  // showSpeed=true: v nativním přehrávači se zobrazí ovládání rychlosti
+  // přehrávání (Bunny neumí přednastavit výchozí rychlost ani ji měnit přes
+  // Player.js API, jediná cesta je tenhle nativní prvek).
+  let embed = `${url}?token=${token}&expires=${expires}&autoplay=false&showSpeed=true`;
   // t=<vteřiny>: video naběhne na uloženou pozici (resume z lesson_watch).
   if (startSeconds > 0) embed += `&t=${Math.floor(startSeconds)}`;
   return embed;
