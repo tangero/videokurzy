@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { purchase } from "../src/db/schema";
+import { discountInvite, purchase } from "../src/db/schema";
 import {
   handleQueue,
   issueFakturoidInvoiceForTest,
@@ -71,5 +72,54 @@ describe("queue message dispatch", () => {
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  it("consumes invite token after Stripe activation", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.exec("DELETE FROM discount_invite");
+    await env.DB.exec("DELETE FROM purchase");
+    await db.insert(discountInvite).values({
+      token: "q-inv",
+      email: "buyer@example.cz",
+      percent: 50,
+      createdAt: new Date("2026-06-03T10:00:00.000Z"),
+    });
+
+    await handleQueue(
+      {
+        messages: [
+          {
+            body: {
+              type: "checkout.session.completed",
+              data: {
+                id: "cs_test_invite_1",
+                customer_email: "buyer@example.cz",
+                amount_total: 100000,
+                metadata: {
+                  type: "individual",
+                  discountPercent: "50",
+                  discountCode: "invite:q-inv",
+                  inviteToken: "q-inv",
+                },
+              },
+            },
+            ack() {},
+            retry() {},
+          },
+        ],
+      } as never,
+      env as never,
+    );
+
+    const [row] = await db
+      .select()
+      .from(discountInvite)
+      .where(eq(discountInvite.token, "q-inv"));
+    expect(row.usedAt).not.toBeNull();
+    const [p] = await db
+      .select()
+      .from(purchase)
+      .where(eq(purchase.stripePaymentId, "cs_test_invite_1"));
+    expect(row.usedByPurchaseId).toBe(p.id);
   });
 });
