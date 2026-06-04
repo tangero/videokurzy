@@ -281,7 +281,7 @@ export type AdminUserDetail = {
     id: number;
     email: string;
     type: AdminAccess;
-    paymentMethod: "stripe" | "fio";
+    paymentMethod: "stripe" | "fio" | "creditas";
     status: "pending" | "active" | "expired" | "refunded";
     expiresAt: Date;
     createdAt: Date;

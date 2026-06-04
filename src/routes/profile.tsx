@@ -9,6 +9,7 @@ import {
   normalizeEmail,
 } from "../lib/user-emails";
 import { logIdentityEvent } from "../lib/audit";
+import { logServerError } from "../lib/errors";
 import { createAuth } from "../lib/auth";
 import { isAllowedCallback } from "../lib/callback-allowlist";
 import { user as userTable } from "../db/auth-schema";
@@ -100,7 +101,12 @@ profile.patch("/api/profile/emails", async (c) => {
       details: { email: normalizeEmail(body.email) },
     });
   } catch (err) {
-    return c.json({ error: (err as Error).message }, 400);
+    // Neleakovat interní message (může nést email/stav) — zaloguj a vrať obecný kód.
+    logServerError("profile/emails", "promote_failed", {
+      userId: user.id,
+      message: (err as Error)?.message,
+    });
+    return c.json({ error: "promote_failed" }, 400);
   }
   return c.json({ ok: true });
 });
@@ -121,7 +127,12 @@ profile.delete("/api/profile/emails", async (c) => {
       details: { email: normalizeEmail(body.email) },
     });
   } catch (err) {
-    return c.json({ error: (err as Error).message }, 400);
+    // Neleakovat interní message (může nést email/stav) — zaloguj a vrať obecný kód.
+    logServerError("profile/emails", "remove_failed", {
+      userId: user.id,
+      message: (err as Error)?.message,
+    });
+    return c.json({ error: "remove_failed" }, 400);
   }
   return c.json({ ok: true });
 });

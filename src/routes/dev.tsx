@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import type { Env, Variables } from "../types";
@@ -9,16 +10,23 @@ import { Layout } from "../views/layout";
 
 const devRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-/** Guard: pouze když FIO_API_TOKEN === "dev". Nikdy neběhá v produkci. */
+type DevContext = Context<{ Bindings: Env; Variables: Variables }>;
+
+/** Guard: pouze v dev režimu (FIO i Creditas token == "dev"). Nikdy v produkci. */
 devRoutes.use("/dev/*", async (c, next) => {
-  if (c.env.FIO_API_TOKEN !== "dev") {
+  const isDev = c.env.FIO_API_TOKEN === "dev" || (c.env.CREDITAS_API_TOKEN ?? "") === "dev";
+  if (!isDev) {
     return c.text("Not available in production.", 404);
   }
   await next();
 });
 
-devRoutes.get("/dev/fio/pay/:vs", async (c) => {
-  const vs = c.req.param("vs");
+/**
+ * Mock přijetí převodové platby. Uloží transakci do sloupce podle banky
+ * objednávky (creditasTransactionId vs fioTransactionId) a aktivuje přístup.
+ */
+async function devMarkPaid(c: DevContext) {
+  const vs = c.req.param("vs") ?? "";
   const db = drizzle(c.env.DB);
 
   const rows = await db.select().from(purchase).where(eq(purchase.variableSymbol, vs)).limit(1);
@@ -29,9 +37,13 @@ devRoutes.get("/dev/fio/pay/:vs", async (c) => {
 
   const now = new Date();
   const newExpiresAt = new Date(now.getTime() + ACCESS_DURATION_DAYS * 86400 * 1000);
+  const txColumn =
+    p.paymentMethod === "creditas"
+      ? { creditasTransactionId: `dev-${Date.now()}` }
+      : { fioTransactionId: `dev-${Date.now()}` };
   await db
     .update(purchase)
-    .set({ status: "active", expiresAt: newExpiresAt, fioTransactionId: `dev-${Date.now()}` })
+    .set({ status: "active", expiresAt: newExpiresAt, ...txColumn })
     .where(eq(purchase.id, p.id));
 
   c.executionCtx.waitUntil(
@@ -53,6 +65,10 @@ devRoutes.get("/dev/fio/pay/:vs", async (c) => {
       </section>
     </Layout>
   );
-});
+}
+
+// Obě banky používají stejný mock; sloupec se vybere podle paymentMethod objednávky.
+devRoutes.get("/dev/fio/pay/:vs", devMarkPaid);
+devRoutes.get("/dev/creditas/pay/:vs", devMarkPaid);
 
 export { devRoutes };

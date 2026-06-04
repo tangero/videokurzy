@@ -7,3 +7,4 @@ dist/
 public/styles.css
 /docs/epizody
 scripts/discount-invites/out/
+.claude/scheduled_tasks.lock

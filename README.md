@@ -15,7 +15,7 @@
 
 - **Distribuce videokurzů** — přehrávání přes [bunny.net](https://bunny.net)
   Stream (podepsané embed URL), sledování postupu, přepisy videí.
-- **Platby** — Stripe (karta) i FIO Banka (převod + QR), jednorázově i B2B
+- **Platby** — Stripe (karta) i bankovní převod (FIO / Creditas, QR), jednorázově i B2B
   licence na celou doménu.
 - **Fakturace** — IČO → ARES → zálohový doklad → faktura ve Fakturoidu,
   bez ruční práce.
@@ -91,7 +91,8 @@ Potřebné proměnné (viz `.dev.vars.example`):
 | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` | auth (secret: `openssl rand -base64 32`) |
 | `RESEND_API_KEY` | odesílání e-mailů |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | platby kartou |
-| `FIO_API_TOKEN` | párování plateb převodem (volitelné lokálně) |
+| `FIO_API_TOKEN` | párování plateb převodem přes FIO (volitelné lokálně) |
+| `CREDITAS_API_TOKEN`, `CREDITAS_IDENTIFIKATOR` | párování plateb převodem přes Creditas (Bearer klíč + systémový identifikátor účtu / accountId; volitelné lokálně) |
 
 > ⚠️ `.dev.vars` typicky obsahuje **placeholder** hodnoty pro lokální běh. Ostré
 > produkční secrets žijí v Cloudflare dashboardu (viz Nasazení), ne v repu.

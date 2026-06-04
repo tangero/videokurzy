@@ -1,10 +1,12 @@
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { purchase, siteConfig } from "../db/schema";
 import {
   FIO_PAYMENT_REMINDER_DAYS,
   PAYMENT_ACCOUNT,
   PAYMENT_IBAN,
+  CREDITAS_PAYMENT_ACCOUNT,
+  CREDITAS_PAYMENT_IBAN,
   PRICE_INDIVIDUAL,
   PRICE_ORGANIZATION,
 } from "../config/payment";
@@ -75,6 +77,7 @@ export async function sendPaymentReminders(
         id: purchase.id,
         email: purchase.email,
         type: purchase.type,
+        paymentMethod: purchase.paymentMethod,
         variableSymbol: purchase.variableSymbol,
         discountPercent: purchase.discountPercent,
         expiresAt: purchase.expiresAt,
@@ -83,7 +86,7 @@ export async function sendPaymentReminders(
       .where(
         and(
           eq(purchase.status, "pending"),
-          eq(purchase.paymentMethod, "fio"),
+          inArray(purchase.paymentMethod, ["fio", "creditas"]),
           eq(purchase.kind, "paid"),
           gt(purchase.createdAt, windowStart),
           lt(purchase.createdAt, windowEnd),
@@ -109,7 +112,10 @@ export async function sendPaymentReminders(
 
       const fullPrice = r.type === "organization" ? priceOrganization : priceIndividual;
       const amount = applyDiscount(fullPrice, r.discountPercent ?? 0);
-      const spd = generateSPD(PAYMENT_IBAN, amount, r.variableSymbol, `Videokurz ${r.email}`);
+      // Bankovní údaje podle banky, na kterou byla objednávka vystavena.
+      const iban = r.paymentMethod === "creditas" ? CREDITAS_PAYMENT_IBAN : PAYMENT_IBAN;
+      const accountNumber = r.paymentMethod === "creditas" ? CREDITAS_PAYMENT_ACCOUNT : PAYMENT_ACCOUNT;
+      const spd = generateSPD(iban, amount, r.variableSymbol, `Videokurz ${r.email}`);
       const payUrl = `${env.BETTER_AUTH_URL}/checkout/pay/${r.variableSymbol}`;
       const cardUrl = `${env.BETTER_AUTH_URL}/checkout/${r.type === "organization" ? "organization" : "individual"}`;
       const dueDate = formatDueDate(r.expiresAt);
@@ -124,7 +130,7 @@ export async function sendPaymentReminders(
         html: template({
           vs: r.variableSymbol,
           amount,
-          accountNumber: PAYMENT_ACCOUNT,
+          accountNumber,
           dueDate,
           spd,
           payUrl,

@@ -4,6 +4,7 @@ import { purchase, siteConfig, lesson, videoStats } from "./db/schema";
 import { sendRenewalReminders } from "./lib/renewal-reminders";
 import { sendPaymentReminders } from "./lib/payment-reminders";
 import { fetchFioTransactions, matchPayment } from "./lib/fio";
+import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas";
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
@@ -43,6 +44,13 @@ export async function handleScheduled(
     console.log(`[cron] FIO scan: matched=${result.matched}, skipped=${result.skipped}`);
   } catch (err) {
     console.error("[cron] scanFioPayments failed:", err);
+  }
+
+  try {
+    const result = await scanCreditasPayments(db, env);
+    console.log(`[cron] Creditas scan: matched=${result.matched}, skipped=${result.skipped}`);
+  } catch (err) {
+    console.error("[cron] scanCreditasPayments failed:", err);
   }
 
   try {
@@ -127,76 +135,12 @@ export async function scanFioPayments(
     if (!result.found || !result.transaction) continue;
 
     used.add(result.transaction.id);
-    const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
     try {
-      await db
-        .update(purchase)
-        .set({
-          status: "active",
-          expiresAt: newExpiresAt,
-          fioTransactionId: String(result.transaction.id),
-          amountPaid: result.transaction.amount,
-        })
-        .where(eq(purchase.id, p.id));
-
-      // Resend automation event — onboarding sekvence. Bez tohohle by FIO
-      // kupující (~43 %) do automatu vůbec nevstoupili (Stripe ho fíruje v queue.ts).
-      sendResendEvent(env.RESEND_API_KEY, "purchase.completed", p.email.toLowerCase(), {
-        type: p.type,
-        paymentMethod: "fio",
-      }).catch((err) => console.error(`[cron] resend event failed for ${p.email}:`, err));
-
-      // Email s magic linkem ke kurzu — nečekáme na něj, ať jeden výpadek
-      // Resendu nezablokuje další pářování.
-      sendEmail(env, {
-        to: p.email,
-        subject: "Platba přijata — přihlaste se do kurzu",
-        html: purchaseConfirmedHtml(
-          `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
-          p.type as "individual" | "organization",
-        ),
-      }).catch((err) => console.error(`[cron] email send failed for ${p.email}:`, err));
-
-      // Vystavit fakturu ve Fakturoidu. Awaitujeme úmyslně — fire-and-forget by
-      // worker po skončení handleru zabil a fakturoidInvoiceId by se neuložil,
-      // i když by Fakturoid stihl fakturu vytvořit (orphan invoice).
-      const domain = p.type === "organization" ? p.email.split("@")[1] : null;
-      try {
-        const res = await exportPurchaseInvoice(
-          env,
-          {
-            email: p.email,
-            type: p.type as "individual" | "organization",
-            domain,
-            // Fakturuj skutečně přijatou bankovní částku, ne nakonfigurované
-            // očekávání — banka mohla spárovat přesnou, ale jinak vyjádřenou částku.
-            amount: result.transaction.amount,
-            variableSymbol: p.variableSymbol,
-            companyName: p.companyName,
-            companyIco: p.companyIco,
-            companyDic: p.companyDic,
-            companyAddress: p.companyAddress,
-            companyCity: p.companyCity,
-            companyZip: p.companyZip,
-            contactName: p.contactName,
-          },
-          { sendEmail: true },
-        );
-        if (res.ok && res.invoiceId) {
-          await db
-            .update(purchase)
-            .set({
-              fakturoidInvoiceId: res.invoiceId,
-              fakturoidSubjectId: res.subjectId ?? null,
-            })
-            .where(eq(purchase.id, p.id));
-        } else if (!res.ok) {
-          console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
-        }
-      } catch (err) {
-        console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err);
-      }
-
+      await activateMatchedPurchase(db, env, p, {
+        bank: "fio",
+        transactionId: String(result.transaction.id),
+        amountPaid: result.transaction.amount,
+      });
       matched++;
     } catch (err) {
       errors.push(`update purchase ${p.id} failed: ${(err as Error).message}`);
@@ -204,6 +148,160 @@ export async function scanFioPayments(
   }
 
   return { matched, skipped: pending.length - matched, errors };
+}
+
+/**
+ * Načte Creditas transakce za posledních FIO_LOOKBACK_DAYS, projde pending
+ * Creditas objednávky a každou se pokusí spárovat (stejná logika jako u FIO).
+ * Při shodě nastaví status=active, uloží creditasTransactionId, pošle email.
+ */
+export async function scanCreditasPayments(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+): Promise<{ matched: number; skipped: number; errors: string[] }> {
+  const pending = await db
+    .select()
+    .from(purchase)
+    .where(and(eq(purchase.status, "pending"), eq(purchase.paymentMethod, "creditas")));
+
+  if (pending.length === 0) {
+    return { matched: 0, skipped: 0, errors: [] };
+  }
+
+  const cre = await fetchCreditasTransactions(
+    env.CREDITAS_API_TOKEN ?? "dev",
+    env.CREDITAS_IDENTIFIKATOR ?? "",
+    FIO_LOOKBACK_DAYS,
+  );
+  if (!cre.ok) {
+    return {
+      matched: 0,
+      skipped: pending.length,
+      errors: [`Creditas fetch failed: ${cre.status} ${cre.error}`],
+    };
+  }
+
+  const cfgRows = await db.select().from(siteConfig);
+  const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
+  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
+  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
+
+  // Dedup v rámci běhu — jeden Creditas převod nepárují dvě objednávky.
+  const used = new Set<string>();
+  let matched = 0;
+  const errors: string[] = [];
+
+  for (const p of pending) {
+    if (!p.variableSymbol) continue;
+    const fullExpected = p.type === "organization" ? priceOrganization : priceIndividual;
+    const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
+    const result = matchCreditasPayment(cre.transactions, p.variableSymbol, expectedAmount, used);
+    if (!result.found || !result.transaction) continue;
+
+    used.add(result.transaction.id);
+    try {
+      await activateMatchedPurchase(db, env, p, {
+        bank: "creditas",
+        transactionId: result.transaction.id,
+        amountPaid: result.transaction.amount,
+      });
+      matched++;
+    } catch (err) {
+      errors.push(`update purchase ${p.id} failed: ${(err as Error).message}`);
+    }
+  }
+
+  return { matched, skipped: pending.length - matched, errors };
+}
+
+/**
+ * Společná aktivace spárované převodové objednávky (FIO i Creditas):
+ * status=active + roční expirace, uložení transakce do správného sloupce,
+ * Resend onboarding event, magic-link email a vystavení faktury ve Fakturoidu.
+ *
+ * Voláno z obou bankovních scanů — drží jednotnou post-payment logiku na jednom
+ * místě. Hází jen na selhání hlavního UPDATU purchase; vedlejší kroky (resend,
+ * email, Fakturoid) si chyby logují samy, ať jedna porucha nezablokuje pár.
+ */
+async function activateMatchedPurchase(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  p: typeof purchase.$inferSelect,
+  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number },
+): Promise<void> {
+  const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
+  const txColumn =
+    match.bank === "creditas"
+      ? { creditasTransactionId: match.transactionId }
+      : { fioTransactionId: match.transactionId };
+
+  await db
+    .update(purchase)
+    .set({
+      status: "active",
+      expiresAt: newExpiresAt,
+      amountPaid: match.amountPaid,
+      ...txColumn,
+    })
+    .where(eq(purchase.id, p.id));
+
+  // Resend automation event — onboarding sekvence. Bez tohohle by převodoví
+  // kupující do automatu vůbec nevstoupili (Stripe ho fíruje v queue.ts).
+  sendResendEvent(env.RESEND_API_KEY, "purchase.completed", p.email.toLowerCase(), {
+    type: p.type,
+    paymentMethod: match.bank,
+  }).catch((err) => console.error(`[cron] resend event failed for ${p.email}:`, err));
+
+  // Email s magic linkem ke kurzu — nečekáme na něj, ať jeden výpadek
+  // Resendu nezablokuje další pářování.
+  sendEmail(env, {
+    to: p.email,
+    subject: "Platba přijata — přihlaste se do kurzu",
+    html: purchaseConfirmedHtml(
+      `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
+      p.type as "individual" | "organization",
+    ),
+  }).catch((err) => console.error(`[cron] email send failed for ${p.email}:`, err));
+
+  // Vystavit fakturu ve Fakturoidu. Awaitujeme úmyslně — fire-and-forget by
+  // worker po skončení handleru zabil a fakturoidInvoiceId by se neuložil,
+  // i když by Fakturoid stihl fakturu vytvořit (orphan invoice).
+  const domain = p.type === "organization" ? p.email.split("@")[1] : null;
+  try {
+    const res = await exportPurchaseInvoice(
+      env,
+      {
+        email: p.email,
+        type: p.type as "individual" | "organization",
+        domain,
+        // Fakturuj skutečně přijatou bankovní částku, ne nakonfigurované
+        // očekávání — banka mohla spárovat přesnou, ale jinak vyjádřenou částku.
+        amount: match.amountPaid,
+        variableSymbol: p.variableSymbol!,
+        companyName: p.companyName,
+        companyIco: p.companyIco,
+        companyDic: p.companyDic,
+        companyAddress: p.companyAddress,
+        companyCity: p.companyCity,
+        companyZip: p.companyZip,
+        contactName: p.contactName,
+      },
+      { sendEmail: true },
+    );
+    if (res.ok && res.invoiceId) {
+      await db
+        .update(purchase)
+        .set({
+          fakturoidInvoiceId: res.invoiceId,
+          fakturoidSubjectId: res.subjectId ?? null,
+        })
+        .where(eq(purchase.id, p.id));
+    } else if (!res.ok) {
+      console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
+    }
+  } catch (err) {
+    console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err);
+  }
 }
 
 /**
@@ -229,7 +327,7 @@ async function expirePendingFioOrders(
     .where(
       and(
         eq(purchase.status, "pending"),
-        eq(purchase.paymentMethod, "fio"),
+        inArray(purchase.paymentMethod, ["fio", "creditas"]),
         eq(purchase.kind, "paid"),
         lt(purchase.expiresAt, now)
       )

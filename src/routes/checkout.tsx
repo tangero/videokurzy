@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import Stripe from "stripe";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
@@ -10,9 +10,6 @@ import { lookupByIco, lookupByName } from "../lib/ares";
 import { generateProformaHtml } from "../lib/proforma";
 import { nextProformaNumber } from "../lib/proforma-sequence";
 import {
-  PAYMENT_ACCOUNT,
-  PAYMENT_IBAN,
-  PAYMENT_BIC,
   PRICE_INDIVIDUAL,
   PRICE_ORGANIZATION,
   FIO_DEFAULT_DUE_DAYS,
@@ -21,6 +18,9 @@ import {
   FIO_LOOKBACK_DAYS,
   ACCESS_DURATION_DAYS,
   SUPPLIER,
+  DEFAULT_ACTIVE_BANK,
+  bankDetails,
+  type TransferBank,
 } from "../config/payment";
 import { isFreemailDomain, FREEMAIL_REJECTION_MESSAGE } from "../config/freemail-domains";
 import { ADMIN_EMAILS } from "../config/admin";
@@ -30,6 +30,11 @@ import {
   fetchFioTransactions,
   matchPayment,
 } from "../lib/fio";
+import {
+  generateCreditasVariableSymbol,
+  fetchCreditasTransactions,
+  matchCreditasPayment,
+} from "../lib/creditas";
 import {
   applyDiscount,
   getDiscountState,
@@ -70,22 +75,41 @@ export function fioRateLimitTtlSeconds(): number {
   return Math.ceil(FIO_RATE_LIMIT_MS / 1000);
 }
 
+/**
+ * Která banka přijímá nové převodové objednávky. Řídí se site_config klíčem
+ * `active_bank` (`fio` | `creditas`); fallback DEFAULT_ACTIVE_BANK z configu.
+ */
+async function getActiveBank(db: ReturnType<typeof drizzle>): Promise<TransferBank> {
+  const row = await db
+    .select({ value: siteConfig.value })
+    .from(siteConfig)
+    .where(eq(siteConfig.key, "active_bank"))
+    .limit(1);
+  const v = row[0]?.value;
+  return v === "creditas" || v === "fio" ? v : DEFAULT_ACTIVE_BANK;
+}
+
 export async function activateFioPurchaseIfPending(
   db: ReturnType<typeof drizzle>,
   opts: {
     purchaseId: number;
     expiresAt: Date;
-    transactionId: number;
+    transactionId: string;
     amountPaid: number;
+    bank?: TransferBank;
   },
 ): Promise<boolean> {
+  const txColumn =
+    opts.bank === "creditas"
+      ? { creditasTransactionId: opts.transactionId }
+      : { fioTransactionId: opts.transactionId };
   const updated = await db
     .update(purchase)
     .set({
       status: "active",
       expiresAt: opts.expiresAt,
-      fioTransactionId: String(opts.transactionId),
       amountPaid: opts.amountPaid,
+      ...txColumn,
     })
     .where(and(eq(purchase.id, opts.purchaseId), eq(purchase.status, "pending")))
     .returning({ id: purchase.id });
@@ -219,7 +243,8 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   if (paymentMethod === "stripe") {
     return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount, billing);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount, billing);
+    const bank = await getActiveBank(db);
+    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount, billing, bank);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -277,7 +302,8 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   if (paymentMethod === "stripe") {
     return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount, billing);
   } else if (paymentMethod === "fio") {
-    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount, billing);
+    const bank = await getActiveBank(db);
+    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount, billing, bank);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -433,14 +459,16 @@ async function startFioCheckout(
   price: number,
   discount: AppliedDiscount | null,
   billing: BillingData | null,
+  bank: TransferBank,
 ) {
   const db = drizzle(c.env.DB);
   const dueDays = extendedDeadline ? FIO_EXTENDED_DUE_DAYS : FIO_DEFAULT_DUE_DAYS;
   const expiresAt = new Date(Date.now() + dueDays * 86400 * 1000);
   const createdAt = new Date();
 
-  // Dedup: pokud už existuje pending FIO objednávka pro stejný email+type se stále platnou splatností,
-  // přesměruj na ni místo vytváření nové.
+  // Dedup: pokud už existuje pending převodová objednávka pro stejný email+type
+  // se stále platnou splatností, přesměruj na ni místo vytváření nové. Bereme
+  // libovolnou banku — uživatel má dorazit na svou existující platební stránku.
   const existingPending = await db
     .select({ vs: purchase.variableSymbol })
     .from(purchase)
@@ -448,7 +476,7 @@ async function startFioCheckout(
       and(
         eq(purchase.email, email),
         eq(purchase.type, type),
-        eq(purchase.paymentMethod, "fio"),
+        inArray(purchase.paymentMethod, ["fio", "creditas"]),
         eq(purchase.status, "pending"),
         gt(purchase.expiresAt, new Date())
       )
@@ -469,7 +497,8 @@ async function startFioCheckout(
   let vs: string | null = null;
   let insertOrgDone = false;
   for (let attempt = 0; attempt < 5; attempt++) {
-    const candidate = generateVariableSymbol();
+    const candidate =
+      bank === "creditas" ? generateCreditasVariableSymbol() : generateVariableSymbol();
     try {
       if (type === "organization" && domain && !insertOrgDone) {
         const existingOrg = await db
@@ -493,7 +522,7 @@ async function startFioCheckout(
         email,
         userId: null,
         type,
-        paymentMethod: "fio",
+        paymentMethod: bank,
         variableSymbol: candidate,
         fioTransactionId: null,
         stripePaymentId: null,
@@ -547,8 +576,8 @@ async function startFioCheckout(
     c.executionCtx.waitUntil(
       sendEmail(c.env, {
         to: [...ADMIN_EMAILS],
-        subject: "Nová firemní objednávka (FIO)",
-        html: adminNewOrgHtml(domain, email, "fio", `${c.env.BETTER_AUTH_URL}/admin`),
+        subject: `Nová firemní objednávka (${bank === "creditas" ? "Creditas" : "FIO"})`,
+        html: adminNewOrgHtml(domain, email, bank, `${c.env.BETTER_AUTH_URL}/admin`),
       })
     );
   }
@@ -607,7 +636,8 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
   const price = p.amountPaid > 0 ? p.amountPaid : fallbackPrice;
   const dueDays = Math.round((p.expiresAt.getTime() - p.createdAt.getTime()) / 86400000);
   const isExtended = dueDays > FIO_DEFAULT_DUE_DAYS;
-  const spd = generateSPD(PAYMENT_IBAN, price, p.variableSymbol!, `Videokurz ${p.email}`);
+  const bank = bankDetails(p.paymentMethod === "creditas" ? "creditas" : "fio");
+  const spd = generateSPD(bank.iban, price, p.variableSymbol!, `Videokurz ${p.email}`);
   const qrSvg = generateQRSvg(spd);
 
   let domain: string | undefined;
@@ -620,9 +650,9 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
       <PaymentDetails
         variableSymbol={p.variableSymbol!}
         amount={price}
-        account={PAYMENT_ACCOUNT}
-        iban={PAYMENT_IBAN}
-        bic={PAYMENT_BIC}
+        account={bank.account}
+        iban={bank.iban}
+        bic={bank.bic}
         qrSvg={qrSvg}
         type={p.type as "individual" | "organization"}
         email={p.email}
@@ -697,20 +727,38 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     return c.html(<VerifyError message="Objednávka již není aktivní." />);
   }
 
-  const fioRes = await fetchFioTransactions(c.env.FIO_API_TOKEN, FIO_LOOKBACK_DAYS);
-  if (!fioRes.ok) {
-    if (fioRes.status === 429) {
-      return c.html(<VerifyRateLimit waitSeconds={30} />);
-    }
-    return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
-  }
+  const bank: TransferBank = p.paymentMethod === "creditas" ? "creditas" : "fio";
 
   const verifyPrices = await getPrices(db);
   const fullExpected = p.type === "organization" ? verifyPrices.organization : verifyPrices.individual;
   const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
-  const match = matchPayment(fioRes.transactions, p.variableSymbol!, expectedAmount);
 
-  if (!match.found || !match.transaction) {
+  // Načti transakce z banky, na kterou byla objednávka vystavena, a spáruj.
+  let matchedTx: { id: string; amount: number } | null = null;
+  if (bank === "creditas") {
+    const creRes = await fetchCreditasTransactions(
+      c.env.CREDITAS_API_TOKEN ?? "dev",
+      c.env.CREDITAS_IDENTIFIKATOR ?? "",
+      FIO_LOOKBACK_DAYS,
+    );
+    if (!creRes.ok) {
+      return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
+    }
+    const m = matchCreditasPayment(creRes.transactions, p.variableSymbol!, expectedAmount);
+    if (m.found && m.transaction) matchedTx = { id: m.transaction.id, amount: m.transaction.amount };
+  } else {
+    const fioRes = await fetchFioTransactions(c.env.FIO_API_TOKEN, FIO_LOOKBACK_DAYS);
+    if (!fioRes.ok) {
+      if (fioRes.status === 429) {
+        return c.html(<VerifyRateLimit waitSeconds={30} />);
+      }
+      return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
+    }
+    const m = matchPayment(fioRes.transactions, p.variableSymbol!, expectedAmount);
+    if (m.found && m.transaction) matchedTx = { id: String(m.transaction.id), amount: m.transaction.amount };
+  }
+
+  if (!matchedTx) {
     return c.html(<VerifyNotFound />);
   }
 
@@ -719,8 +767,9 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   const activated = await activateFioPurchaseIfPending(db, {
     purchaseId: p.id,
     expiresAt: newExpiresAt,
-    transactionId: match.transaction.id,
-    amountPaid: match.transaction.amount,
+    transactionId: matchedTx.id,
+    amountPaid: matchedTx.amount,
+    bank,
   });
 
   if (!activated) {
@@ -811,6 +860,7 @@ checkoutRoutes.get("/checkout/proforma/:vs", async (c) => {
     domain,
     amount,
     variableSymbol: p.variableSymbol!,
+    bank: p.paymentMethod === "creditas" ? "creditas" : "fio",
   });
 
   return c.html(html);

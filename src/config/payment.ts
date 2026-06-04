@@ -25,6 +25,66 @@ export const ACCESS_DURATION_DAYS = 365;
 /** VS prefix pro videokurzy objednávky (odlišuje od donations `11` a workshops `22`) */
 export const FIO_VS_PREFIX = "33";
 
+// ─── Creditas Bank ───────────────────────────────────────────────
+// Druhá banka pro příchozí převody. Páruje se stejným způsobem jako FIO
+// (VS + přesná částka), liší se jen API a prefixem VS.
+
+/** IBAN Creditas účtu (zobrazuje se na QR platbě a v SPAYD). Odvozeno z 101014591/2250. */
+export const CREDITAS_PAYMENT_IBAN = "CZ4322500000000101014591";
+
+/** Číslo Creditas účtu pro zobrazení. */
+export const CREDITAS_PAYMENT_ACCOUNT = "101014591/2250";
+
+/** BIC / SWIFT kód Creditas */
+export const CREDITAS_PAYMENT_BIC = "CTASCZ22";
+
+/**
+ * VS prefix pro Creditas objednávky — odlišuje od FIO (`33`), donations (`11`)
+ * a workshops (`22`), ať jdou platby v datech jednoznačně přiřadit k bance.
+ */
+export const CREDITAS_VS_PREFIX = "34";
+
+/** Base URL Creditas API (OAM v1). */
+export const CREDITAS_API_BASE_URL = "https://api.creditas.cz/oam/v1";
+
+/** Kolik transakcí načíst na stránku při dotazu na Creditas (jedna stránka stačí). */
+export const CREDITAS_PAGE_ITEM_COUNT = 200;
+
+/**
+ * Která banka přijímá NOVÉ převodové objednávky. Přepíná se přes site_config
+ * klíč `active_bank` (hodnoty `fio` | `creditas`), s fallbackem sem.
+ * Cron skenuje obě banky bez ohledu na toto nastavení, aby dosbíral staré pending.
+ */
+export const DEFAULT_ACTIVE_BANK: "fio" | "creditas" = "fio";
+
+/** Banka pro převodové platby (`fio` | `creditas`). Stripe sem nepatří. */
+export type TransferBank = "fio" | "creditas";
+
+export interface BankDetails {
+  iban: string;
+  account: string;
+  bic: string;
+  bankName: string;
+}
+
+/** Bankovní údaje pro daný účet — pro zobrazení na platební stránce a ZD. */
+export function bankDetails(bank: TransferBank): BankDetails {
+  if (bank === "creditas") {
+    return {
+      iban: CREDITAS_PAYMENT_IBAN,
+      account: CREDITAS_PAYMENT_ACCOUNT,
+      bic: CREDITAS_PAYMENT_BIC,
+      bankName: "Banka CREDITAS a.s.",
+    };
+  }
+  return {
+    iban: PAYMENT_IBAN,
+    account: PAYMENT_ACCOUNT,
+    bic: PAYMENT_BIC,
+    bankName: "Fio banka, a.s.",
+  };
+}
+
 /** Výchozí splatnost FIO objednávky ve dnech */
 export const FIO_DEFAULT_DUE_DAYS = 7;
 

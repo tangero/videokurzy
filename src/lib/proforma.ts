@@ -9,11 +9,10 @@
  */
 
 import {
-  PAYMENT_ACCOUNT,
-  PAYMENT_IBAN,
-  PAYMENT_BIC,
   SUPPLIER,
   PROFORMA_PREFIX,
+  bankDetails,
+  type TransferBank,
 } from "../config/payment";
 import { generateSPD } from "./fio";
 import { generateQRSvg } from "./qr";
@@ -36,6 +35,8 @@ export interface ProformaData {
   domain?: string | null;
   amount: number;
   variableSymbol: string;
+  // Banka pro bankovní spojení na dokladu (default fio kvůli starým objednávkám).
+  bank?: TransferBank;
 }
 
 function fmtDate(d: Date): string {
@@ -55,7 +56,8 @@ function lineItemLabel(data: ProformaData): string {
 }
 
 export function generateProformaHtml(data: ProformaData): string {
-  const spd = generateSPD(PAYMENT_IBAN, data.amount, data.variableSymbol, `Videokurz ${data.contactEmail}`);
+  const bank = bankDetails(data.bank ?? "fio");
+  const spd = generateSPD(bank.iban, data.amount, data.variableSymbol, `Videokurz ${data.contactEmail}`);
   const qrSvg = generateQRSvg(spd);
 
   const buyerLines: string[] = [];
@@ -135,9 +137,9 @@ export function generateProformaHtml(data: ProformaData): string {
 
   <div class="payment-box">
     <p><strong>Platební údaje</strong></p>
-    <p>Číslo účtu: ${esc(PAYMENT_ACCOUNT)} (${esc(SUPPLIER.bankName)})</p>
-    <p>IBAN: ${esc(PAYMENT_IBAN)}</p>
-    <p>BIC/SWIFT: ${esc(PAYMENT_BIC)}</p>
+    <p>Číslo účtu: ${esc(bank.account)} (${esc(bank.bankName)})</p>
+    <p>IBAN: ${esc(bank.iban)}</p>
+    <p>BIC/SWIFT: ${esc(bank.bic)}</p>
     <p>Variabilní symbol: <strong>${esc(data.variableSymbol)}</strong></p>
     <p>Částka: <strong>${fmtAmount(data.amount)} Kč</strong></p>
     <p>Datum vystavení: ${fmtDate(data.issueDate)}</p>

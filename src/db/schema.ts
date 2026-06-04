@@ -74,11 +74,13 @@ export const purchase = sqliteTable("purchase", {
   email: text("email").notNull(),
   userId: text("userId"),
   type: text("type", { enum: ["individual", "organization"] }).notNull(),
-  paymentMethod: text("paymentMethod", { enum: ["stripe", "fio"] })
+  paymentMethod: text("paymentMethod", { enum: ["stripe", "fio", "creditas"] })
     .notNull()
     .default("stripe"),
   variableSymbol: text("variableSymbol").unique(),
   fioTransactionId: text("fioTransactionId"),
+  // ID spárované Creditas transakce — obdoba fioTransactionId pro druhou banku.
+  creditasTransactionId: text("creditasTransactionId"),
   stripePaymentId: text("stripePaymentId").unique(),
   stripeSubscriptionId: text("stripeSubscriptionId"),
   status: text("status", { enum: ["pending", "active", "expired", "refunded"] })
@@ -123,6 +125,10 @@ export const purchase = sqliteTable("purchase", {
   uniqueIndex("purchase_fioTransactionId_unique")
     .on(table.fioTransactionId)
     .where(sql`${table.fioTransactionId} IS NOT NULL`),
+  // Stejná pojistka proti dvojímu spárování pro Creditas transakce.
+  uniqueIndex("purchase_creditasTransactionId_unique")
+    .on(table.creditasTransactionId)
+    .where(sql`${table.creditasTransactionId} IS NOT NULL`),
 ]);
 
 export const discountInvite = sqliteTable("discount_invite", {

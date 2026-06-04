@@ -1,6 +1,10 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { Env, Variables } from "./types";
 import { authMiddleware } from "./middleware/auth";
+import { wantsJson, AppError, logServerError } from "./lib/errors";
+import { ErrorPage } from "./views/error";
 import { authRoutes } from "./routes/auth";
 import { landingRoutes } from "./routes/landing";
 import { dashboardRoutes } from "./routes/dashboard";
@@ -66,6 +70,70 @@ app.get("/terms", (c) => c.html(<TermsPage />));
 
 // Health check
 app.get("/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
+
+// Test-only routy pro ověření globálního 500 handleru. Guard: jen v testovacím
+// prostředí (AUTH_INTERNAL_SECRET má v [env.test.vars] unikátní hodnotu).
+// V produkci je secret jiný → handler vrátí 404 a routa fakticky neexistuje.
+const isTestEnv = (c: Context<{ Bindings: Env; Variables: Variables }>) =>
+  c.env.AUTH_INTERNAL_SECRET === "test-internal-secret";
+app.all("/__throw", (c) => {
+  if (!isTestEnv(c)) return c.notFound();
+  throw new Error("boom");
+});
+app.all("/api/__throw", (c) => {
+  if (!isTestEnv(c)) return c.notFound();
+  throw new Error("boom");
+});
+
+// Globální chybové HTML (404/500). onError/notFound obcházejí trailing DOCTYPE
+// middleware (běží jako top-level dispatch, ne v řetězci), proto si DOCTYPE
+// prependujeme sami.
+function htmlError(c: Context<{ Bindings: Env; Variables: Variables }>, code: 404 | 500) {
+  const user = c.get("user") ?? null;
+  const body = "<!DOCTYPE html>" + (<ErrorPage code={code} user={user} />).toString();
+  return c.html(body, code);
+}
+
+// Neexistující routa
+app.notFound((c) => {
+  if (wantsJson(c)) return c.json({ error: "not_found" }, 404);
+  return htmlError(c, 404);
+});
+
+// Neošetřené výjimky z handlerů i middleware
+app.onError((err, c) => {
+  // htmx: vracet malý fragment, ne celou stránku, ať se do swap targetu nevloží
+  // celý <html> (pojistka, kdyby throw přišel z htmx kontextu).
+  const isHtmx = c.req.header("HX-Request") === "true";
+
+  if (err instanceof HTTPException) {
+    const status = err.status;
+    const code = err instanceof AppError ? err.code : "error";
+
+    if (status >= 500) {
+      const correlationId = crypto.randomUUID();
+      logServerError("http", "exception", { correlationId, status, code, message: err.message });
+      if (wantsJson(c)) return c.json({ error: code, correlationId }, status);
+      if (isHtmx) return c.html("<p>Došlo k chybě, zkuste to znovu.</p>", status);
+      return htmlError(c, 500);
+    }
+
+    if (wantsJson(c)) return c.json({ error: code }, status);
+    if (isHtmx) return c.html("<p>Došlo k chybě.</p>", status);
+    // ErrorPage zná jen 404|500 → ostatní 4xx mapujeme na 404 stránku.
+    return htmlError(c, 404);
+  }
+
+  const correlationId = crypto.randomUUID();
+  logServerError("http", "unhandled", {
+    correlationId,
+    message: (err as Error)?.message,
+    stack: (err as Error)?.stack,
+  });
+  if (wantsJson(c)) return c.json({ error: "internal_error", correlationId }, 500);
+  if (isHtmx) return c.html("<p>Došlo k chybě, zkuste to znovu.</p>", 500);
+  return htmlError(c, 500);
+});
 
 export default {
   fetch: app.fetch,

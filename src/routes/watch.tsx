@@ -8,6 +8,7 @@ import { shouldResume } from "../lib/watch-stats";
 import { hasAccess } from "../lib/access";
 import { generateSignedEmbedUrl } from "../lib/bunny";
 import { WatchPage } from "../views/watch";
+import { NotFoundError } from "../lib/errors";
 
 const watch = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -70,7 +71,7 @@ watch.get("/watch/:slug", async (c) => {
     .limit(1);
 
   if (!found) {
-    return c.text("Epizoda nenalezena", 404);
+    throw new NotFoundError("Epizoda nenalezena");
   }
 
   // Free lessons are accessible to everyone

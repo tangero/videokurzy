@@ -1,4 +1,4 @@
-import { and, eq, gt, lt, or } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { purchase } from "../db/schema";
 import { FIO_RENEWAL_REMINDER_DAYS } from "../config/payment";
@@ -44,7 +44,10 @@ export async function sendRenewalReminders(
         and(
           eq(purchase.status, "active"),
           or(
-            and(eq(purchase.paymentMethod, "fio"), eq(purchase.kind, "paid")),
+            and(
+              inArray(purchase.paymentMethod, ["fio", "creditas"]),
+              eq(purchase.kind, "paid")
+            ),
             eq(purchase.kind, "comp")
           ),
           gt(purchase.expiresAt, windowStart),

@@ -30,7 +30,8 @@ leadRoutes.post("/api/leads/preview-completed", async (c) => {
 
   if (!email || !email.includes("@")) {
     return c.html(
-      <p class="text-red-600 text-sm">Zadejte platný email.</p>
+      <p class="text-red-600 text-sm">Zadejte platný email.</p>,
+      422,
     );
   }
 
@@ -76,7 +77,8 @@ leadRoutes.post("/api/leads/newsletter", async (c) => {
 
   if (!email || !email.includes("@")) {
     return c.html(
-      <p class="text-red-600 text-sm">Zadejte platný email.</p>
+      <p class="text-red-600 text-sm">Zadejte platný email.</p>,
+      422,
     );
   }
 

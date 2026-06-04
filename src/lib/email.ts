@@ -137,8 +137,13 @@ export function organizationApprovedHtml(domain: string, loginUrl: string): stri
 }
 
 /** Admin — notifikace o nové B2B objednávce. */
-export function adminNewOrgHtml(domain: string, buyerEmail: string, paymentMethod: "stripe" | "fio", adminUrl: string): string {
-  const paymentLabel = paymentMethod === "stripe" ? "Stripe (karta)" : "FIO (bankovní převod)";
+export function adminNewOrgHtml(domain: string, buyerEmail: string, paymentMethod: "stripe" | "fio" | "creditas", adminUrl: string): string {
+  const paymentLabel =
+    paymentMethod === "stripe"
+      ? "Stripe (karta)"
+      : paymentMethod === "creditas"
+        ? "Creditas (bankovní převod)"
+        : "FIO (bankovní převod)";
   return emailWrapper(`
     <p style="font-size: 16px; line-height: 1.5;"><strong>Nová firemní objednávka</strong></p>
     <div style="background: #f9fafb; border-radius: 8px; padding: 16px; margin: 16px 0;">

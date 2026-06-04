@@ -54,13 +54,13 @@ describe("POST /api/fio/verify/:vs", () => {
     const first = await activateFioPurchaseIfPendingForTest(db, {
       purchaseId: 9901,
       expiresAt: new Date("2027-05-31T08:00:00.000Z"),
-      transactionId: 123456,
+      transactionId: "123456",
       amountPaid: 2000,
     });
     const second = await activateFioPurchaseIfPendingForTest(db, {
       purchaseId: 9901,
       expiresAt: new Date("2027-05-31T08:00:00.000Z"),
-      transactionId: 123456,
+      transactionId: "123456",
       amountPaid: 2000,
     });
 

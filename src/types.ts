@@ -18,6 +18,9 @@ export interface Env {
   FAKTUROID_CLIENT_ID?: string;
   FAKTUROID_CLIENT_SECRET?: string;
   FIO_API_TOKEN: string;
+  // Creditas Bank API — Bearer klíč + systémový accountId účtu, ke kterému patří.
+  CREDITAS_API_TOKEN?: string;
+  CREDITAS_IDENTIFIKATOR?: string;
   COOKIE_DOMAIN?: string;
   VIBECODING_PARTNER_KEY?: string;
 }
