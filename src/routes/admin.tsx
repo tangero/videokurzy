@@ -2138,6 +2138,7 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
     priceOrganization: parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10),
     benefitsIndividual: JSON.parse(cfg.benefits_individual ?? "[]") as string[],
     benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
+    activeBank: (cfg.active_bank === "creditas" ? "creditas" : "fio") as "fio" | "creditas",
     discount: {
       active: cfg.discount_active === "true",
       percent: parseInt(cfg.discount_percent ?? "0", 10),
@@ -2180,7 +2181,10 @@ admin.post("/admin/settings", async (c) => {
     : null;
   const discountLabel = String(body.discount_label ?? "").trim();
 
+  const activeBank = body.active_bank === "creditas" ? "creditas" : "fio";
+
   const updates: Array<[string, string]> = [
+    ["active_bank", activeBank],
     ["price_individual", String(priceIndividual)],
     ["price_organization", String(priceOrganization)],
     ["benefits_individual", benefitsIndividual],

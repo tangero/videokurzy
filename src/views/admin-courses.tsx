@@ -959,6 +959,7 @@ export function AdminSettingsForm({
   priceOrganization,
   benefitsIndividual,
   benefitsOrganization,
+  activeBank,
   discount,
   slotsUsed,
   saved,
@@ -967,6 +968,7 @@ export function AdminSettingsForm({
   priceOrganization: number;
   benefitsIndividual: string[];
   benefitsOrganization: string[];
+  activeBank: "fio" | "creditas";
   discount: DiscountSettingsView;
   slotsUsed: number;
   saved?: boolean;
@@ -993,6 +995,31 @@ export function AdminSettingsForm({
       )}
 
       <form method="post" class="space-y-8">
+        {/* Aktivní banka */}
+        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <h2 class="text-lg font-semibold mb-3">Platební banka (bankovní převody)</h2>
+          <p class="text-xs text-gray-500 mb-3">
+            Určuje, které číslo účtu, IBAN a QR kód se zobrazí na platební stránce a zálohovém listu
+            pro nové převodové objednávky. Cron páruje obě banky bez ohledu na toto nastavení.
+          </p>
+          <div class="flex gap-4">
+            <label class={`flex items-center gap-3 flex-1 rounded-md border px-3 py-2 cursor-pointer ${activeBank === "fio" ? "border-indigo-400 bg-indigo-50" : "border-gray-300 bg-white"}`}>
+              <input type="radio" name="active_bank" value="fio" checked={activeBank === "fio"} class="h-4 w-4 text-indigo-600" />
+              <span class="text-sm">
+                <strong>Fio banka</strong>
+                <span class="block text-xs text-gray-500">VS prefix 33 · 2801585002/2010</span>
+              </span>
+            </label>
+            <label class={`flex items-center gap-3 flex-1 rounded-md border px-3 py-2 cursor-pointer ${activeBank === "creditas" ? "border-indigo-400 bg-indigo-50" : "border-gray-300 bg-white"}`}>
+              <input type="radio" name="active_bank" value="creditas" checked={activeBank === "creditas"} class="h-4 w-4 text-indigo-600" />
+              <span class="text-sm">
+                <strong>Banka CREDITAS</strong>
+                <span class="block text-xs text-gray-500">VS prefix 34 · 101014591/2250</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
         {/* Ceny */}
         <div>
           <h2 class="text-lg font-semibold mb-4">Ceny předplatného (CZK/rok)</h2>
