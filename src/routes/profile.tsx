@@ -9,7 +9,7 @@ import {
   normalizeEmail,
 } from "../lib/user-emails";
 import { logIdentityEvent } from "../lib/audit";
-import { logServerError } from "../lib/errors";
+import { logServerError, maskEmail } from "../lib/errors";
 import { createAuth } from "../lib/auth";
 import { isAllowedCallback } from "../lib/callback-allowlist";
 import { user as userTable } from "../db/auth-schema";
@@ -75,7 +75,7 @@ profile.post("/api/profile/emails", async (c) => {
       scope: "profile/emails/add",
       event: "magic_link_failed",
       correlationId,
-      email,
+      email: maskEmail(email),
       message: (err as Error)?.message,
     }));
     return c.json({ error: "send_failed", correlationId }, 502);

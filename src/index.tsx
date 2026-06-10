@@ -20,7 +20,7 @@ import { leadRoutes } from "./routes/leads";
 import internalRoutes from "./routes/internal";
 import partnerRoutes from "./routes/partner-api";
 import profileRoutes from "./routes/profile";
-import { handleQueue } from "./queue";
+import { handleQueue, handleDlq } from "./queue";
 import { handleScheduled } from "./scheduled";
 import { PrivacyPage } from "./views/privacy";
 import { TermsPage } from "./views/terms";
@@ -137,6 +137,11 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  queue: handleQueue,
+  // Jeden queue() export obsluhuje obě fronty — rozliš podle názvu.
+  // DLQ má vlastní handler (alert + ack, žádný retry).
+  queue: (batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext) =>
+    batch.queue.endsWith("-dlq")
+      ? handleDlq(batch as Parameters<typeof handleDlq>[0], env)
+      : handleQueue(batch as Parameters<typeof handleQueue>[0], env),
   scheduled: handleScheduled,
 };

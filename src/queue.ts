@@ -4,7 +4,11 @@ import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
 import { consumeInviteToken } from "./lib/discount";
+import { invalidateAccessCache } from "./lib/access";
+import { maskEmail } from "./lib/errors";
 import { exportPurchaseInvoice, type FakturoidEnv } from "./lib/fakturoid";
+import { sendEmail } from "./lib/email";
+import { ADMIN_EMAILS } from "./config/admin";
 import type { Env } from "./types";
 
 type WebhookMessageType =
@@ -33,7 +37,7 @@ export async function handleQueue(
           break;
 
         case "customer.subscription.deleted":
-          await handleSubscriptionDeleted(db, data);
+          await handleSubscriptionDeleted(db, data, env);
           break;
 
         case "invoice.paid":
@@ -50,6 +54,86 @@ export async function handleQueue(
       message.retry();
     }
   }
+}
+
+/**
+ * Helper pro vytažení identifikátorů z webhook payloadu pro alert/log.
+ * Nikdy nevrací celý e-mail — jen maskovaný (DLQ alert jde do logu i mailu).
+ */
+function describeWebhook(msg: WebhookMessage): {
+  maskedEmail: string;
+  stripeId: string;
+} {
+  const data = msg.data ?? {};
+  const email =
+    (data.customer_email as string) ??
+    ((data.customer_details as Record<string, unknown>)?.email as string) ??
+    "";
+  const stripeId =
+    (data.id as string) ??
+    (data.subscription as string) ??
+    "?";
+  return { maskedEmail: maskEmail(email), stripeId };
+}
+
+/**
+ * Dead-letter queue konzument. Sem padají webhook zprávy, které 3× selhaly
+ * v handleQueue (typicky checkout.session.completed — zákazník ZAPLATIL, ale
+ * přístup/faktura nevznikly kvůli výpadku D1/Fakturoidu/Resendu).
+ *
+ * NEretryuje (to už hlavní queue vyčerpala) — jen zprávu trvale zaloguje
+ * a pošle adminovi alert s identifikátory pro ruční dohledání ve Stripe.
+ * `message.ack()` vždy, ať zpráva v DLQ neuvízne donekonečna.
+ */
+export async function handleDlq(
+  batch: MessageBatch<WebhookMessage>,
+  env: Env
+) {
+  for (const message of batch.messages) {
+    const msg = message.body;
+    const { maskedEmail, stripeId } = describeWebhook(msg);
+
+    // Strukturovaný log — i kdyby admin email selhal, stopa zůstane v Logpush.
+    console.error(
+      JSON.stringify({
+        scope: "queue/dlq",
+        event: "webhook_permanently_failed",
+        type: msg?.type ?? "unknown",
+        stripeId,
+        maskedEmail,
+        attempts: message.attempts,
+      })
+    );
+
+    try {
+      await sendEmail(env, {
+        to: [...ADMIN_EMAILS],
+        subject: `⚠️ Webhook selhal natrvalo: ${msg?.type ?? "unknown"}`,
+        html: dlqAlertHtml(msg?.type ?? "unknown", stripeId, maskedEmail),
+      });
+    } catch (err) {
+      console.error("[queue/dlq] admin alert email failed:", err);
+    }
+
+    // DLQ je poslední instance — vždy ack, aby zpráva neretryovala dokola.
+    message.ack();
+  }
+}
+
+function dlqAlertHtml(type: string, stripeId: string, maskedEmail: string): string {
+  return `
+    <h2>Webhook selhal natrvalo</h2>
+    <p>Zpráva 3× selhala ve zpracování a skončila v dead-letter queue. Pokud jde
+    o <strong>checkout.session.completed</strong>, zákazník nejspíš zaplatil, ale
+    přístup nebo faktura nevznikly — vyžaduje ruční zásah.</p>
+    <ul>
+      <li><strong>Typ eventu:</strong> ${type}</li>
+      <li><strong>Stripe ID:</strong> ${stripeId}</li>
+      <li><strong>Kupující:</strong> ${maskedEmail}</li>
+    </ul>
+    <p>Dohledejte session/subscription ve Stripe Dashboardu podle ID výše
+    a doplňte přístup ručně přes /admin.</p>
+  `;
 }
 
 interface BillingFromMetadata {
@@ -265,10 +349,10 @@ async function issueFakturoidInvoice(
         })
         .where(eq(purchase.stripePaymentId, opts.sessionId));
     } else if (!res.ok) {
-      console.error(`[stripe] Fakturoid invoice failed for ${opts.email}:`, res.error);
+      console.error(`[stripe] Fakturoid invoice failed for ${maskEmail(opts.email)} (session ${opts.sessionId}):`, res.error);
     }
   } catch (err) {
-    console.error(`[stripe] Fakturoid threw for ${opts.email}:`, err);
+    console.error(`[stripe] Fakturoid threw for ${maskEmail(opts.email)} (session ${opts.sessionId}):`, err);
   }
 }
 
@@ -276,10 +360,18 @@ export const issueFakturoidInvoiceForTest = issueFakturoidInvoice;
 
 async function handleSubscriptionDeleted(
   db: ReturnType<typeof drizzle>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  env: Env
 ) {
   const subscriptionId = data.id as string;
   if (!subscriptionId) return;
+
+  // Dohledej dotčené uživatele PŘED expirací, ať můžeme invalidovat jejich
+  // access cache (jinak by si zachovali přístup až do vypršení 5min TTL).
+  const affected = await db
+    .select({ userId: purchase.userId })
+    .from(purchase)
+    .where(eq(purchase.stripeSubscriptionId, subscriptionId));
 
   await db
     .update(organization)
@@ -290,6 +382,10 @@ async function handleSubscriptionDeleted(
     .update(purchase)
     .set({ status: "expired" })
     .where(eq(purchase.stripeSubscriptionId, subscriptionId));
+
+  for (const { userId } of affected) {
+    if (userId) await invalidateAccessCache(env.KV, userId);
+  }
 }
 
 async function handleInvoicePaid(
