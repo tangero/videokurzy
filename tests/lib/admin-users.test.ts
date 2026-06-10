@@ -5,7 +5,12 @@ import { eq } from "drizzle-orm";
 import * as authSchema from "../../src/db/auth-schema";
 import * as identitySchema from "../../src/db/identity-schema";
 import * as appSchema from "../../src/db/schema";
-import { createAdminUser, createAdminUsers, listAdminUsers } from "../../src/lib/admin-users";
+import {
+  createAdminUser,
+  createAdminUsers,
+  listAdminUsers,
+  anonymizeAndDeleteUser,
+} from "../../src/lib/admin-users";
 
 describe("createAdminUser", () => {
   let db: ReturnType<typeof drizzle>;
@@ -245,5 +250,83 @@ describe("createAdminUser", () => {
 
     expect(result.rows).toHaveLength(50);
     expect(result.rows.every((row) => row.activeAccess === "individual")).toBe(true);
+  });
+});
+
+describe("anonymizeAndDeleteUser", () => {
+  let db: ReturnType<typeof drizzle>;
+
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM user_emails");
+    await env.DB.exec("DELETE FROM progress");
+    await env.DB.exec("DELETE FROM purchase");
+    await env.DB.exec("DELETE FROM session");
+    await env.DB.exec("DELETE FROM account");
+    await env.DB.exec("DELETE FROM user");
+    db = drizzle(env.DB, { schema: { ...authSchema, ...identitySchema, ...appSchema } });
+  });
+
+  it("smaže usera a anonymizuje jeho purchase (PII pryč, účetní data zůstanou)", async () => {
+    const created = await createAdminUser(db, {
+      email: "mazany@example.cz",
+      name: "Mazaný Uživatel",
+      role: "user",
+      access: "individual",
+    });
+
+    // Doplň reálnou platbu s PII (firma) navázanou na usera.
+    await db.insert(appSchema.purchase).values({
+      email: "mazany@example.cz",
+      userId: created.id,
+      type: "individual",
+      paymentMethod: "fio",
+      variableSymbol: "33999111",
+      stripePaymentId: null,
+      status: "active",
+      kind: "paid",
+      amountPaid: 2000,
+      companyName: "Firma s.r.o.",
+      companyIco: "12345678",
+      contactName: "Mazaný Uživatel",
+      expiresAt: new Date("2027-01-01T00:00:00.000Z"),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    const anonymized = await anonymizeAndDeleteUser(db, created.id);
+    expect(anonymized).toBeGreaterThanOrEqual(2); // comp grant + reálná platba
+
+    // User je pryč.
+    const userRow = await db
+      .select()
+      .from(authSchema.user)
+      .where(eq(authSchema.user.id, created.id))
+      .get();
+    expect(userRow).toBeUndefined();
+
+    // user_emails kaskádovaly.
+    const emailRows = await db
+      .select()
+      .from(identitySchema.userEmails)
+      .where(eq(identitySchema.userEmails.userId, created.id));
+    expect(emailRows).toHaveLength(0);
+
+    // Purchase přežil, ale PII je anonymizovaná; účetní data zůstala.
+    const paid = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.variableSymbol, "33999111"))
+      .get();
+    expect(paid).toBeDefined();
+    expect(paid!.userId).toBeNull();
+    expect(paid!.email).toBe(`deleted+${created.id}@deleted.invalid`);
+    expect(paid!.companyName).toBeNull();
+    expect(paid!.companyIco).toBeNull();
+    expect(paid!.contactName).toBeNull();
+    expect(paid!.amountPaid).toBe(2000); // účetní data zachována
+    expect(paid!.variableSymbol).toBe("33999111");
+  });
+
+  it("hodí chybu pro neexistujícího uživatele", async () => {
+    await expect(anonymizeAndDeleteUser(db, "neexistuje")).rejects.toThrow();
   });
 });

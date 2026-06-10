@@ -43,6 +43,7 @@ export const userIdentityAudit = sqliteTable(
         "email_verified",
         "recovery_approved",
         "recovery_banner_dismissed",
+        "account_deleted",
       ],
     }).notNull(),
     actor: text("actor").notNull(),

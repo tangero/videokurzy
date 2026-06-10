@@ -58,6 +58,11 @@ export const PrivacyPage: FC = () => (
         <li>Přenositelnost údajů</li>
         <li>Podání stížnosti u ÚOOÚ</li>
       </ul>
+      <p>
+        Účet můžete kdykoliv trvale smazat sami v <a href="/profile">nastavení účtu</a>.
+        Smažeme váš profil, přihlašovací údaje i postup ve kurzech; vystavené účetní
+        doklady zůstávají archivované ze zákona, ale zbavené vašich osobních údajů.
+      </p>
 
       <h2>8. Kontakt</h2>
       <p>
