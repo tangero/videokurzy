@@ -203,4 +203,39 @@ describe("handleDlq — dead-letter queue", () => {
     fetchSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  it("escapuje HTML v admin alertu (XSS přes webhook data — greptile P2)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    await handleDlq(
+      {
+        queue: "videokurzy-webhooks-dlq",
+        messages: [
+          {
+            body: {
+              // Stripe ID se škodlivým markupem — musí být v e-mailu escapováno.
+              type: "checkout.session.completed",
+              data: { id: "<script>alert(1)</script>", customer_email: "a@b.cz" },
+            },
+            attempts: 3,
+            ack: vi.fn(),
+            retry: vi.fn(),
+          },
+        ],
+      } as never,
+      env as never,
+    );
+
+    const sentBody = JSON.parse(
+      (fetchSpy.mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(sentBody.html).not.toContain("<script>alert(1)</script>");
+    expect(sentBody.html).toContain("&lt;script&gt;");
+
+    fetchSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
 });

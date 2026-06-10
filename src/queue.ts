@@ -6,6 +6,7 @@ import { sendResendEvent } from "./lib/resend";
 import { consumeInviteToken } from "./lib/discount";
 import { invalidateAccessCache } from "./lib/access";
 import { maskEmail } from "./lib/errors";
+import { escapeHtml } from "./lib/markdown";
 import { exportPurchaseInvoice, type FakturoidEnv } from "./lib/fakturoid";
 import { sendEmail } from "./lib/email";
 import { ADMIN_EMAILS } from "./config/admin";
@@ -127,9 +128,9 @@ function dlqAlertHtml(type: string, stripeId: string, maskedEmail: string): stri
     o <strong>checkout.session.completed</strong>, zákazník nejspíš zaplatil, ale
     přístup nebo faktura nevznikly — vyžaduje ruční zásah.</p>
     <ul>
-      <li><strong>Typ eventu:</strong> ${type}</li>
-      <li><strong>Stripe ID:</strong> ${stripeId}</li>
-      <li><strong>Kupující:</strong> ${maskedEmail}</li>
+      <li><strong>Typ eventu:</strong> ${escapeHtml(type)}</li>
+      <li><strong>Stripe ID:</strong> ${escapeHtml(stripeId)}</li>
+      <li><strong>Kupující:</strong> ${escapeHtml(maskedEmail)}</li>
     </ul>
     <p>Dohledejte session/subscription ve Stripe Dashboardu podle ID výše
     a doplňte přístup ručně přes /admin.</p>

@@ -326,6 +326,41 @@ describe("anonymizeAndDeleteUser", () => {
     expect(paid!.variableSymbol).toBe("33999111");
   });
 
+  it("anonymizuje i nespárovanou objednávku podle e-mailu (userId NULL) — GDPR P1", async () => {
+    const created = await createAdminUser(db, {
+      email: "Prevod@Example.cz",
+      role: "user",
+      access: "free", // bez comp grantu
+    });
+
+    // Převodová objednávka vzniklá PŘED spárováním: userId=NULL, ale stejný
+    // (lowercased) e-mail. Bez e-mailové větve by výmaz tenhle řádek minul.
+    await db.insert(appSchema.purchase).values({
+      email: "prevod@example.cz",
+      userId: null,
+      type: "individual",
+      paymentMethod: "fio",
+      variableSymbol: "33888222",
+      status: "pending",
+      kind: "paid",
+      amountPaid: 2000,
+      contactName: "Jan Převod",
+      expiresAt: new Date("2027-01-01T00:00:00.000Z"),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    await anonymizeAndDeleteUser(db, created.id);
+
+    const row = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.variableSymbol, "33888222"))
+      .get();
+    expect(row).toBeDefined();
+    expect(row!.email).toBe(`deleted+${created.id}@deleted.invalid`);
+    expect(row!.contactName).toBeNull();
+  });
+
   it("hodí chybu pro neexistujícího uživatele", async () => {
     await expect(anonymizeAndDeleteUser(db, "neexistuje")).rejects.toThrow();
   });

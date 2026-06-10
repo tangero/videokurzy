@@ -403,7 +403,14 @@ export async function anonymizeAndDeleteUser(db: Db, id: string): Promise<number
   // Stabilní neidentifikující placeholder. .invalid je rezervovaná TLD
   // (RFC 2606), takže e-mail nikdy nemůže patřit reálné schránce.
   const anonEmail = `deleted+${id}@deleted.invalid`;
+  const emailLc = u.email.toLowerCase();
 
+  // Anonymizuj podle userId I podle e-mailu. E-mailová větev je nutná:
+  //  - převodové (FIO/Creditas) objednávky vznikají s userId=NULL a spárování
+  //    s userId probíhá až přes linkPurchasesToUser(), který běží přes
+  //    waitUntil() souběžně — bez e-mailové podmínky by nespárovaný řádek
+  //    s reálným e-mailem výmaz přežil (GDPR díra, greptile P1).
+  //  - purchase.email se ukládá lowercased, proto porovnáváme lowercased.
   const affected = await db
     .update(purchase)
     .set({
@@ -417,7 +424,7 @@ export async function anonymizeAndDeleteUser(db: Db, id: string): Promise<number
       companyZip: null,
       contactName: null,
     })
-    .where(eq(purchase.userId, id));
+    .where(or(eq(purchase.userId, id), eq(purchase.email, emailLc)));
 
   // user_emails, session, account, progress kaskádují přes FK.
   await db.delete(user).where(eq(user.id, id));
