@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { discountInvite, purchase } from "../src/db/schema";
 import {
   handleQueue,
+  handleDlq,
   issueFakturoidInvoiceForTest,
 } from "../src/queue";
 
@@ -121,5 +122,120 @@ describe("queue message dispatch", () => {
       .from(purchase)
       .where(eq(purchase.stripePaymentId, "cs_test_invite_1"));
     expect(row.usedByPurchaseId).toBe(p.id);
+  });
+});
+
+describe("handleDlq — dead-letter queue", () => {
+  it("zaloguje, pošle admin alert s MASKOVANÝM emailem a ack (žádný retry)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    // Zachyť odchozí Resend alert (sendEmail → fetch).
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    await handleDlq(
+      {
+        queue: "videokurzy-webhooks-dlq",
+        messages: [
+          {
+            body: {
+              type: "checkout.session.completed",
+              data: { id: "cs_dlq_1", customer_email: "tajny.kupec@firma.cz" },
+            },
+            attempts: 3,
+            ack,
+            retry,
+          },
+        ],
+      } as never,
+      env as never,
+    );
+
+    // DLQ je poslední instance: ack ano, retry ne.
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+
+    // Strukturovaný log obsahuje typ + stripeId, ale NE plný email.
+    const loggedJson = errorSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(loggedJson).toContain("webhook_permanently_failed");
+    expect(loggedJson).toContain("cs_dlq_1");
+    expect(loggedJson).not.toContain("tajny.kupec");
+
+    // Admin alert email odešel a neobsahuje plný email kupujícího.
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const sentBody = JSON.parse(
+      (fetchSpy.mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(sentBody.subject).toContain("checkout.session.completed");
+    expect(sentBody.html).toContain("t***@firma.cz");
+    expect(sentBody.html).not.toContain("tajny.kupec");
+
+    fetchSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("ack i když admin alert email selže (DLQ zpráva nesmí uvíznout)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ack = vi.fn();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("resend down"));
+
+    await handleDlq(
+      {
+        queue: "videokurzy-webhooks-dlq",
+        messages: [
+          {
+            body: { type: "invoice.paid", data: { subscription: "sub_x" } },
+            attempts: 3,
+            ack,
+            retry: vi.fn(),
+          },
+        ],
+      } as never,
+      env as never,
+    );
+
+    expect(ack).toHaveBeenCalledOnce();
+    fetchSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("escapuje HTML v admin alertu (XSS přes webhook data — greptile P2)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    await handleDlq(
+      {
+        queue: "videokurzy-webhooks-dlq",
+        messages: [
+          {
+            body: {
+              // Stripe ID se škodlivým markupem — musí být v e-mailu escapováno.
+              type: "checkout.session.completed",
+              data: { id: "<script>alert(1)</script>", customer_email: "a@b.cz" },
+            },
+            attempts: 3,
+            ack: vi.fn(),
+            retry: vi.fn(),
+          },
+        ],
+      } as never,
+      env as never,
+    );
+
+    const sentBody = JSON.parse(
+      (fetchSpy.mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(sentBody.html).not.toContain("<script>alert(1)</script>");
+    expect(sentBody.html).toContain("&lt;script&gt;");
+
+    fetchSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 });

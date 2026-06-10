@@ -52,3 +52,21 @@ export function logServerError(
 ): void {
   console.warn(JSON.stringify({ scope, event, ...fields }));
 }
+
+/**
+ * Maskuje e-mail pro logy (GDPR — emaily nepatří do wrangler tail / Logpush).
+ * Zachová doménu a první znak local-partu, aby log zůstal diagnosticky užitečný
+ * (poznám doménu firmy, hrubě spáruji uživatele), ale neexponuje plnou identitu.
+ *
+ *   "patrick@vibecoding.cz" → "p***@vibecoding.cz"
+ *   "ab@firma.cz"           → "a***@firma.cz"
+ *   nevalidní vstup         → "***"
+ */
+export function maskEmail(email: string | null | undefined): string {
+  if (!email) return "***";
+  const at = email.lastIndexOf("@");
+  if (at <= 0) return "***";
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  return `${local[0]}***@${domain}`;
+}

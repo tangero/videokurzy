@@ -128,3 +128,40 @@ describe("POST /internal/auth/verify-add-email", () => {
     expect(row).toBeNull();
   });
 });
+
+describe("Self-service výmaz účtu", () => {
+  it("POST /api/profile/delete vyžaduje auth", async () => {
+    const res = await SELF.fetch("https://test.local/api/profile/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      redirect: "manual",
+    });
+    expect([302, 401]).toContain(res.status);
+  });
+
+  it("GET /profile/delete/confirm s neplatným tokenem → 400 a nic nesmaže", async () => {
+    const res = await SELF.fetch(
+      "https://test.local/profile/delete/confirm?token=neplatny",
+      { redirect: "manual" },
+    );
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain("neplatný");
+  });
+
+  it("GET /profile/delete/confirm bez tokenu → 400", async () => {
+    const res = await SELF.fetch(
+      "https://test.local/profile/delete/confirm",
+      { redirect: "manual" },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("GET /profile přesměruje nepřihlášeného na /login", async () => {
+    const res = await SELF.fetch("https://test.local/profile", {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/login");
+  });
+});

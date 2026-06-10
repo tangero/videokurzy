@@ -102,7 +102,7 @@ progressRoutes.post("/api/progress/:lessonId", requireAuth, async (c) => {
 
         if (nextInModule) return; // not the last free lesson
 
-        const canAccess = await hasAccess(user, db);
+        const canAccess = await hasAccess(user, db, c.env.KV);
         if (canAccess) return; // already has access (purchase, org, or admin)
 
         await sendResendEvent(

@@ -128,6 +128,17 @@ export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "or
     </p>`);
 }
 
+/** Potvrzení self-service výmazu účtu (GDPR). Odkaz platí 15 minut. */
+export function accountDeletionConfirmHtml(confirmUrl: string): string {
+  return emailWrapper(`
+    <p style="font-size: 16px; line-height: 1.5;">Požádali jste o <strong>trvalé smazání svého účtu</strong> na kurzy.vibecoding.cz.</p>
+    <p style="font-size: 16px; line-height: 1.5;">Po potvrzení se smaže váš profil, přihlašovací údaje a postup ve kurzech. Tuto akci nelze vrátit zpět.</p>
+    ${primaryButton(confirmUrl, "Potvrdit smazání účtu")}
+    <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
+      Odkaz je platný 15 minut. Pokud jste o smazání nežádali, tento email ignorujte — nic se nestane.
+    </p>`);
+}
+
 /** B2B — info o schválení domény adminem. */
 export function organizationApprovedHtml(domain: string, loginUrl: string): string {
   return emailWrapper(`

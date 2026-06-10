@@ -382,6 +382,56 @@ export async function deleteAdminUser(db: Db, id: string): Promise<void> {
   await db.delete(user).where(eq(user.id, id));
 }
 
+/**
+ * GDPR self-service výmaz účtu. Na rozdíl od admin deleteAdminUser() navíc
+ * ANONYMIZUJE objednávky (purchase) — účetní stopa (částka, VS, faktura,
+ * datum) zůstává kvůli zákonu o účetnictví, ale osobní údaje (e-mail, jméno,
+ * firma) se přepíšou na neutrální hodnoty, takže z DB nejde osobu zpětně
+ * identifikovat. Faktury ve Fakturoidu jsou samostatný systém s vlastní
+ * retencí a tímhle se nemažou.
+ *
+ * Vrací počet anonymizovaných objednávek (pro audit/log).
+ */
+export async function anonymizeAndDeleteUser(db: Db, id: string): Promise<number> {
+  const u = await db
+    .select({ id: user.id, email: user.email })
+    .from(user)
+    .where(eq(user.id, id))
+    .get();
+  if (!u) throw new Error("Uživatel nenalezen.");
+
+  // Stabilní neidentifikující placeholder. .invalid je rezervovaná TLD
+  // (RFC 2606), takže e-mail nikdy nemůže patřit reálné schránce.
+  const anonEmail = `deleted+${id}@deleted.invalid`;
+  const emailLc = u.email.toLowerCase();
+
+  // Anonymizuj podle userId I podle e-mailu. E-mailová větev je nutná:
+  //  - převodové (FIO/Creditas) objednávky vznikají s userId=NULL a spárování
+  //    s userId probíhá až přes linkPurchasesToUser(), který běží přes
+  //    waitUntil() souběžně — bez e-mailové podmínky by nespárovaný řádek
+  //    s reálným e-mailem výmaz přežil (GDPR díra, greptile P1).
+  //  - purchase.email se ukládá lowercased, proto porovnáváme lowercased.
+  const affected = await db
+    .update(purchase)
+    .set({
+      userId: null,
+      email: anonEmail,
+      companyName: null,
+      companyIco: null,
+      companyDic: null,
+      companyAddress: null,
+      companyCity: null,
+      companyZip: null,
+      contactName: null,
+    })
+    .where(or(eq(purchase.userId, id), eq(purchase.email, emailLc)));
+
+  // user_emails, session, account, progress kaskádují přes FK.
+  await db.delete(user).where(eq(user.id, id));
+
+  return (affected as { meta?: { changes?: number } }).meta?.changes ?? 0;
+}
+
 export async function grantAdminAccess(
   db: Db,
   opts: {

@@ -54,3 +54,13 @@ Bez toho budou nové sloupce/tabulky chybět na produkční D1 a runtime spadne.
   Variables and Secrets). **Ne** přes `wrangler secret put` — to historicky
   chodilo na jiný worker.
 - `npm run deploy` = `wrangler deploy` (bez `--env`). Nesahá se na to.
+
+## Cloudflare Queues
+- Webhooky jedou přes frontu **`videokurzy-webhooks`** (producer `WEBHOOK_QUEUE`).
+  Po vyčerpání retry padají do **`videokurzy-webhooks-dlq`** (dead-letter),
+  kterou obsluhuje `handleDlq` v `src/queue.ts` (alert adminovi, žádný retry).
+- Obě fronty musí existovat **před deployem**, jinak `wrangler deploy` selže na
+  referenci neexistující fronty. Vytvoření:
+  `wrangler queues create videokurzy-webhooks-dlq`.
+- Rozcestník konzumentů je v `src/index.tsx` (`queue:` export) — rozlišuje podle
+  `batch.queue` (sufix `-dlq` → `handleDlq`, jinak `handleQueue`).

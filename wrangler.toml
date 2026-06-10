@@ -25,6 +25,17 @@ binding = "WEBHOOK_QUEUE"
 queue = "videokurzy-webhooks"
 max_batch_size = 5
 max_retries = 3
+# Po vyčerpání max_retries Cloudflare zprávu NEzahodí, ale přesune do DLQ.
+# Bez tohohle by selhaný checkout.session.completed (zákazník zaplatil, ale
+# přístup/faktura nevznikly) zmizel beze stopy.
+dead_letter_queue = "videokurzy-webhooks-dlq"
+
+# DLQ konzument: zprávy, které 3× selhaly v hlavním zpracování. Už neretryuje,
+# jen je zaloguje a upozorní admina na nutný ruční zásah (viz handleDlq).
+[[queues.consumers]]
+queue = "videokurzy-webhooks-dlq"
+max_batch_size = 1
+max_retries = 0
 
 [triggers]
 crons = ["0 3 * * *"]

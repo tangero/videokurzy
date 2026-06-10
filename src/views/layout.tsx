@@ -82,6 +82,9 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
                 <a class="btn btn-ghost btn-sm" href="/dashboard">
                   můj kurz
                 </a>
+                <a class="btn btn-ghost btn-sm" href="/profile">
+                  nastavení
+                </a>
                 <form method="post" action="/logout" style="margin:0;display:inline">
                   <button type="submit" class="btn btn-ghost btn-sm">
                     odhlásit
@@ -113,6 +116,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
               {user ? (
                 <>
                   <a class="mobile-menu-link" href="/dashboard">můj kurz</a>
+                  <a class="mobile-menu-link" href="/profile">nastavení</a>
                   <form method="post" action="/logout" style="margin:0">
                     <button type="submit" class="mobile-menu-link">odhlásit</button>
                   </form>

@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, primaryKey, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import { relations, sql } from "drizzle-orm";
 import { user } from "./auth-schema";
 
@@ -129,6 +129,18 @@ export const purchase = sqliteTable("purchase", {
   uniqueIndex("purchase_creditasTransactionId_unique")
     .on(table.creditasTransactionId)
     .where(sql`${table.creditasTransactionId} IS NOT NULL`),
+  // Hot-path indexy (migrace 0023). hasAccess() filtruje status+expiresAt+(userId|email)
+  // na každém autentizovaném requestu; dva složené indexy kvůli OR větvi.
+  index("idx_purchase_status_expires_user").on(table.status, table.expiresAt, table.userId),
+  index("idx_purchase_status_expires_email").on(table.status, table.expiresAt, table.email),
+  // linkPurchasesToUser() (každá session), admin lookup, párování webhooku.
+  index("idx_purchase_email").on(table.email),
+  // handleSubscriptionDeleted / handleInvoicePaid.
+  index("idx_purchase_stripeSubscriptionId")
+    .on(table.stripeSubscriptionId)
+    .where(sql`${table.stripeSubscriptionId} IS NOT NULL`),
+  // Cron scan nezaplacených převodů + dedup pending objednávky.
+  index("idx_purchase_paymentMethod_status").on(table.paymentMethod, table.status),
 ]);
 
 export const discountInvite = sqliteTable("discount_invite", {

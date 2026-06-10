@@ -7,6 +7,8 @@
  * údaje (ICO/DIČ/adresa) — invoice se vystavuje na e-mail.
  */
 
+import { maskEmail } from "./errors";
+
 const API_BASE = "https://app.fakturoid.cz/api/v3";
 const USER_AGENT = "VibeCoding kurzy (patrick@zandl.cz)";
 
@@ -482,7 +484,7 @@ export async function exportPurchaseInvoice(
       console.error("Fakturoid: record payment failed:", e);
     }
 
-    console.log(`Fakturoid: invoice ${invoice.id} for ${data.email} (${data.type}) → paid`);
+    console.log(`Fakturoid: invoice ${invoice.id} for ${maskEmail(data.email)} (${data.type}) → paid`);
 
     return {
       ok: true,

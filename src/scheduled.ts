@@ -8,6 +8,7 @@ import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas"
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
+import { maskEmail } from "./lib/errors";
 import { applyDiscount } from "./lib/discount";
 import { exportPurchaseInvoice } from "./lib/fakturoid";
 import {
@@ -250,7 +251,7 @@ async function activateMatchedPurchase(
   sendResendEvent(env.RESEND_API_KEY, "purchase.completed", p.email.toLowerCase(), {
     type: p.type,
     paymentMethod: match.bank,
-  }).catch((err) => console.error(`[cron] resend event failed for ${p.email}:`, err));
+  }).catch((err) => console.error(`[cron] resend event failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
 
   // Email s magic linkem ke kurzu — nečekáme na něj, ať jeden výpadek
   // Resendu nezablokuje další pářování.
@@ -261,7 +262,7 @@ async function activateMatchedPurchase(
       `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
       p.type as "individual" | "organization",
     ),
-  }).catch((err) => console.error(`[cron] email send failed for ${p.email}:`, err));
+  }).catch((err) => console.error(`[cron] email send failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
 
   // Vystavit fakturu ve Fakturoidu. Awaitujeme úmyslně — fire-and-forget by
   // worker po skončení handleru zabil a fakturoidInvoiceId by se neuložil,
