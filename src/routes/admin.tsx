@@ -21,6 +21,7 @@ import {
   extendAdminPurchase,
   normalizeSqlTimestampDate,
 } from "../lib/admin-users";
+import { invalidateAccessCache } from "../lib/access";
 import { AdminUsersList, AdminUserDetailView } from "../views/admin-users";
 import { AdminStatsPage } from "../views/admin-stats";
 import { getRetentionCurve } from "../lib/watch-stats";
@@ -1120,6 +1121,7 @@ admin.post("/admin/users/:id/delete", async (c) => {
   const db = drizzle(c.env.DB);
   try {
     await deleteAdminUser(db, id);
+    await invalidateAccessCache(c.env.KV, id);
     return c.redirect("/admin/users?ok=deleted");
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Uživatele se nepodařilo smazat.");
@@ -1147,6 +1149,7 @@ admin.post("/admin/users/:id/purchases/new", async (c) => {
       grantedBy: currentUser.email,
       compReason,
     });
+    await invalidateAccessCache(c.env.KV, id);
     return c.redirect(`/admin/users/${id}?ok=granted`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Grant se nepodařilo přidat.");
@@ -1160,6 +1163,7 @@ admin.post("/admin/users/:id/purchases/:purchaseId/revoke", async (c) => {
   const db = drizzle(c.env.DB);
   try {
     await revokeAdminPurchase(db, { userId: id, purchaseId });
+    await invalidateAccessCache(c.env.KV, id);
     return c.redirect(`/admin/users/${id}?ok=revoked`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Přístup se nepodařilo odebrat.");
@@ -1176,6 +1180,7 @@ admin.post("/admin/users/:id/purchases/:purchaseId/extend", async (c) => {
   try {
     const expiresAt = parseAdminGrantExpiresAt(expiresOn);
     await extendAdminPurchase(db, { userId: id, purchaseId, expiresAt });
+    await invalidateAccessCache(c.env.KV, id);
     return c.redirect(`/admin/users/${id}?ok=extended`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Platnost se nepodařilo upravit.");

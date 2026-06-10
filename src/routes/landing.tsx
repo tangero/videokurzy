@@ -60,7 +60,7 @@ landing.get("/", async (c) => {
   }
 
   // Zjisti přístup přihlášeného uživatele (admin bypass je v hasAccess).
-  const userHasAccess = user ? await hasAccess(user, db) : false;
+  const userHasAccess = user ? await hasAccess(user, db, c.env.KV) : false;
 
   // Načti ceny a výhody z DB, fallback na config hodnoty
   const configRows = await db.select().from(siteConfig);

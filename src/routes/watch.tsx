@@ -82,12 +82,12 @@ watch.get("/watch/:slug", async (c) => {
     }
 
     // Platform-wide access check (no courseId needed). Admins bypass paywall.
-    hasPaidAccess = await hasAccess(user, db);
+    hasPaidAccess = await hasAccess(user, db, c.env.KV);
     if (!hasPaidAccess) {
       return c.redirect("/#cenik");
     }
   } else if (user) {
-    hasPaidAccess = await hasAccess(user, db);
+    hasPaidAccess = await hasAccess(user, db, c.env.KV);
   }
 
   const [allLessons, allProgressRaw, moduleRow, watchRow] = await Promise.all([
