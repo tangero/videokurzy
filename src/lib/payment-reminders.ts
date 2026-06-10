@@ -79,6 +79,7 @@ export async function sendPaymentReminders(
         type: purchase.type,
         paymentMethod: purchase.paymentMethod,
         variableSymbol: purchase.variableSymbol,
+        accessToken: purchase.accessToken,
         discountPercent: purchase.discountPercent,
         expiresAt: purchase.expiresAt,
       })
@@ -116,7 +117,8 @@ export async function sendPaymentReminders(
       const iban = r.paymentMethod === "creditas" ? CREDITAS_PAYMENT_IBAN : PAYMENT_IBAN;
       const accountNumber = r.paymentMethod === "creditas" ? CREDITAS_PAYMENT_ACCOUNT : PAYMENT_ACCOUNT;
       const spd = generateSPD(iban, amount, r.variableSymbol, `Videokurz ${r.email}`);
-      const payUrl = `${env.BETTER_AUTH_URL}/checkout/pay/${r.variableSymbol}`;
+      // Preferuj nehádatelný token; na VS spadni jen u starých objednávek bez tokenu.
+      const payUrl = `${env.BETTER_AUTH_URL}/checkout/pay/${r.accessToken ?? r.variableSymbol}`;
       const cardUrl = `${env.BETTER_AUTH_URL}/checkout/${r.type === "organization" ? "organization" : "individual"}`;
       const dueDate = formatDueDate(r.expiresAt);
 

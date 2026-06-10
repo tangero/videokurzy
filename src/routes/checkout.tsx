@@ -470,7 +470,7 @@ async function startFioCheckout(
   // se stále platnou splatností, přesměruj na ni místo vytváření nové. Bereme
   // libovolnou banku — uživatel má dorazit na svou existující platební stránku.
   const existingPending = await db
-    .select({ vs: purchase.variableSymbol })
+    .select({ vs: purchase.variableSymbol, accessToken: purchase.accessToken })
     .from(purchase)
     .where(
       and(
@@ -482,8 +482,10 @@ async function startFioCheckout(
       )
     )
     .limit(1);
-  if (existingPending.length > 0 && existingPending[0].vs) {
-    return c.redirect(`/checkout/pay/${existingPending[0].vs}`, 303);
+  if (existingPending.length > 0) {
+    // Preferuj token (nehádatelný); na VS spadni jen u starých objednávek bez tokenu.
+    const ref = existingPending[0].accessToken ?? existingPending[0].vs;
+    if (ref) return c.redirect(`/checkout/pay/${ref}`, 303);
   }
 
   // ZD generujeme pro KAŽDOU FIO objednávku — slouží jako doklad pro účtárnu
@@ -492,6 +494,10 @@ async function startFioCheckout(
   // Sekvenci alokujeme jednou — pokud selže VS retry, použijeme stejné ZD číslo.
   const proformaNumber = await nextProformaNumber(db, createdAt);
   const proformaIssuedAt = createdAt;
+
+  // Nehádatelný token pro pay/proforma stránku (oprava IDOR — VS šlo enumerovat).
+  // Generujeme jednou; nanoid kolize je prakticky nemožná, retry řeší jen VS.
+  const accessToken = nanoid();
 
   // Generování VS s odolností proti TOCTOU: při UNIQUE violation opakuj s novým VS (max 5 pokusů).
   let vs: string | null = null;
@@ -545,6 +551,7 @@ async function startFioCheckout(
         contactName: billing?.contactName ?? null,
         proformaNumber,
         proformaIssuedAt,
+        accessToken,
       });
       vs = candidate;
       break;
@@ -562,8 +569,8 @@ async function startFioCheckout(
     return c.text("Chyba při vytváření objednávky. Zkuste to prosím znovu.", 500);
   }
 
-  const payUrl = `${c.env.BETTER_AUTH_URL}/checkout/pay/${vs}`;
-  const proformaUrl = `${c.env.BETTER_AUTH_URL}/checkout/proforma/${vs}`;
+  const payUrl = `${c.env.BETTER_AUTH_URL}/checkout/pay/${accessToken}`;
+  const proformaUrl = `${c.env.BETTER_AUTH_URL}/checkout/proforma/${accessToken}`;
   c.executionCtx.waitUntil(
     sendEmail(c.env, {
       to: email,
@@ -582,22 +589,91 @@ async function startFioCheckout(
     );
   }
 
-  return c.redirect(`/checkout/pay/${vs}`, 303);
+  return c.redirect(`/checkout/pay/${accessToken}`, 303);
+}
+
+// ─── Lookup pay/proforma stránky (token nebo legacy VS) ─────────────
+//
+// Nové objednávky se odkazují přes nehádatelný accessToken (nanoid 21 zn.).
+// Staré e-maily nesou ještě 8místný VS (33/34 + 6 číslic) — ty podporujeme
+// zpětně, ale s per-IP rate-limitem, aby nešel VS prostor enumerovat a číst
+// z pay/proforma stránek PII (oprava IDOR).
+
+// VS je čistě číselný (prefix 33/34 + 6 číslic). Cokoli jiného je token.
+function looksLikeLegacyVs(ref: string): boolean {
+  return /^\d{6,10}$/.test(ref);
+}
+
+// Vrací true, pokud má být požadavek zamítnut (rate-limit aktivní).
+//
+// POZOR: KV není atomické (get+put jsou dvě operace) — souběžný burst ze
+// stejné IP může počítadlo podtéct a propustit víc než limit. Tady to ale
+// vadí minimálně: rate-limit je jen ZTÍŽENÍ enumerace legacy VS, NE bezpečnostní
+// hranice — tou je nehádatelný accessToken (token větev limitu nepodléhá).
+// Zvyšujeme počítadlo PŘED kontrolou (put-then-check), ať se souběžné požadavky
+// aspoň navzájem započítají, jakmile se zápis propíše; pro best-effort obranu
+// proti enumeraci to stačí.
+async function checkPayLookupRateLimit(kv: KVNamespace, ip: string): Promise<boolean> {
+  const key = `pay_lookup_rate:${ip}`;
+  const count = Number((await kv.get(key)) ?? "0");
+  await kv.put(key, String(count + 1), { expirationTtl: 60 });
+  return count >= 10; // max 10 legacy-VS lookupů / minuta / IP
+}
+
+/**
+ * Najde objednávku podle pay/proforma reference (token nebo legacy VS).
+ * Vrací `null` při nenalezení a `"rate_limited"` při překročení limitu na
+ * legacy VS lookup. Token lookup limitu nepodléhá (je nehádatelný).
+ */
+async function findPurchaseByPayRef(
+  c: AppContext,
+  db: ReturnType<typeof drizzle>,
+  ref: string,
+): Promise<typeof purchase.$inferSelect | null | "rate_limited"> {
+  if (looksLikeLegacyVs(ref)) {
+    // Spoléhej JEN na CF-Connecting-IP (Cloudflare ho nastavuje důvěryhodně).
+    // x-forwarded-for jde klientem podvrhnout → čistý bucket každý request,
+    // takže když CF-Connecting-IP chybí, raději přísně zamítni (legacy VS je
+    // okrajová zpětně-kompatibilní cesta, přísnost tu neuškodí). (greptile P2)
+    const ip = c.req.header("CF-Connecting-IP");
+    if (!ip) return "rate_limited";
+    if (await checkPayLookupRateLimit(c.env.KV, ip)) return "rate_limited";
+    const rows = await db
+      .select()
+      .from(purchase)
+      .where(eq(purchase.variableSymbol, ref))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+  const rows = await db
+    .select()
+    .from(purchase)
+    .where(eq(purchase.accessToken, ref))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 // ─── FIO platební stránka ────────────────────────────────────────
 
 checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
-  const vs = c.req.param("vs");
+  const ref = c.req.param("vs");
   const db = drizzle(c.env.DB);
 
-  const rows = await db
-    .select()
-    .from(purchase)
-    .where(eq(purchase.variableSymbol, vs))
-    .limit(1);
+  const found = await findPurchaseByPayRef(c, db, ref);
 
-  if (rows.length === 0) {
+  if (found === "rate_limited") {
+    return c.html(
+      <Layout title="Příliš mnoho požadavků">
+        <section class="max-w-md mx-auto px-4 py-16 text-center">
+          <h1 class="text-2xl font-bold mb-4">Příliš mnoho požadavků</h1>
+          <p class="text-gray-600">Zkuste to prosím za chvíli, nebo otevřete odkaz přímo z e-mailu.</p>
+        </section>
+      </Layout>,
+      429
+    );
+  }
+
+  if (!found) {
     return c.html(
       <Layout title="Objednávka nenalezena">
         <section class="max-w-md mx-auto px-4 py-16 text-center">
@@ -610,7 +686,7 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
     );
   }
 
-  const p = rows[0];
+  const p = found;
 
   if (p.status === "active") {
     return c.redirect(`/login?email=${encodeURIComponent(p.email)}`, 303);
@@ -649,6 +725,7 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
     <Layout title={p.proformaNumber ? `Zálohový doklad ${p.proformaNumber}` : "Platba bankovním převodem"}>
       <PaymentDetails
         variableSymbol={p.variableSymbol!}
+        proformaRef={p.accessToken ?? p.variableSymbol!}
         amount={price}
         account={bank.account}
         iban={bank.iban}
@@ -814,16 +891,24 @@ checkoutRoutes.get("/api/ares-lookup", async (c) => {
 // ─── Zálohový doklad render ──────────────────────────────────────
 
 checkoutRoutes.get("/checkout/proforma/:vs", async (c) => {
-  const vs = c.req.param("vs");
+  const ref = c.req.param("vs");
   const db = drizzle(c.env.DB);
 
-  const rows = await db
-    .select()
-    .from(purchase)
-    .where(eq(purchase.variableSymbol, vs))
-    .limit(1);
+  const found = await findPurchaseByPayRef(c, db, ref);
 
-  if (rows.length === 0 || !rows[0].proformaNumber) {
+  if (found === "rate_limited") {
+    return c.html(
+      <Layout title="Příliš mnoho požadavků">
+        <section class="max-w-md mx-auto px-4 py-16 text-center">
+          <h1 class="text-2xl font-bold mb-4">Příliš mnoho požadavků</h1>
+          <p class="text-gray-600">Zkuste to prosím za chvíli, nebo otevřete odkaz přímo z e-mailu.</p>
+        </section>
+      </Layout>,
+      429,
+    );
+  }
+
+  if (!found || !found.proformaNumber) {
     return c.html(
       <Layout title="Zálohový doklad nenalezen">
         <section class="max-w-md mx-auto px-4 py-16 text-center">
@@ -835,7 +920,7 @@ checkoutRoutes.get("/checkout/proforma/:vs", async (c) => {
     );
   }
 
-  const p = rows[0];
+  const p = found;
   const prices = await getPrices(db);
   const fullPrice = p.type === "organization" ? prices.organization : prices.individual;
   // Preferuj uloženou částku z doby objednávky; recompute z aktuálního ceníku

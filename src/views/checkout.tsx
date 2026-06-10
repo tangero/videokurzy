@@ -313,6 +313,9 @@ export const CheckoutSelect: FC<{
 
 export interface PaymentDetailsProps {
   variableSymbol: string;
+  // Nehádatelný token pro odkaz na proforma stránku (oprava IDOR). Fallback
+  // na VS jen u starých objednávek bez tokenu.
+  proformaRef: string;
   amount: number;
   account: string;
   iban: string;
@@ -455,7 +458,7 @@ export const PaymentDetails: FC<PaymentDetailsProps> = (p) => {
             </button>
             {p.proformaNumber && (
               <a
-                href={`/checkout/proforma/${p.variableSymbol}`}
+                href={`/checkout/proforma/${p.proformaRef}`}
                 target="_blank"
                 rel="noopener"
                 class="flex-1 text-center bg-white border border-gray-300 text-gray-900 font-semibold px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors min-h-[44px]"
