@@ -118,6 +118,9 @@ export const purchase = sqliteTable("purchase", {
   // tam stačí finální faktura). Formát: ZD-YYYY-NNN, unikátní napříč rokem.
   proformaNumber: text("proformaNumber").unique(),
   proformaIssuedAt: integer("proformaIssuedAt", { mode: "timestamp" }),
+  // Nehádatelný token (nanoid) pro přístup k pay/proforma stránce — oprava
+  // IDOR (VS šlo enumerovat). Nullable: staré objednávky token nemají.
+  accessToken: text("accessToken"),
 }, (table) => [
   // Partial unique index: zabraňuje dvojímu spárování stejné FIO transakce
   // (defense-in-depth proti double-spend, finding 28). NULL je povolen
@@ -141,6 +144,10 @@ export const purchase = sqliteTable("purchase", {
     .where(sql`${table.stripeSubscriptionId} IS NOT NULL`),
   // Cron scan nezaplacených převodů + dedup pending objednávky.
   index("idx_purchase_paymentMethod_status").on(table.paymentMethod, table.status),
+  // Lookup pay/proforma stránky přes nehádatelný token (oprava IDOR, migrace 0024).
+  uniqueIndex("purchase_accessToken_unique")
+    .on(table.accessToken)
+    .where(sql`${table.accessToken} IS NOT NULL`),
 ]);
 
 export const discountInvite = sqliteTable("discount_invite", {
