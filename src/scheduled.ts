@@ -3,7 +3,7 @@ import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
 import { purchase, siteConfig, lesson, videoStats } from "./db/schema";
 import { sendRenewalReminders } from "./lib/renewal-reminders";
 import { sendPaymentReminders } from "./lib/payment-reminders";
-import { fetchFioTransactions, matchPayment } from "./lib/fio";
+import { fetchFioTransactions, fioProxyFromEnv, matchPayment } from "./lib/fio";
 import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas";
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
@@ -24,7 +24,7 @@ import type { Env } from "./types";
  * Cron registrován v wrangler.toml: `[triggers] crons = ["0 3 * * *"]` (denně 03:00 UTC).
  *
  * Úkoly:
- * 1. Spárování došlých FIO plateb s pending objednávkami.
+ * 1. Spárování došlých bankovních plateb (FIO i Creditas) s pending objednávkami.
  * 2. Payment reminders pro nezaplacené pending FIO objednávky (2 a 5 dní po vytvoření).
  * 3. Expirace pending FIO objednávek po splatnosti + storno email.
  * 4. Renewal reminders pro aktivní FIO předplatné (21/14/7/1 den před expirací).
@@ -41,17 +41,14 @@ export async function handleScheduled(
   const now = new Date();
 
   try {
-    const result = await scanFioPayments(db, env);
-    console.log(`[cron] FIO scan: matched=${result.matched}, skipped=${result.skipped}`);
+    // Jeden scan proti oběma bankám (FIO i Creditas) — viz scanBankPayments.
+    const result = await scanBankPayments(db, env);
+    console.log(
+      `[cron] bank scan: matched=${result.matched}, skipped=${result.skipped}` +
+        (result.errors.length ? `, errors=${result.errors.join("; ")}` : ""),
+    );
   } catch (err) {
-    console.error("[cron] scanFioPayments failed:", err);
-  }
-
-  try {
-    const result = await scanCreditasPayments(db, env);
-    console.log(`[cron] Creditas scan: matched=${result.matched}, skipped=${result.skipped}`);
-  } catch (err) {
-    console.error("[cron] scanCreditasPayments failed:", err);
+    console.error("[cron] scanBankPayments failed:", err);
   }
 
   try {
@@ -88,32 +85,63 @@ export async function handleScheduled(
 }
 
 /**
- * Načte FIO transakce za posledních FIO_LOOKBACK_DAYS, projde pending FIO
- * objednávky a každou se pokusí spárovat. Při shodě nastaví status=active,
- * uloží transactionId, pošle confirmation email.
+ * Spáruje došlé bankovní platby s pending převodovými objednávkami — proti
+ * OBĚMA bankám zároveň (FIO i Creditas).
  *
- * Vrací { matched, skipped }.
+ * Historicky se každá objednávka párovala jen proti bance ze svého
+ * `paymentMethod` (FIO objednávka jen proti FIO, Creditas jen proti Creditas).
+ * Jenže lidé reálně platí, kam mají uložený účet — typicky pošlou Creditas
+ * objednávku na starý FIO účet podle dřívější faktury. Taková platba pak
+ * uvízla jako nespárovaná napořád. Teď zkoušíme každou objednávku proti oběma
+ * sadám transakcí; transakce se zapíše do sloupce podle banky, kde se reálně
+ * našla, ne podle `paymentMethod`.
+ *
+ * Selhání načtení jedné banky (např. FIO 525 z Workers) nezablokuje druhou —
+ * objednávky se spárují proti tomu, co se načíst povedlo.
+ *
+ * Vrací { matched, skipped, errors } agregovaně za obě banky.
  */
-export async function scanFioPayments(
+export async function scanBankPayments(
   db: ReturnType<typeof drizzle>,
   env: Env,
 ): Promise<{ matched: number; skipped: number; errors: string[] }> {
   const pending = await db
     .select()
     .from(purchase)
-    .where(and(eq(purchase.status, "pending"), eq(purchase.paymentMethod, "fio")));
+    .where(
+      and(
+        eq(purchase.status, "pending"),
+        inArray(purchase.paymentMethod, ["fio", "creditas"]),
+      ),
+    );
 
   if (pending.length === 0) {
     return { matched: 0, skipped: 0, errors: [] };
   }
 
-  const fio = await fetchFioTransactions(env.FIO_API_TOKEN, FIO_LOOKBACK_DAYS);
-  if (!fio.ok) {
-    return {
-      matched: 0,
-      skipped: pending.length,
-      errors: [`FIO fetch failed: ${fio.status} ${fio.error}`],
-    };
+  const errors: string[] = [];
+
+  // Načti obě banky nezávisle — chyba jedné nesmí shodit druhou.
+  const fio = await fetchFioTransactions(
+    env.FIO_API_TOKEN,
+    FIO_LOOKBACK_DAYS,
+    fioProxyFromEnv(env),
+  );
+  if (!fio.ok) errors.push(`FIO fetch failed: ${fio.status} ${fio.error}`);
+
+  const cre = await fetchCreditasTransactions(
+    env.CREDITAS_API_TOKEN ?? "dev",
+    env.CREDITAS_IDENTIFIKATOR ?? "",
+    FIO_LOOKBACK_DAYS,
+  );
+  if (!cre.ok) errors.push(`Creditas fetch failed: ${cre.status} ${cre.error}`);
+
+  const fioTxs = fio.ok ? fio.transactions : [];
+  const creTxs = cre.ok ? cre.transactions : [];
+
+  // Obě banky selhaly — nemáme co párovat, vše skip.
+  if (!fio.ok && !cre.ok) {
+    return { matched: 0, skipped: pending.length, errors };
   }
 
   // Načti aktuální ceny z site_config.
@@ -122,29 +150,71 @@ export async function scanFioPayments(
   const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
   const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
 
-  // Aby jeden FIO převod nepárovaly dvě objednávky, držíme set transaction ID,
-  // které už byly použité na páry v tomto běhu.
-  const used = new Set<number>();
+  // Dedup per banka — jeden převod nesmí spárovat dvě objednávky. FIO ID je
+  // číslo, Creditas string, proto dva oddělené sety.
+  const usedFio = new Set<number>();
+  const usedCre = new Set<string>();
   let matched = 0;
-  const errors: string[] = [];
+
+  // Napárované páry posbírané ve fázi matchingu; aktivují se až potom.
+  const pendingMatches: Array<{
+    p: typeof purchase.$inferSelect;
+    bank: "fio" | "creditas";
+    transactionId: string;
+    amountPaid: number;
+  }> = [];
 
   for (const p of pending) {
     if (!p.variableSymbol) continue;
     const fullExpected = p.type === "organization" ? priceOrganization : priceIndividual;
     const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
-    const result = matchPayment(fio.transactions, p.variableSymbol, expectedAmount, used);
-    if (!result.found || !result.transaction) continue;
 
-    used.add(result.transaction.id);
-    try {
-      await activateMatchedPurchase(db, env, p, {
+    // Pořadí: nejdřív zkus „vlastní" banku objednávky (nejčastější případ),
+    // pak druhou. U Creditas objednávky tedy nejdřív Creditas, pak FIO fallback.
+    const tryFio = (): boolean => {
+      const r = matchPayment(fioTxs, p.variableSymbol!, expectedAmount, usedFio);
+      if (!r.found || !r.transaction) return false;
+      usedFio.add(r.transaction.id);
+      pendingMatches.push({
+        p,
         bank: "fio",
-        transactionId: String(result.transaction.id),
-        amountPaid: result.transaction.amount,
+        transactionId: String(r.transaction.id),
+        amountPaid: r.transaction.amount,
+      });
+      return true;
+    };
+    const tryCre = (): boolean => {
+      const r = matchCreditasPayment(creTxs, p.variableSymbol!, expectedAmount, usedCre);
+      if (!r.found || !r.transaction) return false;
+      usedCre.add(r.transaction.id);
+      pendingMatches.push({
+        p,
+        bank: "creditas",
+        transactionId: r.transaction.id,
+        amountPaid: r.transaction.amount,
+      });
+      return true;
+    };
+
+    if (p.paymentMethod === "creditas") {
+      if (!tryCre()) tryFio();
+    } else {
+      if (!tryFio()) tryCre();
+    }
+  }
+
+  // Aktivace až po napárování všech — držíme dedup sety konzistentní a
+  // neblokujeme matching pomalými side-effecty (Fakturoid, email).
+  for (const m of pendingMatches) {
+    try {
+      await activateMatchedPurchase(db, env, m.p, {
+        bank: m.bank,
+        transactionId: m.transactionId,
+        amountPaid: m.amountPaid,
       });
       matched++;
     } catch (err) {
-      errors.push(`update purchase ${p.id} failed: ${(err as Error).message}`);
+      errors.push(`update purchase ${m.p.id} failed: ${(err as Error).message}`);
     }
   }
 
@@ -152,67 +222,15 @@ export async function scanFioPayments(
 }
 
 /**
- * Načte Creditas transakce za posledních FIO_LOOKBACK_DAYS, projde pending
- * Creditas objednávky a každou se pokusí spárovat (stejná logika jako u FIO).
- * Při shodě nastaví status=active, uloží creditasTransactionId, pošle email.
+ * Zpětně kompatibilní wrapper. Dřív pároval jen FIO objednávky proti FIO;
+ * teď deleguje na cross-bank `scanBankPayments`. Ponechán kvůli ručnímu scanu
+ * v adminu (`/admin/api/fio/scan`) a partner/internal callsite.
  */
-export async function scanCreditasPayments(
+export async function scanFioPayments(
   db: ReturnType<typeof drizzle>,
   env: Env,
 ): Promise<{ matched: number; skipped: number; errors: string[] }> {
-  const pending = await db
-    .select()
-    .from(purchase)
-    .where(and(eq(purchase.status, "pending"), eq(purchase.paymentMethod, "creditas")));
-
-  if (pending.length === 0) {
-    return { matched: 0, skipped: 0, errors: [] };
-  }
-
-  const cre = await fetchCreditasTransactions(
-    env.CREDITAS_API_TOKEN ?? "dev",
-    env.CREDITAS_IDENTIFIKATOR ?? "",
-    FIO_LOOKBACK_DAYS,
-  );
-  if (!cre.ok) {
-    return {
-      matched: 0,
-      skipped: pending.length,
-      errors: [`Creditas fetch failed: ${cre.status} ${cre.error}`],
-    };
-  }
-
-  const cfgRows = await db.select().from(siteConfig);
-  const cfg = Object.fromEntries(cfgRows.map((r) => [r.key, r.value]));
-  const priceIndividual = parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10);
-  const priceOrganization = parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10);
-
-  // Dedup v rámci běhu — jeden Creditas převod nepárují dvě objednávky.
-  const used = new Set<string>();
-  let matched = 0;
-  const errors: string[] = [];
-
-  for (const p of pending) {
-    if (!p.variableSymbol) continue;
-    const fullExpected = p.type === "organization" ? priceOrganization : priceIndividual;
-    const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
-    const result = matchCreditasPayment(cre.transactions, p.variableSymbol, expectedAmount, used);
-    if (!result.found || !result.transaction) continue;
-
-    used.add(result.transaction.id);
-    try {
-      await activateMatchedPurchase(db, env, p, {
-        bank: "creditas",
-        transactionId: result.transaction.id,
-        amountPaid: result.transaction.amount,
-      });
-      matched++;
-    } catch (err) {
-      errors.push(`update purchase ${p.id} failed: ${(err as Error).message}`);
-    }
-  }
-
-  return { matched, skipped: pending.length - matched, errors };
+  return scanBankPayments(db, env);
 }
 
 /**

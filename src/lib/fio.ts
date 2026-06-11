@@ -110,10 +110,18 @@ export function generateSPD(
 /**
  * Volá FIO API a vrací seznam transakcí.
  * V dev režimu (token === "dev") vrací prázdný seznam (platbu simuluj přes /dev/fio/pay).
+ *
+ * `proxy` (volitelné): když je dodané, request jde přes FIO proxy na rock8.cloud
+ * místo přímo na fioapi.fio.cz. Důvod — Cloudflare Workers fetch() nedokončí TLS
+ * handshake s FIO serverem (neumí ALPN) a vrací 525. Proxy běží v Node.js, kde
+ * spojení projde, a relayuje JSON 1:1. FIO token pak drží proxy; worker posílá
+ * jen datumový rozsah a autentizuje se `proxy.secret`. Bez `proxy` se volá FIO
+ * přímo (lokální dev / prostředí mimo Workers).
  */
 export async function fetchFioTransactions(
   token: string,
   daysBack: number,
+  proxy?: { url: string; secret: string },
 ): Promise<
   | { ok: true; transactions: FioTransaction[] }
   | { ok: false; error: string; status: number }
@@ -123,9 +131,23 @@ export async function fetchFioTransactions(
   }
 
   const { dateFrom, dateTo } = getFioDateRange(daysBack);
-  const url = `https://fioapi.fio.cz/v1/rest/periods/${token}/${dateFrom}/${dateTo}/transactions.json`;
 
-  const response = await fetch(url);
+  let response: Response;
+  if (proxy?.url) {
+    // Přes proxy — token v URL není, žije na proxy; datumy jako query.
+    const base = proxy.url.replace(/\/+$/, "");
+    const url = `${base}/transactions?dateFrom=${dateFrom}&dateTo=${dateTo}`;
+    try {
+      response = await fetch(url, {
+        headers: { authorization: `Bearer ${proxy.secret}` },
+      });
+    } catch (err) {
+      return { ok: false, error: `FIO proxy unreachable — ${(err as Error).message}`, status: 502 };
+    }
+  } else {
+    const url = `https://fioapi.fio.cz/v1/rest/periods/${token}/${dateFrom}/${dateTo}/transactions.json`;
+    response = await fetch(url);
+  }
 
   if (response.status === 409) {
     return { ok: false, error: "rate_limit", status: 429 };
@@ -134,6 +156,7 @@ export async function fetchFioTransactions(
   if (!response.ok) {
     // FIO často vrací 500 i pro „validní" stavy (neplatný token, příliš
     // velký rozsah, nedostupný účet). Vytáhneme tělo, ať admin vidí důvod.
+    // Přes proxy je tělo a status relayované 1:1, takže parsování je stejné.
     const bodyText = await response.text().catch(() => "");
     const detail = bodyText ? ` — ${bodyText.slice(0, 200).replace(/\s+/g, " ")}` : "";
     return {
@@ -146,4 +169,18 @@ export async function fetchFioTransactions(
   const data = (await response.json()) as FioApiResponse;
   const transactions = data.accountStatement?.transactionList?.transaction ?? [];
   return { ok: true, transactions };
+}
+
+/**
+ * Helper: poskládá `proxy` argument z env, nebo vrátí undefined (přímé volání).
+ * Proxy se použije jen když jsou nastavené OBĚ proměnné — URL i secret.
+ */
+export function fioProxyFromEnv(env: {
+  FIO_PROXY_URL?: string;
+  FIO_PROXY_SECRET?: string;
+}): { url: string; secret: string } | undefined {
+  if (env.FIO_PROXY_URL && env.FIO_PROXY_SECRET) {
+    return { url: env.FIO_PROXY_URL, secret: env.FIO_PROXY_SECRET };
+  }
+  return undefined;
 }

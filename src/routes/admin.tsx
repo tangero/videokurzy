@@ -19,6 +19,7 @@ import {
   grantAdminAccess,
   revokeAdminPurchase,
   extendAdminPurchase,
+  manuallyConfirmPayment,
   normalizeSqlTimestampDate,
 } from "../lib/admin-users";
 import { invalidateAccessCache } from "../lib/access";
@@ -37,6 +38,7 @@ import {
 import { countDiscountedActivePurchases } from "../lib/discount";
 import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
 import { scanFioPayments } from "../scheduled";
+import { fioProxyFromEnv } from "../lib/fio";
 import {
   exportPurchaseInvoice,
   fetchInvoice,
@@ -256,13 +258,14 @@ admin.get("/admin", async (c) => {
   const [purchaseCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase);
-  // Rozpad pro karty: zaplacené = active a kind='paid', granty = kind='comp',
+  // Rozpad pro karty: zaplacené = active a kind in ('paid','manual') (obojí
+  // reálné peníze — manual je platba potvrzená ručně adminem), granty = kind='comp',
   // pending = čekající na FIO/Stripe. Staff řádky (kind='staff') jsou audit
   // přístupu administrátorů a do business statistik nepatří.
   const [purchasePaidCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase)
-    .where(and(eq(purchase.status, "active"), eq(purchase.kind, "paid")));
+    .where(and(eq(purchase.status, "active"), inArray(purchase.kind, ["paid", "manual"])));
   const [purchaseGrantCount] = await db
     .select({ count: sql<number>`count(*)` })
     .from(purchase)
@@ -272,23 +275,24 @@ admin.get("/admin", async (c) => {
     .from(purchase)
     .where(eq(purchase.status, "pending"));
 
-  // Skutečně zaplacené peníze: součet purchase.amountPaid přes kind='paid'
-  // a status IN (active, expired). Pending a refunded vynecháváme.
-  // amountPaid se plní při Stripe webhooku (amount_total / 100) a FIO match
-  // (tx.amount). Historická data jsou backfillnuta na 1500 Kč (mig. 0014).
+  // Skutečně zaplacené peníze: součet purchase.amountPaid přes reálné platby
+  // (kind IN paid, manual) a status IN (active, expired). Pending a refunded
+  // vynecháváme. amountPaid se plní při Stripe webhooku (amount_total / 100),
+  // FIO/Creditas match (tx.amount) a ručním potvrzení platby (manual).
+  // Historická data jsou backfillnuta na 1500 Kč (mig. 0014).
   const [revenueTotalRow] = await db
     .select({ sum: sql<number>`coalesce(sum(${purchase.amountPaid}), 0)` })
     .from(purchase)
     .where(
       and(
-        eq(purchase.kind, "paid"),
+        inArray(purchase.kind, ["paid", "manual"]),
         or(eq(purchase.status, "active"), eq(purchase.status, "expired")),
       ),
     );
   const [revenueActiveRow] = await db
     .select({ sum: sql<number>`coalesce(sum(${purchase.amountPaid}), 0)` })
     .from(purchase)
-    .where(and(eq(purchase.kind, "paid"), eq(purchase.status, "active")));
+    .where(and(inArray(purchase.kind, ["paid", "manual"]), eq(purchase.status, "active")));
   const totalRevenueCzk = Number(revenueTotalRow?.sum ?? 0);
   const revenueActiveCzk = Number(revenueActiveRow?.sum ?? 0);
   const formatCzk = (v: number) => `${v.toLocaleString("cs-CZ")} Kč`;
@@ -669,10 +673,14 @@ admin.get("/admin", async (c) => {
                       if (p.grantedBy) detail += ` (${p.grantedBy})`;
                       if (p.compReason) detail += ` — ${p.compReason}`;
                     }
+                  } else if (p.kind === "manual") {
+                    detail += " · ručně potvrzeno";
+                    if (p.grantedBy) detail += ` (${p.grantedBy})`;
                   } else {
                     if (isTestStripe) detail += " · ⚠ test mode";
                     else if (p.paymentMethod === "stripe") detail += " · Stripe";
                     else if (p.paymentMethod === "fio") detail += " · FIO";
+                    else if (p.paymentMethod === "creditas") detail += " · Creditas";
                   }
 
                   statusBadge = isGrant
@@ -868,14 +876,14 @@ admin.get("/admin/stats", async (c) => {
 
   const buyerRow = (await db.get(sql`
     SELECT
-      (SELECT count(*) FROM purchase WHERE kind='paid') AS paidCount,
-      (SELECT coalesce(sum(amountPaid),0) FROM purchase WHERE kind='paid') AS revenue,
+      (SELECT count(*) FROM purchase WHERE kind IN ('paid','manual')) AS paidCount,
+      (SELECT coalesce(sum(amountPaid),0) FROM purchase WHERE kind IN ('paid','manual')) AS revenue,
       (SELECT count(*) FROM purchase WHERE kind='paid' AND status='active' AND paymentMethod='stripe') AS stripeActive,
       (SELECT count(*) FROM purchase WHERE kind='paid' AND status='active' AND paymentMethod='fio') AS fioActive,
-      (SELECT count(*) FROM purchase WHERE kind='paid' AND companyIco IS NOT NULL AND companyIco<>'') AS withIco,
+      (SELECT count(*) FROM purchase WHERE kind IN ('paid','manual') AND companyIco IS NOT NULL AND companyIco<>'') AS withIco,
       (SELECT count(*) FROM user) AS accounts,
-      (SELECT count(*) FROM purchase WHERE kind='paid' AND status='active' AND userId IS NULL) AS noAccount,
-      (SELECT count(*) FROM (SELECT DISTINCT p.userId FROM purchase p WHERE p.kind='paid' AND p.status='active' AND p.userId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM progress pr WHERE pr.userId=p.userId AND pr.completed=1))) AS notStarted
+      (SELECT count(*) FROM purchase WHERE kind IN ('paid','manual') AND status='active' AND userId IS NULL) AS noAccount,
+      (SELECT count(*) FROM (SELECT DISTINCT p.userId FROM purchase p WHERE p.kind IN ('paid','manual') AND p.status='active' AND p.userId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM progress pr WHERE pr.userId=p.userId AND pr.completed=1))) AS notStarted
   `)) as {
     paidCount: number; revenue: number; stripeActive: number; fioActive: number;
     withIco: number; accounts: number; noAccount: number; notStarted: number;
@@ -1042,6 +1050,7 @@ const FLASH_MESSAGES: Record<string, { kind: "ok" | "err"; text: string }> = {
   saved: { kind: "ok", text: "Změny uloženy." },
   deleted: { kind: "ok", text: "Uživatel smazán." },
   granted: { kind: "ok", text: "Přístup přidán." },
+  confirmed: { kind: "ok", text: "Platba potvrzena ručně." },
   revoked: { kind: "ok", text: "Přístup odebrán." },
   extended: { kind: "ok", text: "Platnost přístupu upravena." },
 };
@@ -1184,6 +1193,33 @@ admin.post("/admin/users/:id/purchases/:purchaseId/extend", async (c) => {
     return c.redirect(`/admin/users/${id}?ok=extended`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Platnost se nepodařilo upravit.");
+    return c.redirect(`/admin/users/${id}?err=${message}`);
+  }
+});
+
+admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
+  const currentUser = c.get("user")!;
+  const id = c.req.param("id");
+  const purchaseId = parseInt(c.req.param("purchaseId"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  // Volitelná korekce částky — prázdné pole = použij očekávanou z objednávky.
+  const rawAmount = String(body.amountPaid ?? "").trim();
+  const amountPaid = rawAmount === "" ? undefined : parseInt(rawAmount, 10);
+  try {
+    if (amountPaid !== undefined && (!Number.isFinite(amountPaid) || amountPaid < 0)) {
+      throw new Error("Neplatná částka.");
+    }
+    await manuallyConfirmPayment(db, {
+      userId: id,
+      purchaseId,
+      grantedBy: currentUser.email,
+      amountPaid,
+    });
+    await invalidateAccessCache(c.env.KV, id);
+    return c.redirect(`/admin/users/${id}?ok=confirmed`);
+  } catch (err) {
+    const message = encodeURIComponent((err as Error).message || "Platbu se nepodařilo potvrdit.");
     return c.redirect(`/admin/users/${id}?err=${message}`);
   }
 });
@@ -1581,6 +1617,29 @@ admin.get("/admin/api/fio/diagnose", async (c) => {
     }
   }
 
+  // Když je nastavená FIO proxy (rock8.cloud), testuj přímo přes ni — to je
+  // cesta, kterou worker reálně používá (přímé volání FIO z Workers padá na 525).
+  const proxy = fioProxyFromEnv(c.env);
+  if (proxy) {
+    async function tryProxy(name: string, dateFrom: string, dateTo: string) {
+      try {
+        const url = `${proxy!.url.replace(/\/+$/, "")}/transactions?dateFrom=${dateFrom}&dateTo=${dateTo}`;
+        const res = await fetch(url, { headers: { authorization: `Bearer ${proxy!.secret}` } });
+        const body = await res.text().catch(() => "");
+        return { name, url, status: res.status, ok: res.ok, bodyHead: body.slice(0, 600), bodyLength: body.length };
+      } catch (err) {
+        return { name, error: (err as Error).message };
+      }
+    }
+    const week = await tryProxy("proxy 7d", weekAgo, today);
+    const month = await tryProxy("proxy 28d", twentyEightAgo, today);
+    return c.json(
+      { mode: "proxy", proxyUrl: proxy.url, tokenHint, tests: [week, month] },
+      200,
+      { "Cache-Control": "no-store" },
+    );
+  }
+
   const last = await tryEndpoint("last", `/v1/rest/last/${token}/transactions.json`);
   // FIO rate-limituje 1/min, mezi voláními počkáme — ale 3 volání během několika sekund
   // často FIO toleruje. Pokud uvidíme 409, víme co to znamená.
@@ -1589,7 +1648,7 @@ admin.get("/admin/api/fio/diagnose", async (c) => {
   await new Promise((r) => setTimeout(r, 1000));
   const month = await tryEndpoint("periods 28d", `/v1/rest/periods/${token}/${twentyEightAgo}/${today}/transactions.json`);
 
-  return c.json({ tokenHint, tests: [last, week, month] }, 200, { "Cache-Control": "no-store" });
+  return c.json({ mode: "direct", tokenHint, tests: [last, week, month] }, 200, { "Cache-Control": "no-store" });
 });
 
 const FIO_SCAN_COOLDOWN_MS = 60 * 1000; // FIO API rate limit ~30s, držíme 60s buffer.

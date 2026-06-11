@@ -233,7 +233,9 @@ export async function listAdminUsers(
   for (const p of activePurchases) {
     const userId = p.userId ?? emailToId.get(p.email.toLowerCase()) ?? null;
     if (!userId) continue;
-    const source: "paid" | "grant" = p.kind === "paid" ? "paid" : "grant";
+    // 'paid' i 'manual' jsou reálné platby; 'comp'/'staff' jsou granty zdarma.
+    const source: "paid" | "grant" =
+      p.kind === "paid" || p.kind === "manual" ? "paid" : "grant";
     const expiresAt = normalizeSqlTimestampDate(p.expiresAt);
     if (!expiresAt) continue;
     const prev = activeByUser.get(userId);
@@ -285,9 +287,11 @@ export type AdminUserDetail = {
     status: "pending" | "active" | "expired" | "refunded";
     expiresAt: Date;
     createdAt: Date;
-    kind: "paid" | "comp" | "staff";
+    kind: "paid" | "manual" | "comp" | "staff";
     compReason: string | null;
     grantedBy: string | null;
+    variableSymbol: string | null;
+    amountPaid: number;
   }[];
   progressCount: number;
   lastActivityAt: Date | null;
@@ -348,6 +352,8 @@ export async function getAdminUserDetail(db: Db, id: string): Promise<AdminUserD
       kind: p.kind,
       compReason: p.compReason ?? null,
       grantedBy: p.grantedBy ?? null,
+      variableSymbol: p.variableSymbol ?? null,
+      amountPaid: p.amountPaid,
     })),
     progressCount: progressRow?.c ?? 0,
     lastActivityAt: normalizeSqlTimestampDate(lastActivityRow?.last),
@@ -496,6 +502,63 @@ export async function extendAdminPurchase(
   await db
     .update(purchase)
     .set({ status: "active", expiresAt: opts.expiresAt })
+    .where(eq(purchase.id, opts.purchaseId));
+}
+
+/**
+ * Ručně potvrdí REÁLNĚ přijatou platbu, kterou automatické párování (FIO/Creditas
+ * scan) nezachytilo — typicky převod na banku, jejíž scan ještě neběží, nebo
+ * platba s rozbitým VS. Liší se od grantu: peníze reálně dorazily, takže výsledek
+ * je `kind='manual'` (počítá se do revenue, na rozdíl od `comp`/`staff`).
+ *
+ * Aktivuje konkrétní pending objednávku — NEZAKLÁDÁ druhý řádek. Tím zůstane
+ * zachovaný původní VS, typ licence i očekávaná částka a objednávka přestane
+ * figurovat v upomínkách nezaplacených plateb.
+ */
+export async function manuallyConfirmPayment(
+  db: Db,
+  opts: {
+    userId: string;
+    purchaseId: number;
+    grantedBy?: string | null;
+    /** Reálně přijatá částka v Kč. Když není zadaná, použije se očekávaná z objednávky. */
+    amountPaid?: number;
+  },
+): Promise<void> {
+  const row = await db
+    .select({
+      id: purchase.id,
+      status: purchase.status,
+      kind: purchase.kind,
+      expiresAt: purchase.expiresAt,
+      amountPaid: purchase.amountPaid,
+    })
+    .from(purchase)
+    .where(and(eq(purchase.id, opts.purchaseId), eq(purchase.userId, opts.userId)))
+    .get();
+  if (!row) throw new Error("Objednávka nenalezena.");
+  if (row.status !== "pending") {
+    throw new Error("Ručně potvrdit lze jen objednávku ve stavu pending.");
+  }
+  if (row.kind !== "paid") {
+    throw new Error("Tato objednávka není reálná platba (je to grant).");
+  }
+
+  const now = new Date();
+  // Platnost: pokud původní expiraci už máme za sebou (objednávka dlouho visela),
+  // posuneme o rok od potvrzení — jinak by uživatel dostal přístup už propadlý.
+  const expiresAt = row.expiresAt > now ? row.expiresAt : new Date(now.getTime() + 365 * DAY_MS);
+  const amountPaid = opts.amountPaid ?? row.amountPaid;
+
+  await db
+    .update(purchase)
+    .set({
+      status: "active",
+      kind: "manual",
+      amountPaid,
+      grantedBy: opts.grantedBy ?? null,
+      expiresAt,
+    })
     .where(eq(purchase.id, opts.purchaseId));
 }
 

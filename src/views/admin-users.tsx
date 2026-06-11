@@ -369,6 +369,11 @@ export function AdminUserDetailView({
                   <td class="py-2 pr-2 text-gray-500 text-xs">
                     {p.kind === "paid" ? (
                       <span>{p.paymentMethod}</span>
+                    ) : p.kind === "manual" ? (
+                      <span class="text-emerald-700">
+                        ručně potvrzeno ({p.paymentMethod})
+                        {p.grantedBy && <span class="block text-[10px] text-gray-400">{p.grantedBy}</span>}
+                      </span>
                     ) : p.kind === "staff" ? (
                       <span class="text-blue-700">staff (admin)</span>
                     ) : (
@@ -382,6 +387,28 @@ export function AdminUserDetailView({
                   <td class="py-2 pr-2 text-gray-500">{formatDate(p.createdAt)}</td>
                   <td class="py-2 text-right">
                     <div class="flex justify-end gap-2">
+                      {p.status === "pending" && p.kind === "paid" && (
+                        <form
+                          method="post"
+                          action={`/admin/users/${user.id}/purchases/${p.id}/confirm`}
+                          class="flex items-center gap-1"
+                          onsubmit="return confirm('Potvrdit, že tato platba reálně dorazila? Objednávka se aktivuje a započítá do tržeb.');"
+                          title="Použij, když převod dorazil, ale automatické párování (FIO/Creditas) ho nezachytilo."
+                        >
+                          <input
+                            type="number"
+                            name="amountPaid"
+                            min="0"
+                            placeholder={String(p.amountPaid || "")}
+                            value={p.amountPaid || ""}
+                            class="w-20 rounded border px-2 py-1 text-xs"
+                            title="Reálně přijatá částka v Kč (předvyplněno z očekávané)."
+                          />
+                          <button class="text-xs bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700">
+                            Potvrdit platbu
+                          </button>
+                        </form>
+                      )}
                       <form
                         method="post"
                         action={`/admin/users/${user.id}/purchases/${p.id}/extend`}

@@ -28,6 +28,7 @@ import {
   generateVariableSymbol,
   generateSPD,
   fetchFioTransactions,
+  fioProxyFromEnv,
   matchPayment,
 } from "../lib/fio";
 import {
@@ -824,7 +825,11 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     const m = matchCreditasPayment(creRes.transactions, p.variableSymbol!, expectedAmount);
     if (m.found && m.transaction) matchedTx = { id: m.transaction.id, amount: m.transaction.amount };
   } else {
-    const fioRes = await fetchFioTransactions(c.env.FIO_API_TOKEN, FIO_LOOKBACK_DAYS);
+    const fioRes = await fetchFioTransactions(
+      c.env.FIO_API_TOKEN,
+      FIO_LOOKBACK_DAYS,
+      fioProxyFromEnv(c.env),
+    );
     if (!fioRes.ok) {
       if (fioRes.status === 429) {
         return c.html(<VerifyRateLimit waitSeconds={30} />);
