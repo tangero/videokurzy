@@ -9,7 +9,7 @@ import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/em
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
 import { maskEmail } from "./lib/errors";
-import { applyDiscount } from "./lib/discount";
+import { expectedPaymentAmount } from "./lib/discount";
 import { exportPurchaseInvoice } from "./lib/fakturoid";
 import {
   ACCESS_DURATION_DAYS,
@@ -121,6 +121,23 @@ export async function scanBankPayments(
 
   const errors: string[] = [];
 
+  // Pojistka proti tiché misconfiguraci: pokud máme pending objednávky pro danou
+  // banku, ale chybí její produkční secret, fetch by spadl do dev fallbacku a
+  // vrátil prázdno BEZ chyby — platby by uvízly napořád a scan by mlčel.
+  // (Creditas secret se historicky jmenoval špatně `CREDITAS_API_KEY` místo
+  // `CREDITAS_API_TOKEN`, což přesně tohle způsobilo — viz CLAUDE.md.)
+  const creToken = env.CREDITAS_API_TOKEN ?? "dev";
+  const hasCrePending = pending.some((p) => p.paymentMethod === "creditas");
+  const hasFioPending = pending.some((p) => p.paymentMethod === "fio");
+  if (hasCrePending && (creToken === "dev" || !env.CREDITAS_IDENTIFIKATOR)) {
+    errors.push(
+      "Creditas token/identifikátor nenastaven (env CREDITAS_API_TOKEN / CREDITAS_IDENTIFIKATOR) — Creditas platby se NEPÁRUJÍ!",
+    );
+  }
+  if (hasFioPending && (!env.FIO_API_TOKEN || env.FIO_API_TOKEN === "dev")) {
+    errors.push("FIO token nenastaven (env FIO_API_TOKEN) — FIO platby se NEPÁRUJÍ!");
+  }
+
   // Načti obě banky nezávisle — chyba jedné nesmí shodit druhou.
   const fio = await fetchFioTransactions(
     env.FIO_API_TOKEN,
@@ -130,7 +147,7 @@ export async function scanBankPayments(
   if (!fio.ok) errors.push(`FIO fetch failed: ${fio.status} ${fio.error}`);
 
   const cre = await fetchCreditasTransactions(
-    env.CREDITAS_API_TOKEN ?? "dev",
+    creToken,
     env.CREDITAS_IDENTIFIKATOR ?? "",
     FIO_LOOKBACK_DAYS,
   );
@@ -167,7 +184,7 @@ export async function scanBankPayments(
   for (const p of pending) {
     if (!p.variableSymbol) continue;
     const fullExpected = p.type === "organization" ? priceOrganization : priceIndividual;
-    const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
+    const expectedAmount = expectedPaymentAmount(p.amountPaid, fullExpected, p.discountPercent ?? 0);
 
     // Pořadí: nejdřív zkus „vlastní" banku objednávky (nejčastější případ),
     // pak druhou. U Creditas objednávky tedy nejdřív Creditas, pak FIO fallback.

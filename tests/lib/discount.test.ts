@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDiscount } from "../../src/lib/discount";
+import { applyDiscount, expectedPaymentAmount } from "../../src/lib/discount";
 
 describe("applyDiscount", () => {
   it("returns original price when percent is 0", () => {
@@ -25,5 +25,25 @@ describe("applyDiscount", () => {
 
   it("rounds down to whole CZK", () => {
     expect(applyDiscount(1999, 50)).toBe(999); // 999.5 → floor 999
+  });
+});
+
+describe("expectedPaymentAmount", () => {
+  it("prefers the fixed amountPaid from order time", () => {
+    // Objednávka vystavená za starou cenu 15000; ceník mezitím zdražil na 30000.
+    // Párovat se musí proti 15000 (suma na faktuře), ne proti novému ceníku.
+    expect(expectedPaymentAmount(15000, 30000, 0)).toBe(15000);
+  });
+
+  it("ignores current price list when amountPaid is set, even with a discount", () => {
+    expect(expectedPaymentAmount(1500, 3000, 50)).toBe(1500);
+  });
+
+  it("falls back to discounted full price when amountPaid is zero (legacy orders)", () => {
+    expect(expectedPaymentAmount(0, 3000, 50)).toBe(1500);
+  });
+
+  it("falls back to full price with no discount when amountPaid is zero", () => {
+    expect(expectedPaymentAmount(0, 30000, 0)).toBe(30000);
   });
 });
