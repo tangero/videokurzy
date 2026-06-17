@@ -160,6 +160,24 @@ export function applyDiscount(originalPrice: number, percent: number): number {
   return Math.floor(originalPrice * (100 - clamped) / 100);
 }
 
+/**
+ * Částka, kterou má zaplatit (a proti které se páruje) převodová objednávka.
+ *
+ * Preferuje `amountPaid` zafixované při vzniku objednávky — to je suma na
+ * zálohové faktuře, kterou zákazník reálně poslal. Na přepočet z aktuálního
+ * ceníku spadne jen u starých objednávek bez uložené částky (`amountPaid <= 0`).
+ *
+ * Bez tohohle by změna ceny v `site_config` po vystavení objednávky rozbila
+ * její párování: scanner/verify by čekal novou cenu, banka by viděla starou.
+ */
+export function expectedPaymentAmount(
+  amountPaid: number,
+  fullPrice: number,
+  discountPercent: number,
+): number {
+  return amountPaid > 0 ? amountPaid : applyDiscount(fullPrice, discountPercent ?? 0);
+}
+
 function isCodeActive(settings: DiscountSettings, now: Date): boolean {
   if (!settings.code.trim()) return false;
   if (!settings.codeExpiresAt) return true;

@@ -18,6 +18,11 @@ export interface Env {
   FAKTUROID_CLIENT_ID?: string;
   FAKTUROID_CLIENT_SECRET?: string;
   FIO_API_TOKEN: string;
+  // FIO proxy (rock8.cloud) — relay obcházející CF Workers chybu 525 (FIO neumí
+  // ALPN). Když je FIO_PROXY_URL nastaveno, volá se proxy místo přímého FIO API;
+  // FIO token pak žije na proxy a worker se autentizuje FIO_PROXY_SECRET.
+  FIO_PROXY_URL?: string;
+  FIO_PROXY_SECRET?: string;
   // Creditas Bank API — Bearer klíč + systémový accountId účtu, ke kterému patří.
   CREDITAS_API_TOKEN?: string;
   CREDITAS_IDENTIFIKATOR?: string;

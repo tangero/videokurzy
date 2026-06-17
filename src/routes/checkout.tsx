@@ -28,6 +28,7 @@ import {
   generateVariableSymbol,
   generateSPD,
   fetchFioTransactions,
+  fioProxyFromEnv,
   matchPayment,
 } from "../lib/fio";
 import {
@@ -37,6 +38,7 @@ import {
 } from "../lib/creditas";
 import {
   applyDiscount,
+  expectedPaymentAmount,
   getDiscountState,
   resolveCheckoutDiscount,
   resolveInviteDiscount,
@@ -706,10 +708,7 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
 
   const prices = await getPrices(db);
   const fullPrice = p.type === "organization" ? prices.organization : prices.individual;
-  // Preferuj uloženou částku z doby objednávky (amountPaid); na recompute z
-  // aktuálního ceníku spadni jen u starých objednávek bez uložené částky.
-  const fallbackPrice = applyDiscount(fullPrice, p.discountPercent ?? 0);
-  const price = p.amountPaid > 0 ? p.amountPaid : fallbackPrice;
+  const price = expectedPaymentAmount(p.amountPaid, fullPrice, p.discountPercent ?? 0);
   const dueDays = Math.round((p.expiresAt.getTime() - p.createdAt.getTime()) / 86400000);
   const isExtended = dueDays > FIO_DEFAULT_DUE_DAYS;
   const bank = bankDetails(p.paymentMethod === "creditas" ? "creditas" : "fio");
@@ -808,7 +807,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
 
   const verifyPrices = await getPrices(db);
   const fullExpected = p.type === "organization" ? verifyPrices.organization : verifyPrices.individual;
-  const expectedAmount = applyDiscount(fullExpected, p.discountPercent ?? 0);
+  const expectedAmount = expectedPaymentAmount(p.amountPaid, fullExpected, p.discountPercent ?? 0);
 
   // Načti transakce z banky, na kterou byla objednávka vystavena, a spáruj.
   let matchedTx: { id: string; amount: number } | null = null;
@@ -824,7 +823,11 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     const m = matchCreditasPayment(creRes.transactions, p.variableSymbol!, expectedAmount);
     if (m.found && m.transaction) matchedTx = { id: m.transaction.id, amount: m.transaction.amount };
   } else {
-    const fioRes = await fetchFioTransactions(c.env.FIO_API_TOKEN, FIO_LOOKBACK_DAYS);
+    const fioRes = await fetchFioTransactions(
+      c.env.FIO_API_TOKEN,
+      FIO_LOOKBACK_DAYS,
+      fioProxyFromEnv(c.env),
+    );
     if (!fioRes.ok) {
       if (fioRes.status === 429) {
         return c.html(<VerifyRateLimit waitSeconds={30} />);
@@ -923,10 +926,7 @@ checkoutRoutes.get("/checkout/proforma/:vs", async (c) => {
   const p = found;
   const prices = await getPrices(db);
   const fullPrice = p.type === "organization" ? prices.organization : prices.individual;
-  // Preferuj uloženou částku z doby objednávky; recompute z aktuálního ceníku
-  // je jen fallback pro staré objednávky bez uložené amountPaid.
-  const fallbackPrice = applyDiscount(fullPrice, p.discountPercent ?? 0);
-  const amount = p.amountPaid > 0 ? p.amountPaid : fallbackPrice;
+  const amount = expectedPaymentAmount(p.amountPaid, fullPrice, p.discountPercent ?? 0);
   const domain = p.type === "organization" ? emailDomain(p.email) : null;
 
   const html = generateProformaHtml({

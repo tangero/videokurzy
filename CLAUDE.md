@@ -37,6 +37,32 @@ npm run db:migrate:prod
 
 Bez toho budou nové sloupce/tabulky chybět na produkční D1 a runtime spadne.
 
+## FIO API z Workers padá na 525 → proxy
+`fioapi.fio.cz` běží na TLSv1.3 a **neumí ALPN**. Cloudflare Workers `fetch()`
+s ním nedokončí TLS handshake → chyba **525**. Z běžného Node.js (mimo Workers)
+spojení projde. Proto FIO voláme přes relay **`fio-proxy/`** (Node+Hono kontejner
+na rock8.cloud): worker volá proxy (moderní TLS), ta přepošle na FIO a vrátí JSON
+1:1. FIO token žije jen na proxy; worker se autentizuje `FIO_PROXY_SECRET`.
+
+- Aktivace: nastav v CF dashboardu `FIO_PROXY_URL` + `FIO_PROXY_SECRET` (obě nutné,
+  viz `fioProxyFromEnv()` v `src/lib/fio.ts`). Bez nich worker volá FIO přímo → 525.
+- Deploy proxy: viz `fio-proxy/README.md`. Ověření: `/admin/api/fio/diagnose`
+  (vrátí `"mode": "proxy"`).
+- Creditas tímhle netrpí (modernější API), volá se napřímo.
+
+## Párování plateb je cross-bank
+`scanBankPayments` v `src/scheduled.ts` paruje každou pending převodovou objednávku
+proti **oběma** bankám (FIO i Creditas), ne jen proti té z `paymentMethod`. Lidé
+totiž reálně platí, kam mají uložený účet (Creditas objednávka zaplacená na starý
+FIO účet apod.). Transakce se zapíše do sloupce podle banky, kde se našla.
+`scanFioPayments` je zpětně kompatibilní wrapper delegující sem.
+
+## Ruční potvrzení platby
+Platba, kterou automat nezachytil (typicky FIO 525 nebo cross-bank), se potvrdí
+v adminu tlačítkem „Potvrdit platbu" u pending objednávky → `kind='manual'`
+(reálné peníze, počítá se do revenue; **ne** `comp`, to je grant zdarma).
+`manuallyConfirmPayment()` v `src/lib/admin-users.ts`.
+
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,
   krátké klíče). Ostré secrets žijí jen v Cloudflare dashboardu.

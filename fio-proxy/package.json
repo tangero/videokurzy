@@ -1,0 +1,14 @@
+{
+  "name": "fio-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TLS-relay proxy pro FIO Bank API — obchází Cloudflare Workers chybu 525 (FIO server neumí ALPN).",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.12.10"
+  }
+}

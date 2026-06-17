@@ -46,7 +46,7 @@ export async function sendRenewalReminders(
           or(
             and(
               inArray(purchase.paymentMethod, ["fio", "creditas"]),
-              eq(purchase.kind, "paid")
+              inArray(purchase.kind, ["paid", "manual"])
             ),
             eq(purchase.kind, "comp")
           ),

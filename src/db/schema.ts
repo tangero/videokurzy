@@ -92,10 +92,12 @@ export const purchase = sqliteTable("purchase", {
   discountCode: text("discountCode"),
   fakturoidInvoiceId: integer("fakturoidInvoiceId"),
   fakturoidSubjectId: integer("fakturoidSubjectId"),
-  // 'paid' = reálná platba, 'comp' = komplimentár (zdarma od admina),
-  // 'staff' = audit přístupu administrátora (user.role='admin').
-  // Pouze 'paid' se započítává do revenue a fakturace.
-  kind: text("kind", { enum: ["paid", "comp", "staff"] }).notNull().default("paid"),
+  // 'paid'   = reálná platba spárovaná automaticky (Stripe / FIO / Creditas scan),
+  // 'manual' = reálná platba potvrzená ručně adminem (převod, který se nenapároval),
+  // 'comp'   = komplimentár (přístup zdarma od admina),
+  // 'staff'  = audit přístupu administrátora (user.role='admin').
+  // 'paid' i 'manual' jsou reálné peníze — obojí se započítává do revenue a fakturace.
+  kind: text("kind", { enum: ["paid", "manual", "comp", "staff"] }).notNull().default("paid"),
   compReason: text("compReason"),
   grantedBy: text("grantedBy"),
   // Skutečně přijatá částka v Kč. Stripe = amount_total / 100, FIO = tx.amount.
