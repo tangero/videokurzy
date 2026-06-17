@@ -78,7 +78,9 @@ watch.get("/watch/:slug", async (c) => {
   let hasPaidAccess = false;
   if (!found.isFree) {
     if (!user) {
-      return c.redirect("/login");
+      // Nepřihlášený je především potenciální zákazník bez nákupu → ukaž ceník
+      // (kde má vedle nabídky koupě i jasnou možnost přihlásit se, pokud už koupeno má).
+      return c.redirect("/#cenik");
     }
 
     // Platform-wide access check (no courseId needed). Admins bypass paywall.

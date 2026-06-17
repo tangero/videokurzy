@@ -276,6 +276,15 @@ export const LandingPage: FC<LandingProps> = ({
             <h2>Dvě cesty — osobní a&nbsp;firemní.</h2>
           </div>
         </div>
+        {!user && (
+          <div
+            class="card"
+            style="display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;padding:14px 18px;margin-bottom:24px;text-align:center"
+          >
+            <span style="color:var(--muted)">Už jste kurz koupili?</span>
+            <a class="btn btn-ghost btn-sm" href="/login">přihlásit se</a>
+          </div>
+        )}
         <div class="pricing-grid">
           <div class="price-card featured">
             <div>
