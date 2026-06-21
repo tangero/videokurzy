@@ -54,9 +54,9 @@ dry-run (kroky 3–4). Tím je detekce zřetězená s celou redakční pipeline.
   změny řazené dle váhy jako odstavce s odkazem na dokumentaci, drobnosti jako
   odrážky). Plně testovatelné, bez sítě.
 - **LLM vrstva** (`renderArticle`, flag `CC_NEWS_LLM=1`): převede kostru do plné
-  češtiny dle jazykových pravidel (Anthropic API, klíč v repu). Bez flagu se
-  vrací deterministická kostra. **Fakta se nehalucinují** — staví na naparsovaném
-  modelu.
+  češtiny dle jazykových pravidel přes **OpenRouter** (`OPENROUTER_API_KEY`, model
+  `anthropic/claude-sonnet-4.6`, override `CC_NEWS_LLM_MODEL`). Bez flagu se vrací
+  deterministická kostra. **Fakta se nehalucinují** — staví na naparsovaném modelu.
 
 ## Schvalování (R4) a publikace (R5)
 
@@ -91,7 +91,10 @@ Code. *Follow-up po MVP:* nahradit RSS parsing dedikovaným JSON API v
 
 - `CC_NEWS_DRY_RUN` — výchozí dry-run; `"0"` by zapnul live odeslání, ale to je
   ve fázi 1 **zakázané** (kód vyhodí chybu — bod eskalace).
-- `CC_NEWS_LLM` — `"1"` zapne LLM redakční vrstvu.
+- `CC_NEWS_LLM` — `"1"` zapne LLM redakční vrstvu (jinak deterministická kostra).
+- `OPENROUTER_API_KEY` — klíč pro LLM vrstvu (OpenRouter). V `.dev.vars` lokálně,
+  v Cloudflare Secrets za běhu.
+- `CC_NEWS_LLM_MODEL` — override modelu (default `anthropic/claude-sonnet-4.6`).
 
 ## Sample článek (R8)
 

@@ -29,8 +29,9 @@ zpracování:
 2. **Editor** (`parseDigest`) naparsuje fakta na strukturovaný model a
    deterministicky sestaví kostru — to je technický mezikrok, který drží
    strukturu a zabraňuje halucinaci faktů.
-3. **LLM vrstva** (`renderArticle`, `CC_NEWS_LLM=1`, Anthropic klíč v repu)
-   převede kostru do plné spisovné češtiny podle jazykových pravidel. LLM se drží
+3. **LLM vrstva** (`renderArticle`, `CC_NEWS_LLM=1`) převede kostru do plné
+   spisovné češtiny podle jazykových pravidel přes **OpenRouter**
+   (`OPENROUTER_API_KEY`, model `anthropic/claude-sonnet-4.6`). LLM se drží
    naparsovaných faktů.
 
 Tento sample je výstup kroku 3 — finální článek, jaký pipeline produkuje a jaký
@@ -43,12 +44,12 @@ V běhu zpracuje pipeline automaticky: cron detekuje nový digest → fronta
 s LLM a uloží draft + připraví schvalovací e-mail (dry-run). Ručně:
 
 ```bash
-# z kořene repo videokurzy (s nastaveným ANTHROPIC_API_KEY a CC_NEWS_LLM=1)
+# z kořene repo videokurzy (s nastaveným OPENROUTER_API_KEY)
 node --input-type=module -e '
 import { renderArticle } from "./src/lib/cc-news/editor.ts";
 import { readFileSync } from "fs";
 const md = readFileSync("/tmp/digest.md","utf8"); // stažený …/<rok>-wNN.md
-const { markdown } = await renderArticle(md, { CC_NEWS_LLM: "1", ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY });
+const { markdown } = await renderArticle(md, { CC_NEWS_LLM: "1", OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY });
 console.log(markdown);
 '
 ```
