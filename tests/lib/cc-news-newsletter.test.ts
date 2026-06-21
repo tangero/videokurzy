@@ -170,4 +170,26 @@ describe("parseCcArticleLinks (R7 — odkazy na CC články z vibecoding.cz)", (
   it("respects the limit", () => {
     expect(parseCcArticleLinks(feed, 1)).toHaveLength(1);
   });
+
+  it("handles Atom self-closing <link href=.../> and filters by URL segment", () => {
+    const atom = `<rss><channel>
+      <item><title>CC novinky</title>
+        <link href="https://vibecoding.cz/vibecoding/claude-code/2026-w24"/></item>
+      <item><title>Jiné</title>
+        <link href="https://vibecoding.cz/vibecoding/jine/x"/></item>
+    </channel></rss>`;
+    const links = parseCcArticleLinks(atom);
+    expect(links).toHaveLength(1);
+    expect(links[0].url).toBe("https://vibecoding.cz/vibecoding/claude-code/2026-w24");
+  });
+
+  it("does NOT match an article that only mentions Claude Code in the title/body", () => {
+    // žádná kategorie „Claude Code" ani URL segment /claude-code/ → nezahrnout
+    const feed2 = `<rss><channel>
+      <item><title>Srovnání nástrojů: Claude Code vs ostatní</title>
+        <link>https://vibecoding.cz/vibecoding/nastroje/srovnani</link>
+        <category>Nástroje</category></item>
+    </channel></rss>`;
+    expect(parseCcArticleLinks(feed2)).toHaveLength(0);
+  });
 });

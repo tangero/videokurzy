@@ -21,6 +21,10 @@ type Db = ReturnType<typeof drizzle>;
 const WHATS_NEW_BASE = "https://code.claude.com/docs/en/whats-new";
 export const WHATS_NEW_RSS_URL = `${WHATS_NEW_BASE}/rss.xml`;
 
+// Horní hranice pro externí fetch (visící Mintlify endpoint nesmí zablokovat
+// cron/queue bez limitu).
+const FETCH_TIMEOUT_MS = 15_000;
+
 /** Surová položka z RSS feedu (jen pole, která potřebujeme). */
 export interface RssItem {
   /** canonical URL detailu, normalizovaná na cestu bez koncového `.md`/lomítka */
@@ -168,13 +172,17 @@ export function defaultFetchers(): Fetchers {
     async fetchRss() {
       const res = await fetch(WHATS_NEW_RSS_URL, {
         headers: { accept: "application/rss+xml, application/xml" },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`whats-new RSS fetch failed: ${res.status}`);
       return res.text();
     },
     async fetchDetail(sourceId: string) {
       const url = detailMarkdownUrl(sourceId);
-      const res = await fetch(url, { headers: { accept: "text/markdown, text/plain" } });
+      const res = await fetch(url, {
+        headers: { accept: "text/markdown, text/plain" },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       if (!res.ok) throw new Error(`whats-new detail fetch failed: ${res.status}`);
       return res.text();
     },

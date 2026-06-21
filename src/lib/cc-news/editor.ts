@@ -218,6 +218,9 @@ export interface EditorEnv {
 }
 
 const DEFAULT_LLM_MODEL = "anthropic/claude-sonnet-4.6";
+// LLM redakční přepis může trvat desítky sekund; horní hranice brání zablokování
+// queue konzumenta visícím requestem.
+const LLM_TIMEOUT_MS = 120_000;
 
 export interface RenderOptions {
   /** Injektovatelný LLM volač pro testy; bez něj se použije reálné API. */
@@ -331,8 +334,14 @@ function defaultLlm(env: EditorEnv) {
           { role: "user", content: user },
         ],
       }),
+      // Visící OpenRouter request nesmí zablokovat queue konzument bez limitu.
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`cc-news LLM API failed: ${res.status}`);
+    // Při chybě/5xx může OpenRouter vrátit ne-JSON (HTML) → ochrana proti pádu.
+    if (!res.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("cc-news LLM API: neočekávaný content-type (ne JSON)");
+    }
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
