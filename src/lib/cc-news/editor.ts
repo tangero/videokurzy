@@ -205,11 +205,18 @@ export function renderArticleSkeleton(d: ParsedDigest): string {
   return lines.join("\n").trim() + "\n";
 }
 
-/** Prostředí pro LLM vrstvu (klíč v repu dle D-1 / B-004). */
+/**
+ * Prostředí pro LLM vrstvu. Redakční model běží přes OpenRouter (OpenAI-
+ * kompatibilní API) — model `anthropic/claude-sonnet-latest`. Klíč
+ * `OPENROUTER_API_KEY` je v .dev.vars (lokálně) i Cloudflare Secrets (běh).
+ */
 export interface EditorEnv {
   CC_NEWS_LLM?: string;        // flag „1" zapne LLM vrstvu
-  ANTHROPIC_API_KEY?: string;  // klíč (dle B-004 je v repu)
+  OPENROUTER_API_KEY?: string; // OpenRouter klíč
+  CC_NEWS_LLM_MODEL?: string;  // volitelný override modelu
 }
+
+const DEFAULT_LLM_MODEL = "anthropic/claude-sonnet-4.6";
 
 export interface RenderOptions {
   /** Injektovatelný LLM volač pro testy; bez něj se použije reálné API. */
@@ -229,7 +236,7 @@ export async function renderArticle(
   const parsed = parseDigest(digestMd);
   const skeleton = renderArticleSkeleton(parsed);
 
-  const llmEnabled = env.CC_NEWS_LLM === "1" && (opts.llm || env.ANTHROPIC_API_KEY);
+  const llmEnabled = env.CC_NEWS_LLM === "1" && (opts.llm || env.OPENROUTER_API_KEY);
   if (!llmEnabled) {
     return { markdown: skeleton, usedLlm: false };
   }
@@ -237,48 +244,95 @@ export async function renderArticle(
   const system = buildEditorSystemPrompt();
   const llm = opts.llm ?? defaultLlm(env);
   const refined = await llm(system, skeleton);
-  return { markdown: refined.trim() + "\n", usedLlm: true };
+  return { markdown: stripWrappingFence(refined) + "\n", usedLlm: true };
 }
 
 /** Systémový prompt nesoucí redakční + jazyková pravidla pro LLM vrstvu. */
 export function buildEditorSystemPrompt(): string {
   return [
-    "Jsi redaktor. Dostaneš kostru článku „Novinky v Claude Code\" a přepíšeš ji",
-    "do plné, spisovné češtiny podle těchto závazných pravidel:",
-    "- Čeština, formální registr (vykání), markdown. Zachovej YAML front matter.",
-    "- Pomlčky s mezerami, nikdy spojovník. Žádný negativní paralelismus.",
+    "Jsi český technický redaktor. Dostaneš strukturovanou kostru článku „Novinky",
+    "v Claude Code\" (fakta z týdenního changelogu) a přepíšeš ji do hotového",
+    "redakčního článku ve spisovné češtině. Čtenářem je pokročilý uživatel Claude",
+    "Code — nevysvětluj základy nástroje.",
+    "",
+    "STRUKTURA (přesně v tomto pořadí):",
+    "1. YAML front matter — KOMPLETNĚ česky: `title` je výstižný český nadpis",
+    "   vystihující hlavní změny (ne „Week N\"); `post_excerpt` česky shrnuje, co",
+    "   se za období stalo a jaký je charakter změn; `summary_points` jsou české",
+    "   věty. Zachovej klíče author, categories, layout.",
+    "2. `# ` nadpis = stejný český title.",
+    "3. Rámující PEREX (1 odstavec): věcně shrň, co se za období stalo a jaký je",
+    "   celkový charakter (kolik verzí, zda velký release, jaké linie změn). Bez",
+    "   disclaimeru o changelogu či vendor self-reportu.",
+    "4. Bodový PŘEHLED velkých změn, u každé číslo verze v závorce.",
+    "5. Rozepsané VELKÉ ZMĚNY — každá vlastní odstavec (ne odrážka), řazené DLE",
+    "   VÁHY (co mění schopnosti nebo bezpečnost nahoru, komfort a kosmetika dolů),",
+    "   ne dle čísla verze. U každé doplň krátkou INTERPRETACI/úsudek (proč to",
+    "   mění, komu to pomůže), oddělenou od faktického výčtu. Verze v závorce na",
+    "   konci, odkaz na konkrétní sekci dokumentace.",
+    "6. DROBNOSTI na konci jako odrážky, každá na jeden řádek.",
+    "7. Rámující ZÁVĚR (1 odstavec): syntéza — celkové vyznění období, co je",
+    "   nejzajímavější pro koho.",
+    "",
+    "JAZYK:",
+    "- Spisovná čeština, vykání, markdown. Pomlčky s mezerami, nikdy spojovník.",
+    "- Žádný negativní paralelismus („není X, ale Y\").",
     "- České výrazy místo anglicismů, kde existuje ekvivalent; ponech zavedené",
-    "  termíny (prompt cache, hooks, MCP, auto mode, safe mode, release, build, shell).",
-    "- „Subagent\" je životný: plurál „subagenti\".",
-    "- Velké změny jako souvislé odstavce (ne odrážky), proměnlivá délka vět.",
-    "- Drobnosti na konci jako odrážky, každá na řádek.",
-    "- Suché konstatování, žádná vata. Čtenář je pokročilý uživatel Claude Code.",
-    "- Zachovej čísla verzí v závorkách a odkazy na dokumentaci.",
-    "- Nepřidávej fakta, která v kostře nejsou. Informaci mimo zdroj označ a",
-    "  doporuč ověřit před tiskem.",
-    "Vrať jen výsledný markdown článku.",
+    "  termíny bez českého protějšku: prompt cache, hooks, MCP, auto mode, safe mode, release, build, shell.",
+    "- „Subagent\" je rod životný: plurál „subagenti\" (subagenti mohou spouštět",
+    "  vlastní subagenty).",
+    "- Proměnlivá délka vět — krátké údery vedle delších vysvětlení.",
+    "",
+    "VĚRNOST: Nepřidávej fakta, která v kostře nejsou. Interpretace je úsudek nad",
+    "fakty, ne nový fakt. Informaci mimo zdroj označ a doporuč ověřit před tiskem.",
+    "",
+    "Vrať POUZE výsledný markdown článku počínaje řádkem `---` front matter.",
+    "NEobaluj výstup do code-fence (žádné ```markdown ani ```yaml), nepřidávej",
+    "úvodní ani závěrečný komentář.",
   ].join("\n");
 }
 
-/** Reálný LLM volač přes Anthropic Messages API (jen když je klíč a flag). */
+/**
+ * Očistí výstup LLM od obalujících code-fence. LLM někdy obalí front matter do
+ * ```yaml … ``` nebo celý článek do ```markdown … ```. Sundá fence na začátku
+ * (s případným jazykem) i fence vložený hned za uzavírací `---` front matteru.
+ */
+export function stripWrappingFence(md: string): string {
+  let s = md.trim();
+  // Fence na úplném začátku: ```yaml / ```markdown / ```
+  s = s.replace(/^```[a-zA-Z]*\n/, "");
+  // Fence hned po uzavírajícím --- front matteru (LLM obalil jen hlavičku).
+  s = s.replace(/^(---\n[\s\S]*?\n---)\n```\s*\n/, "$1\n");
+  // Fence na úplném konci.
+  s = s.replace(/\n```\s*$/, "");
+  return s.trim();
+}
+
+/** Reálný LLM volač přes OpenRouter (OpenAI-kompatibilní). Jen když je klíč + flag. */
 function defaultLlm(env: EditorEnv) {
   return async (system: string, user: string): Promise<string> => {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "x-api-key": env.ANTHROPIC_API_KEY ?? "",
-        "anthropic-version": "2023-06-01",
+        Authorization: `Bearer ${env.OPENROUTER_API_KEY ?? ""}`,
         "content-type": "application/json",
+        // Doporučené hlavičky OpenRouteru pro atribuci.
+        "HTTP-Referer": "https://kurzy.vibecoding.cz",
+        "X-Title": "Novinky v Claude Code",
       },
       body: JSON.stringify({
-        model: "claude-opus-4-8",
+        model: env.CC_NEWS_LLM_MODEL ?? DEFAULT_LLM_MODEL,
         max_tokens: 4096,
-        system,
-        messages: [{ role: "user", content: user }],
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
       }),
     });
     if (!res.ok) throw new Error(`cc-news LLM API failed: ${res.status}`);
-    const data = (await res.json()) as { content?: Array<{ text?: string }> };
-    return data.content?.map((c) => c.text ?? "").join("") ?? "";
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return data.choices?.[0]?.message?.content ?? "";
   };
 }

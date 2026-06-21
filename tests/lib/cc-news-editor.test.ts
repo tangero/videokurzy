@@ -5,8 +5,27 @@ import {
   renderArticleSkeleton,
   renderArticle,
   buildEditorSystemPrompt,
+  stripWrappingFence,
   type DigestFeature,
 } from "../../src/lib/cc-news/editor";
+
+describe("stripWrappingFence", () => {
+  it("removes a ```yaml fence wrapping the front matter", () => {
+    const wrapped = "```yaml\n---\ntitle: X\n---\n```\n\n# X\nobsah";
+    const out = stripWrappingFence(wrapped);
+    expect(out.startsWith("---")).toBe(true);
+    expect(out).not.toMatch(/```/);
+    expect(out).toMatch(/# X/);
+  });
+
+  it("removes ```markdown fences around the whole article", () => {
+    expect(stripWrappingFence("```markdown\n# X\ntělo\n```")).toBe("# X\ntělo");
+  });
+
+  it("leaves clean markdown untouched", () => {
+    expect(stripWrappingFence("---\ntitle: X\n---\n# X")).toBe("---\ntitle: X\n---\n# X");
+  });
+});
 
 // Zkrácený, ale strukturně věrný fixture reálného whats-new .md (Week 24),
 // ověřeno proti https://code.claude.com/docs/en/whats-new/2026-w24.md.
