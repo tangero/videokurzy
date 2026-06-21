@@ -8,6 +8,8 @@ import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas"
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
+import { detectLatest, defaultFetchers } from "./lib/cc-news/detect";
+import { enqueueCcNewsItem } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
 import { exportPurchaseInvoice } from "./lib/fakturoid";
@@ -81,6 +83,21 @@ export async function handleScheduled(
     console.log(`[cron] video stats: synced=${synced}, errors=${errors}`);
   } catch (err) {
     console.error("[cron] syncVideoStats failed:", err);
+  }
+
+  // Detekce nového whats-new digestu Claude Code (služba „Novinky v CC", W-003).
+  // Idempotentní detekce + zápis draftu; při new/changed zařadí zprávu do fronty
+  // pro navazující redakční zpracování (W-004). Nic se zde neodesílá ani
+  // nepublikuje — fronta jen předá řízení dál.
+  try {
+    const outcome = await detectLatest(db, defaultFetchers(), now);
+    console.log(`[cron] cc-news detect: ${outcome.kind}` +
+      (outcome.kind === "empty" ? "" : ` sourceId=${outcome.sourceId}`));
+    if (outcome.kind === "new" || outcome.kind === "changed") {
+      await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);
+    }
+  } catch (err) {
+    console.error("[cron] cc-news detect failed:", err);
   }
 }
 

@@ -1,0 +1,94 @@
+import { env, SELF } from "cloudflare:test";
+import { drizzle } from "drizzle-orm/d1";
+import { beforeEach, describe, expect, it } from "vitest";
+import { ccNewsItem } from "../../src/db/schema";
+import { slugFromPath } from "../../src/routes/cc-news";
+import { publishedKvKey } from "../../src/lib/cc-news/draft";
+import { stripFrontMatter } from "../../src/routes/cc-news";
+
+const NOW = new Date("2026-06-21T12:00:00.000Z");
+
+describe("slugFromPath", () => {
+  it("derives slug from the repo article path", () => {
+    expect(slugFromPath("src/content/novinky-cc/2026-w24.md")).toBe("2026-w24");
+    expect(slugFromPath("2026-w24.md")).toBe("2026-w24");
+    expect(slugFromPath(null)).toBeNull();
+  });
+});
+
+describe("stripFrontMatter", () => {
+  it("removes leading YAML front matter so it never renders to readers", () => {
+    const md = "---\nauthor: X\ntitle: Y\n---\n\n# Nadpis\ntělo";
+    const out = stripFrontMatter(md);
+    expect(out.startsWith("# Nadpis")).toBe(true);
+    expect(out).not.toMatch(/author:/);
+    expect(out).not.toMatch(/^---/);
+  });
+
+  it("leaves markdown without front matter untouched", () => {
+    expect(stripFrontMatter("# Nadpis\ntělo")).toBe("# Nadpis\ntělo");
+  });
+});
+
+describe("gated sekce Novinky v CC (R5 — jen přihlášení s přístupem)", () => {
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM cc_news_item");
+    const db = drizzle(env.DB);
+    await db.insert(ccNewsItem).values({
+      id: "pub-1",
+      sourceId: "/docs/en/whats-new/2026-w24",
+      contentHash: "h",
+      weekLabel: "Week 24",
+      versionRange: "v2.1.166 → v2.1.176",
+      status: "published",
+      articlePath: "src/content/novinky-cc/2026-w24.md",
+      publishedAt: NOW,
+      createdAt: NOW,
+    });
+    await env.KV.put(publishedKvKey("pub-1"), "---\ntitle: X\n---\n\n# Week 24\nobsah");
+  });
+
+  it("nepřihlášený je z přehledu přesměrován (login/ceník)", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc", { redirect: "manual" });
+    expect(res.status).toBe(302);
+    const loc = res.headers.get("location") ?? "";
+    expect(["/login", "/#cenik"]).toContain(loc);
+  });
+
+  it("nepřihlášený je z detailu přesměrován", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc/2026-w24", { redirect: "manual" });
+    expect(res.status).toBe(302);
+  });
+
+  it("nepřihlášený NEvidí obsah článku (žádné prosáknutí markdownu)", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc/2026-w24", { redirect: "manual" });
+    const text = await res.text();
+    expect(text).not.toMatch(/obsah/);
+  });
+});
+
+describe("GET /novinky-cc/unsubscribe (GDPR odhlášení)", () => {
+  it("400 bez tokenu", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc/unsubscribe", { redirect: "manual" });
+    expect(res.status).toBe(400);
+  });
+
+  it("401 na zfalšovaný token", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc/unsubscribe?token=bad.sig", { redirect: "manual" });
+    expect(res.status).toBe(401);
+  });
+
+  it("platný odhlašovací link zapíše suppression (bez přihlášení)", async () => {
+    await env.DB.exec("DELETE FROM newsletter_suppression");
+    const { signUnsubToken } = await import("../../src/lib/cc-news/approval");
+    const token = await signUnsubToken(env as never, "leaver@example.cz");
+    const res = await SELF.fetch(`https://test.local/novinky-cc/unsubscribe?token=${encodeURIComponent(token)}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/Odhlášení proběhlo/);
+
+    const db = drizzle(env.DB);
+    const { newsletterSuppression } = await import("../../src/db/schema");
+    const rows = await db.select().from(newsletterSuppression);
+    expect(rows).toHaveLength(1);
+  });
+});

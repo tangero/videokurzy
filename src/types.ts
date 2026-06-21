@@ -28,6 +28,11 @@ export interface Env {
   CREDITAS_IDENTIFIKATOR?: string;
   COOKIE_DOMAIN?: string;
   VIBECODING_PARTNER_KEY?: string;
+  // Služba „Novinky v Claude Code" — redakční LLM vrstva přes OpenRouter.
+  OPENROUTER_API_KEY?: string;
+  CC_NEWS_LLM?: string;        // „1" zapne LLM redakční vrstvu
+  CC_NEWS_LLM_MODEL?: string;  // override modelu (default anthropic/claude-sonnet-4.6)
+  CC_NEWS_DRY_RUN?: string;    // „0" by povolil live odeslání (ve fázi 1 zakázáno)
 }
 
 export type Variables = {

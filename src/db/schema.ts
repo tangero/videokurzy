@@ -236,4 +236,49 @@ export const lessonWatch = sqliteTable(
   (table) => [primaryKey({ columns: [table.userId, table.lessonId] })]
 );
 
+// Detekované týdenní záznamy z code.claude.com/docs/en/whats-new (služba
+// „Novinky v Claude Code"). Jedna řádka = jeden whats-new digest. Idempotence
+// detekce stojí na UNIKÁTNÍM sourceId (= canonical_url): cron při každém běhu
+// dělá anti-join proti této tabulce. contentHash zachytí změnu obsahu téhož
+// týdne (re-edit existujícího digestu) — viz lib/cc-news/detect.ts.
+//   status: draft (čeká redakční zpracování + schválení)
+//         → approved (člověk klikl schvalovací link)
+//         → published (zveřejněno v gated sekci „Novinky v CC").
+// Žádné PII; obsah článku se ukládá jako markdown soubor, articlePath drží cestu.
+export const ccNewsItem = sqliteTable("cc_news_item", {
+  id: text("id").primaryKey(),
+  // Kanonická URL detailu digestu, např. /docs/en/whats-new/2026-w24.
+  // UNIQUE = idempotency key. guid/pubDate z RSS se na klíč NEPOUŽÍVAJÍ
+  // (Week 24 a Week 23 mohou sdílet pubDate; guid se může změnit).
+  sourceId: text("sourceId").notNull().unique(),
+  // SHA-256 plného detailu .md; změna => stejný sourceId, nový obsah.
+  contentHash: text("contentHash").notNull(),
+  weekLabel: text("weekLabel"),        // „Week 24", lidský štítek z RSS
+  versionRange: text("versionRange"),  // rozsah verzí z kategorie RSS
+  status: text("status").notNull().default("draft"), // draft|approved|published
+  articlePath: text("articlePath"),    // cesta k markdown souboru článku v repu
+  approveNonce: text("approveNonce"),  // jednorázový nonce pro schvalovací link (W-005)
+  // Když se re-edituje digest týdne, který je UŽ publikovaný: živá publikovaná
+  // verze (publikovaný KV blob + status=published) zůstává beze změny, aby
+  // čtenáři nezmizel obsah, a nový obsah čeká na lidské schválení. pendingContentHash
+  // drží hash této čekající verze; po schválení se promotuje a vynuluje.
+  pendingContentHash: text("pendingContentHash"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  publishedAt: integer("publishedAt", { mode: "timestamp" }),
+});
+
+// Odhlášení z newsletteru „Novinky v Claude Code" (GDPR, W-007). ZÁMĚRNĚ NEdrží
+// plain e-mail: klíč je `emailHash` = HMAC-SHA256(normalizovaný e-mail, účel
+// `claude_code_news`). Výběr příjemců spočítá stejný hash a udělá anti-join.
+//   - Neukládat sem PII: suppression přežije i GDPR výmaz uživatele (proto
+//     samostatná tabulka, ne sloupec na user/purchase — viz B-002).
+//   - `createdFromUserId` je volitelná, BEZ FK (nesmí bránit výmazu uživatele).
+export const newsletterSuppression = sqliteTable("newsletter_suppression", {
+  emailHash: text("emailHash").primaryKey(),
+  newsletter: text("newsletter").notNull().default("claude_code_news"),
+  optedOutAt: integer("optedOutAt", { mode: "timestamp" }).notNull(),
+  source: text("source"),                 // „unsubscribe-link" | „admin" | …
+  createdFromUserId: text("createdFromUserId"), // nullable, bez FK
+});
+
 export { user, session, account, verification } from "./auth-schema";

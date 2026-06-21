@@ -15,11 +15,34 @@ import type { Env } from "./types";
 type WebhookMessageType =
   | "checkout.session.completed"
   | "customer.subscription.deleted"
-  | "invoice.paid";
+  | "invoice.paid"
+  // Služba „Novinky v Claude Code" (W-003): nově detekovaný / změněný whats-new
+  // digest k redakčnímu zpracování (W-004). Nese jen identifikátory, ne obsah.
+  | "cc-news.detected";
 
 interface WebhookMessage {
   type: WebhookMessageType;
   data: Record<string, unknown>;
+}
+
+/** Payload zprávy cc-news.detected — jen reference, žádné PII ani obsah. */
+export interface CcNewsDetectedData {
+  itemId: string;
+  sourceId: string;
+}
+
+/**
+ * Zařadí nově detekovaný / změněný whats-new digest do fronty pro navazující
+ * redakční zpracování (W-004). Používá stávající WEBHOOK_QUEUE (vzor dle B-003);
+ * žádný nový binding ani poskytovatel. Volá se jen pro outcome new/changed.
+ */
+export async function enqueueCcNewsItem(
+  env: Env,
+  itemId: string,
+  sourceId: string
+): Promise<void> {
+  const data: CcNewsDetectedData = { itemId, sourceId };
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.detected", data });
 }
 
 export async function handleQueue(
@@ -43,6 +66,14 @@ export async function handleQueue(
 
         case "invoice.paid":
           await handleInvoicePaid(db, data);
+          break;
+
+        case "cc-news.detected":
+          // Napojení detekce na redakční pipeline: stáhne detail digestu,
+          // vyrobí článek (editor), uloží draft a připraví schvalovací e-mail
+          // v dry-run. NIC se neodesílá/nepublikuje — publikace až po lidském
+          // schválení (mantinel).
+          await handleCcNewsDetected(db, env, data as unknown as CcNewsDetectedData);
           break;
 
         default:
@@ -402,4 +433,40 @@ async function handleInvoicePaid(
     .update(purchase)
     .set({ expiresAt: newExpiry, status: "active" })
     .where(eq(purchase.stripeSubscriptionId, subscriptionId));
+}
+
+/**
+ * Konzument zprávy cc-news.detected — napojuje detekci (W-003) na redakční
+ * pipeline (W-004/W-005): stáhne `.md` detail digestu, vyrobí článek editorem
+ * (deterministicky + volitelně LLM dle CC_NEWS_LLM), uloží draft a připraví
+ * schvalovací e-mail v DRY-RUN. NIC se neodesílá ani nepublikuje — publikace
+ * nastává až po lidském kliknutí na schvalovací link (mantinel kontraktu).
+ */
+async function handleCcNewsDetected(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  data: CcNewsDetectedData
+): Promise<void> {
+  // Validace tvaru zprávy: malformovaná zpráva (chybí itemId/sourceId) je
+  // NEVRATNÁ — retry by jen opakoval pád. Zalogovat a tiše zahodit (ack v
+  // handleQueue), ne retryovat do DLQ.
+  if (!data || typeof data.itemId !== "string" || typeof data.sourceId !== "string") {
+    console.error(`[queue] cc-news.detected: malformovaná zpráva, zahazuji:`, data);
+    return;
+  }
+
+  const { processCcNewsItem } = await import("./lib/cc-news/pipeline");
+  const result = await processCcNewsItem(
+    db,
+    env,
+    { itemId: data.itemId, sourceId: data.sourceId },
+    new Date()
+  );
+  // mode=live znamená, že schvalovací e-mail reálně odešel (za oběma branami);
+  // mode=dry-run = jen připraven a zalogován. Přechodné chyby (fetch/LLM výpadek)
+  // nechytáme — ať se zpráva retryuje konzumentem fronty.
+  console.log(
+    `[queue] cc-news.detected zpracováno: item=${data.itemId} llm=${result.usedLlm} ` +
+      `mode=${result.mode} sent=${result.sent}`
+  );
 }
