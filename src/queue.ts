@@ -15,11 +15,34 @@ import type { Env } from "./types";
 type WebhookMessageType =
   | "checkout.session.completed"
   | "customer.subscription.deleted"
-  | "invoice.paid";
+  | "invoice.paid"
+  // Služba „Novinky v Claude Code" (W-003): nově detekovaný / změněný whats-new
+  // digest k redakčnímu zpracování (W-004). Nese jen identifikátory, ne obsah.
+  | "cc-news.detected";
 
 interface WebhookMessage {
   type: WebhookMessageType;
   data: Record<string, unknown>;
+}
+
+/** Payload zprávy cc-news.detected — jen reference, žádné PII ani obsah. */
+export interface CcNewsDetectedData {
+  itemId: string;
+  sourceId: string;
+}
+
+/**
+ * Zařadí nově detekovaný / změněný whats-new digest do fronty pro navazující
+ * redakční zpracování (W-004). Používá stávající WEBHOOK_QUEUE (vzor dle B-003);
+ * žádný nový binding ani poskytovatel. Volá se jen pro outcome new/changed.
+ */
+export async function enqueueCcNewsItem(
+  env: Env,
+  itemId: string,
+  sourceId: string
+): Promise<void> {
+  const data: CcNewsDetectedData = { itemId, sourceId };
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.detected", data });
 }
 
 export async function handleQueue(
@@ -43,6 +66,12 @@ export async function handleQueue(
 
         case "invoice.paid":
           await handleInvoicePaid(db, data);
+          break;
+
+        case "cc-news.detected":
+          // W-003 končí detekcí + enqueue. Redakční zpracování (W-004) zatím
+          // není; zpráva se jen potvrdí a zaloguje, nic se neodesílá/nepublikuje.
+          await handleCcNewsDetected(data as unknown as CcNewsDetectedData);
           break;
 
         default:
@@ -402,4 +431,16 @@ async function handleInvoicePaid(
     .update(purchase)
     .set({ expiresAt: newExpiry, status: "active" })
     .where(eq(purchase.stripeSubscriptionId, subscriptionId));
+}
+
+/**
+ * Konzument zprávy cc-news.detected (W-003). Zatím jen potvrzení + log —
+ * redakční zpracování dorazí ve W-004. NIC se neodesílá ani nepublikuje;
+ * publikace je vždy až po lidském schválení (mantinel kontraktu).
+ */
+async function handleCcNewsDetected(data: CcNewsDetectedData): Promise<void> {
+  console.log(
+    `[queue] cc-news.detected itemId=${data.itemId} sourceId=${data.sourceId} ` +
+      `(redakční zpracování W-004 zatím není; zpráva potvrzena)`
+  );
 }

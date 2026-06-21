@@ -67,10 +67,16 @@ export function detailMarkdownUrl(sourceId: string): string {
 }
 
 /**
- * Minimalistický parser RSS 2.0 — vytáhne první `<item>` a z něj `link`,
- * `title` (weekLabel), `category` (versionRange) a `guid`. Regex stačí: feed je
- * strojově generovaný Mintlify a my čteme jen první (nejnovější) položku.
- * Vrací null, když feed neobsahuje žádnou položku.
+ * Minimalistický parser RSS 2.0 — vytáhne první (nejnovější) `<item>`.
+ *
+ * POZOR na reálný tvar feedu Mintlify: `<link>` NENÍ týdenní detail, ale index
+ * s kotvou (`…/whats-new#week-24`). Stabilní detailní URL (`…/2026-w24`) je až
+ * uvnitř `<content:encoded>` v odkazu „Read the Week N digest". `sourceId`
+ * proto bereme PRIMÁRNĚ z `content:encoded`; `<link>` slouží jen jako fallback,
+ * když odkaz na digest chybí. Bez detailní URL → null (nemáme idempotency key).
+ *
+ * `category` nese rozsah verzí (např. `v2.1.166–v2.1.176`). `guid`/`pubDate` se
+ * na klíč idempotence NEPOUŽÍVAJÍ (sousední týdny sdílejí pubDate, guid se mění).
  */
 export function parseFirstRssItem(xml: string): RssItem | null {
   const itemMatch = xml.match(/<item\b[^>]*>([\s\S]*?)<\/item>/i);
@@ -84,15 +90,39 @@ export function parseFirstRssItem(xml: string): RssItem | null {
     return decodeXml(stripCdata(m[1]).trim()) || null;
   };
 
-  const link = pick("link");
-  if (!link) return null;
+  const encoded = pick("content:encoded") ?? "";
+  const detailLink = extractDigestLink(encoded);
+  const fallbackLink = pick("link");
+  const source = detailLink ?? fallbackLink;
+  if (!source) return null;
+
+  const sourceId = normalizeSourceId(source);
+  // Bez týdenního detailu (`…/2026-wNN`) nemáme stabilní idempotency key —
+  // index `/docs/en/whats-new` by sloučil všechny týdny do jedné řádky.
+  if (!isWeeklyDetailPath(sourceId)) return null;
 
   return {
-    sourceId: normalizeSourceId(link),
+    sourceId,
     weekLabel: pick("title"),
     versionRange: pick("category"),
     guid: pick("guid"),
   };
+}
+
+/**
+ * Najde v HTML `content:encoded` odkaz na týdenní digest `…/whats-new/2026-wNN`.
+ * Bere první `href` mířící na cestu `/whats-new/<rok>-w<týden>`.
+ */
+export function extractDigestLink(encodedHtml: string): string | null {
+  const m = encodedHtml.match(
+    /href=["'](https?:\/\/[^"']*?\/whats-new\/\d{4}-w\d{1,2}[^"']*)["']/i
+  );
+  return m ? decodeXml(m[1]) : null;
+}
+
+/** True pro kanonickou cestu týdenního detailu `…/whats-new/<rok>-w<týden>`. */
+function isWeeklyDetailPath(pathname: string): boolean {
+  return /\/whats-new\/\d{4}-w\d{1,2}$/i.test(pathname);
 }
 
 function stripCdata(s: string): string {
