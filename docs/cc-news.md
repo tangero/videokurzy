@@ -93,10 +93,35 @@ Odhlášení: podepsaný link s odděleným účelem `cc-news-unsub:`. Route
 Code. *Follow-up po MVP:* nahradit RSS parsing dedikovaným JSON API v
 `vibecoding-site` (Astro route); newsletter pak jen přepne fetcher.
 
+## Odeslání e-mailů přes Resend — dvě brány
+
+Reálné odeslání (schvalovací e-mail adminovi i rozeslání newsletteru) běží přes
+sdílený `lib/email.ts` → `sendEmail()` (Resend API), stejný kanál jako ostatní
+transakční e-maily. Aby k němu došlo, musí platit **obě** brány současně:
+
+1. **Provozní přepínač** `CC_NEWS_DRY_RUN="0"` (env / secret),
+2. **Admin přepínač** `cc_news_live_send="true"` v `site_config` — nastavitelný
+   v `/admin/settings` („Novinky v Claude Code — odesílání e-mailů").
+
+Vyhodnocuje to `isCcNewsLiveSend(db, env)` v `lib/cc-news/settings.ts`. Dokud
+kterákoli brána chybí, běží **dry-run** (e-maily se jen logují, NEodejdou) —
+žádná výjimka, jen tichý dry-run. Dvě nezávislé brány = produkce nejde zapnout
+omylem jediným přepnutím (mantinel fáze 1).
+
+## Odběr na profilu (opt-in / opt-out)
+
+Na `/profile` má přihlášený uživatel přepínač „Novinky v Claude Code" (default
+**zapnuto** = přijímat). `POST /api/profile/cc-news` `{subscribed}` zapíše/smaže
+suppression nad **primární** adresou účtu: opt-out → `recordUnsubscribe`
+(suppression řádek, jen `emailHash`), opt-in → `recordResubscribe` (řádek se
+**smaže**). Stav se zjišťuje přes `isSuppressed` (anti-join přes `emailHash`,
+žádné plain PII). Odhlášení přes e-mailový link (`/novinky-cc/unsubscribe`) i
+přes profil zapisují do téže suppression tabulky.
+
 ## Provozní přepínače
 
-- `CC_NEWS_DRY_RUN` — výchozí dry-run; `"0"` by zapnul live odeslání, ale to je
-  ve fázi 1 **zakázané** (kód vyhodí chybu — bod eskalace).
+- `CC_NEWS_DRY_RUN` — výchozí dry-run; `"0"` je **první brána** live odeslání
+  (druhá je admin přepínač `cc_news_live_send`, viz výše).
 - `CC_NEWS_LLM` — `"1"` zapne LLM redakční vrstvu (jinak deterministická kostra).
 - `OPENROUTER_API_KEY` — klíč pro LLM vrstvu (OpenRouter). V `.dev.vars` lokálně,
   v Cloudflare Secrets za běhu.

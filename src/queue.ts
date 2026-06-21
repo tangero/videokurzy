@@ -456,25 +456,17 @@ async function handleCcNewsDetected(
   }
 
   const { processCcNewsItem } = await import("./lib/cc-news/pipeline");
-  try {
-    const result = await processCcNewsItem(
-      db,
-      env,
-      { itemId: data.itemId, sourceId: data.sourceId },
-      new Date()
-    );
-    console.log(
-      `[queue] cc-news.detected zpracováno: item=${data.itemId} llm=${result.usedLlm} ` +
-        `mode=${result.mode} sent=${result.sent} (schvalovací e-mail připraven, NEODESLÁNO)`
-    );
-  } catch (err) {
-    // Konfigurační chyba (CC_NEWS_DRY_RUN=0 = zakázaný live) je nevratná —
-    // retry by jen opakoval placené LLM volání. Zalogovat a neretryovat.
-    const msg = (err as Error).message;
-    if (msg.includes("live odeslání je zakázané")) {
-      console.error(`[queue] cc-news.detected: ${msg} — neretryuji (nevratná konfigurace).`);
-      return;
-    }
-    throw err; // přechodné chyby (fetch/LLM výpadek) ať se retryují
-  }
+  const result = await processCcNewsItem(
+    db,
+    env,
+    { itemId: data.itemId, sourceId: data.sourceId },
+    new Date()
+  );
+  // mode=live znamená, že schvalovací e-mail reálně odešel (za oběma branami);
+  // mode=dry-run = jen připraven a zalogován. Přechodné chyby (fetch/LLM výpadek)
+  // nechytáme — ať se zpráva retryuje konzumentem fronty.
+  console.log(
+    `[queue] cc-news.detected zpracováno: item=${data.itemId} llm=${result.usedLlm} ` +
+      `mode=${result.mode} sent=${result.sent}`
+  );
 }

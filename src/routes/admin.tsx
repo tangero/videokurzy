@@ -2203,6 +2203,7 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
     benefitsIndividual: JSON.parse(cfg.benefits_individual ?? "[]") as string[],
     benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
     activeBank: (cfg.active_bank === "creditas" ? "creditas" : "fio") as "fio" | "creditas",
+    ccNewsLiveSend: cfg.cc_news_live_send === "true",
     discount: {
       active: cfg.discount_active === "true",
       percent: parseInt(cfg.discount_percent ?? "0", 10),
@@ -2246,9 +2247,11 @@ admin.post("/admin/settings", async (c) => {
   const discountLabel = String(body.discount_label ?? "").trim();
 
   const activeBank = body.active_bank === "creditas" ? "creditas" : "fio";
+  const ccNewsLiveSend = body.cc_news_live_send === "on";
 
   const updates: Array<[string, string]> = [
     ["active_bank", activeBank],
+    ["cc_news_live_send", ccNewsLiveSend ? "true" : "false"],
     ["price_individual", String(priceIndividual)],
     ["price_organization", String(priceOrganization)],
     ["benefits_individual", benefitsIndividual],

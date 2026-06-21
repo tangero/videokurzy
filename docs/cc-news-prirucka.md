@@ -94,11 +94,17 @@ Po publikaci se rozešle platícím (ve fázi 1 dry-run — viz §5). Cílová m
 Newsletter obsahuje i **odkazy na nové CC články** z rubriky Claude Code na
 vibecoding.cz.
 
-### Odhlášení (GDPR)
-`GET /novinky-cc/unsubscribe?token=…` — každý newsletter nese odhlašovací odkaz.
-Klik zapíše uživatele do suppression (ukládá se **jen hash e-mailu**, nikdy
-plain adresa) a newsletter mu přestane chodit. Odhlášení přežije i případný GDPR
-výmaz účtu.
+### Odhlášení a opětovné přihlášení (GDPR)
+Dvě cesty, obě nad **primární** adresou účtu, obě píší do téže suppression
+tabulky (ukládá se **jen hash e-mailu**, nikdy plain adresa):
+
+- **E-mailový odkaz:** `GET /novinky-cc/unsubscribe?token=…` — každý newsletter
+  ho nese; klik odhlásí.
+- **Profil:** na `/profile` je přepínač „Novinky v Claude Code" (default
+  **zapnuto**). Vypnutím se uživatel odhlásí, zapnutím zase přihlásí —
+  opětovné přihlášení **smaže** suppression řádek.
+
+Odhlášení přežije i případný GDPR výmaz účtu.
 
 ---
 
@@ -116,23 +122,28 @@ výmaz účtu.
 
 ## 5. Fáze 1 vs. produkce
 
-Celá pipeline je ve **fázi 1**: kompletně hotová jako PR, **bez produkčního
-nasazení a bez reálného odesílání e-mailů**. Všechny e-mailové a rozesílací cesty
-běží v **dry-run** režimu (výchozí).
+Celá pipeline je ve **fázi 1**: kompletně hotová jako PR. E-mailové cesty běží
+**defaultně v dry-run** (e-maily se jen logují, NEodejdou). Reálné odeslání přes
+Resend je připravené, ale schované za **dvěma branami** — viz níže.
 
-| Akce | Fáze 1 (PR) | Produkce (po nasazení) |
-|------|-------------|------------------------|
-| Schvalovací e-mail | neodesílá se (dry-run log + příprava) | dorazí adminovi |
-| Rozeslání newsletteru | neodesílá se (spočítá počet + maskovaný vzorek) | jde platícím |
+| Akce | Default (dry-run) | Po zapnutí obou bran |
+|------|-------------------|----------------------|
+| Schvalovací e-mail | neodesílá se (log + příprava) | dorazí adminovi (Resend) |
+| Rozeslání newsletteru | neodesílá se (spočítá počet + maskovaný vzorek) | jde platícím (Resend) |
 | Publikace v gated sekci | funguje (po kliknutí approve) | funguje |
 | `/novinky-cc` | funguje | funguje |
 
-Reálné odeslání e-mailů a produkční nasazení jsou za mantinelem — vyžadují
-samostatné lidské schválení (eskalaci), nejsou součástí fáze 1.
+**Dvě brány reálného odeslání** (musí platit obě současně):
+1. provozní přepínač `CC_NEWS_DRY_RUN="0"`,
+2. admin přepínač „Novinky v Claude Code — odesílání e-mailů" v `/admin/settings`
+   (`cc_news_live_send`).
+
+Dokud kterákoli chybí, je dry-run. Produkci tak nelze zapnout omylem jediným
+přepnutím — to je vědomý mantinel fáze 1.
 
 ### Provozní přepínače
-- `CC_NEWS_DRY_RUN` — výchozí dry-run; `"0"` by povolil live odeslání (ve fázi 1
-  **zakázáno** — kód odmítne před jakoukoli prací).
+- `CC_NEWS_DRY_RUN` — výchozí dry-run; `"0"` je **první brána** live odeslání
+  (druhá je admin přepínač `cc_news_live_send`).
 - `CC_NEWS_LLM` — `"1"` zapne LLM redakční vrstvu (jinak deterministická kostra).
 - `OPENROUTER_API_KEY` — klíč LLM (OpenRouter). V `.dev.vars` lokálně, v
   Cloudflare Secrets za běhu.

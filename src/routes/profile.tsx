@@ -147,6 +147,49 @@ profile.delete("/api/profile/emails", async (c) => {
   return c.json({ ok: true });
 });
 
+// ─── Newsletter „Novinky v Claude Code" — opt-in / opt-out ──────────
+//
+// Default je přijímat (žádný suppression řádek = přihlášen). Opt-out zapíše
+// suppression (jen emailHash, GDPR), opt-in suppression řádek smaže. Operace
+// běží nad PRIMÁRNÍ adresou účtu (user.email) — tou se rozesílá newsletter.
+
+profile.post("/api/profile/cc-news", async (c) => {
+  const user = c.get("user")!;
+  const body = await c.req
+    .json<{ subscribed?: boolean }>()
+    .catch(() => ({}) as { subscribed?: boolean });
+  if (typeof body.subscribed !== "boolean") {
+    return c.json({ error: "subscribed:boolean required" }, 400);
+  }
+  const db = drizzle(c.env.DB);
+  const { recordUnsubscribe, recordResubscribe } = await import(
+    "../lib/cc-news/newsletter"
+  );
+  try {
+    if (body.subscribed) {
+      await recordResubscribe(db, c.env.AUTH_INTERNAL_SECRET, user.email);
+    } else {
+      await recordUnsubscribe(db, c.env.AUTH_INTERNAL_SECRET, user.email, new Date(), {
+        source: "profile",
+        userId: user.id,
+      });
+    }
+    await logIdentityEvent(db, {
+      userId: user.id,
+      action: body.subscribed ? "cc_news_subscribed" : "cc_news_unsubscribed",
+      actor: "self",
+      details: { email: maskEmail(user.email) },
+    });
+  } catch (err) {
+    logServerError("profile/cc-news", "toggle_failed", {
+      userId: user.id,
+      message: (err as Error)?.message,
+    });
+    return c.json({ error: "toggle_failed" }, 500);
+  }
+  return c.json({ ok: true, subscribed: body.subscribed });
+});
+
 profile.post("/api/profile/recovery-banner/dismiss", async (c) => {
   const u = c.get("user")!;
   const db = drizzle(c.env.DB);
@@ -166,10 +209,23 @@ profile.post("/api/profile/recovery-banner/dismiss", async (c) => {
 
 // Stránka nastavení účtu. Není pod /api/profile/* guardem, proto si auth
 // hlídá sama (přesměruje nepřihlášeného na login).
-profile.get("/profile", (c) => {
+profile.get("/profile", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/login");
-  return c.html(<ProfilePage user={{ name: user.name ?? null, email: user.email }} />);
+  const db = drizzle(c.env.DB);
+  const { isSuppressed } = await import("../lib/cc-news/newsletter");
+  // Default je přijímat → přihlášen, když NENÍ v suppression.
+  const ccNewsSubscribed = !(await isSuppressed(
+    db,
+    c.env.AUTH_INTERNAL_SECRET,
+    user.email
+  ));
+  return c.html(
+    <ProfilePage
+      user={{ name: user.name ?? null, email: user.email }}
+      ccNewsSubscribed={ccNewsSubscribed}
+    />
+  );
 });
 
 // ─── Self-service výmaz účtu (GDPR čl. 17) ──────────────────────────

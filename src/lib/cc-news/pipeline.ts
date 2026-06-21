@@ -2,8 +2,10 @@
 // (cc-news.detected) vyrobí článek a připraví ho ke schválení. Tohle je most,
 // který napojuje detekci (W-003) na editor (W-004) a draft+schválení (W-005).
 //
-// NIC se neodesílá ani nepublikuje — jen se uloží koncept a připraví dry-run
-// schvalovací e-mail. Publikace nastává až po lidském kliknutí (mantinel).
+// Defaultně se NIC neodesílá ani nepublikuje — jen se uloží koncept a připraví
+// dry-run schvalovací e-mail. Reálné odeslání e-mailu vyžaduje obě brány
+// (env CC_NEWS_DRY_RUN=0 + admin přepínač cc_news_live_send) — viz settings.ts.
+// Publikace článku nastává vždy až po lidském kliknutí na schvalovací link.
 
 import type { drizzle } from "drizzle-orm/d1";
 import { parseDigest, renderArticle, type EditorEnv } from "./editor";
@@ -17,6 +19,7 @@ interface PipelineEnv extends EditorEnv {
   AUTH_INTERNAL_SECRET: string;
   BETTER_AUTH_URL?: string;
   CC_NEWS_DRY_RUN?: string;
+  RESEND_API_KEY?: string;
 }
 
 export interface CcNewsRef {
@@ -41,13 +44,6 @@ export async function processCcNewsItem(
   now: Date,
   fetchers: Fetchers = defaultFetchers()
 ): Promise<PreparedDraft & { usedLlm: boolean }> {
-  // Guard PŘED jakoukoli (placenou) prací: live odeslání je ve fázi 1 zakázané.
-  // Kdyby se kontrolovalo až v prepareDraftAndApproval (po fetchi a LLM volání),
-  // každý queue retry by znovu zaplatil LLM, než zpráva spadne do DLQ.
-  if (env.CC_NEWS_DRY_RUN === "0") {
-    throw new Error("cc-news live odeslání je zakázané (mantinel fáze 1) — vyžaduje eskalaci.");
-  }
-
   const digestMd = await fetchers.fetchDetail(ref.sourceId);
   const parsed = parseDigest(digestMd);
   // renderArticle dostane už naparsovaný digest, aby se neparsovalo dvakrát.

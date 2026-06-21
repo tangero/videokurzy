@@ -960,6 +960,7 @@ export function AdminSettingsForm({
   benefitsIndividual,
   benefitsOrganization,
   activeBank,
+  ccNewsLiveSend,
   discount,
   slotsUsed,
   saved,
@@ -969,6 +970,7 @@ export function AdminSettingsForm({
   benefitsIndividual: string[];
   benefitsOrganization: string[];
   activeBank: "fio" | "creditas";
+  ccNewsLiveSend: boolean;
   discount: DiscountSettingsView;
   slotsUsed: number;
   saved?: boolean;
@@ -1018,6 +1020,27 @@ export function AdminSettingsForm({
               </span>
             </label>
           </div>
+        </div>
+
+        {/* Novinky v Claude Code — reálné odesílání */}
+        <div class="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 class="text-lg font-semibold mb-3">Novinky v Claude Code — odesílání e-mailů</h2>
+          <p class="text-xs text-gray-600 mb-3">
+            Když je <strong>vypnuto</strong> (výchozí), schvalovací e-mail i rozeslání
+            newsletteru běží v dry-run — e-maily se jen logují, reálně neodejdou.
+            Zapnutím povolíte <strong>reálné odeslání přes Resend</strong>. Vyžaduje
+            navíc provozní přepínač <code>CC_NEWS_DRY_RUN=0</code> — bez něj zůstává
+            dry-run i při zapnutém přepínači zde.
+          </p>
+          <label class="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              name="cc_news_live_send"
+              checked={ccNewsLiveSend}
+              class="h-4 w-4 text-indigo-600 rounded border-gray-300"
+            />
+            <span class="text-sm text-gray-800">Povolit reálné odesílání Novinek v Claude Code</span>
+          </label>
         </div>
 
         {/* Ceny */}

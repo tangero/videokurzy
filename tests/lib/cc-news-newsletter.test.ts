@@ -7,6 +7,8 @@ import {
   buildRecipientSet,
   sendNewsletterDryRun,
   recordUnsubscribe,
+  recordResubscribe,
+  isSuppressed,
   parseCcArticleLinks,
 } from "../../src/lib/cc-news/newsletter";
 import { signUnsubToken, verifyUnsubToken } from "../../src/lib/cc-news/approval";
@@ -114,6 +116,22 @@ describe("sendNewsletterDryRun (R6 dry-run)", () => {
       expect(m).not.toMatch(/paid@example/);
     }
   });
+
+  it("zůstává dry-run, když je live=true ale chybí obsah (není co poslat)", async () => {
+    const db = drizzle(env.DB);
+    const report = await sendNewsletterDryRun(db, env as never, NOW, { live: true });
+    expect(report.mode).toBe("dry-run");
+    expect(report.sent).toBe(false);
+  });
+
+  it("z cílové množiny vyřadí odhlášené (anti-join přes suppression)", async () => {
+    const db = drizzle(env.DB);
+    const before = await buildRecipientSet(db, SECRET, NOW);
+    expect(before).toContain("paid@example.cz");
+    await recordUnsubscribe(db, SECRET, "paid@example.cz", NOW);
+    const after = await buildRecipientSet(db, SECRET, NOW);
+    expect(after).not.toContain("paid@example.cz");
+  });
 });
 
 describe("unsubscribe (GDPR, R6)", () => {
@@ -143,6 +161,28 @@ describe("unsubscribe (GDPR, R6)", () => {
     const second = await recordUnsubscribe(db, SECRET, "x@y.cz", NOW);
     expect(second.alreadyOptedOut).toBe(true);
     expect(await db.select().from(newsletterSuppression)).toHaveLength(1);
+  });
+
+  it("resubscribe deletes the suppression row (opt-in zpět), idempotent", async () => {
+    const db = drizzle(env.DB);
+    await recordUnsubscribe(db, SECRET, "z@y.cz", NOW);
+    expect(await isSuppressed(db, SECRET, "z@y.cz")).toBe(true);
+
+    const first = await recordResubscribe(db, SECRET, "z@y.cz");
+    expect(first.wasOptedOut).toBe(true);
+    expect(await isSuppressed(db, SECRET, "z@y.cz")).toBe(false);
+    expect(await db.select().from(newsletterSuppression)).toHaveLength(0);
+
+    // opětovné přihlášení už nepřihlášené adresy = no-op
+    const second = await recordResubscribe(db, SECRET, "z@y.cz");
+    expect(second.wasOptedOut).toBe(false);
+  });
+
+  it("isSuppressed normalizuje e-mail (case/space) a defaultně false", async () => {
+    const db = drizzle(env.DB);
+    expect(await isSuppressed(db, SECRET, "nikdy@y.cz")).toBe(false);
+    await recordUnsubscribe(db, SECRET, "Case@Y.cz", NOW);
+    expect(await isSuppressed(db, SECRET, "  case@y.cz ")).toBe(true);
   });
 });
 

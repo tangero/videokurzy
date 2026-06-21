@@ -14,8 +14,9 @@ import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { ccNewsItem } from "../../db/schema";
-import { ccNewsApprovalHtml } from "../email";
+import { ccNewsApprovalHtml, sendEmail } from "../email";
 import { ADMIN_EMAILS } from "../../config/admin";
+import { isCcNewsLiveSend } from "./settings";
 import {
   APPROVAL_TOKEN_TTL_MS,
   signApprovalIntent,
@@ -27,7 +28,10 @@ interface DraftEnv {
   KV: KVNamespace;
   AUTH_INTERNAL_SECRET: string;
   BETTER_AUTH_URL?: string;
-  CC_NEWS_DRY_RUN?: string; // "0" povolí reálné odeslání; jinak dry-run
+  // Live odeslání vyžaduje OBĚ brány: env CC_NEWS_DRY_RUN=0 + admin přepínač
+  // cc_news_live_send (viz settings.ts). Jinak dry-run (mantinel fáze 1).
+  CC_NEWS_DRY_RUN?: string;
+  RESEND_API_KEY?: string;
 }
 
 /** KV klíč pro markdown rozpracovaného konceptu (přepisuje se každým re-editem). */
@@ -104,8 +108,8 @@ export async function prepareDraftAndApproval(
     html,
   };
 
-  // 4) Dry-run vs. live. Reálné odeslání je mimo rozsah fáze 1 (eskalace).
-  const isLive = env.CC_NEWS_DRY_RUN === "0";
+  // 4) Dry-run vs. live. Live vyžaduje OBĚ brány (env + admin přepínač).
+  const isLive = await isCcNewsLiveSend(db, env);
   if (!isLive) {
     console.log(
       `[cc-news] DRY-RUN schvalovací e-mail pro ${meta.weekLabel} (item ${itemId}) — NEODESLÁNO. ` +
@@ -114,9 +118,18 @@ export async function prepareDraftAndApproval(
     return { itemId, articlePath, approveUrl, email, mode: "dry-run", sent: false };
   }
 
-  // Live větev se v fázi 1 NEpoužívá (mantinel). Ponecháno jako explicitní bod
-  // eskalace — reálné odeslání vyžaduje schválení architektem.
-  throw new Error("cc-news live odeslání je zakázané (mantinel fáze 1) — vyžaduje eskalaci.");
+  // Live: reálné odeslání přes Resend (sdílený sendEmail). Adminům jen jeden
+  // e-mail (Resend přijme pole adres). Selhání odeslání NEbrání tomu, aby byl
+  // koncept a approve link připraven — schvalovat lze i z logu / přímého odkazu.
+  const sent = await sendEmail(
+    { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
+    { to: email.to, subject: email.subject, html: email.html },
+  );
+  console.log(
+    `[cc-news] LIVE schvalovací e-mail pro ${meta.weekLabel} (item ${itemId}) — ` +
+      `odeslání=${sent ? "ok" : "selhalo"}, příjemci=${email.to.length}.`
+  );
+  return { itemId, articlePath, approveUrl, email, mode: "live", sent };
 }
 
 export type ApproveResult =

@@ -1,8 +1,10 @@
-// Rozeslání newsletteru „Novinky v Claude Code" — DRY-RUN (W-007, R6/R7).
+// Rozeslání newsletteru „Novinky v Claude Code" (W-007, R6/R7).
 //
-// Mantinely: NEodesílá reálné e-maily (jen sestaví + zaloguje počty a MASKOVANÉ
-// adresy), data příjemců se nikam neperzistují. Odhlášení (GDPR) je povinné a
-// řeší se přes suppression tabulku klíčovanou `emailHash` (žádné plain PII).
+// Default je DRY-RUN: jen sestaví + zaloguje počty a MASKOVANÉ adresy, data
+// příjemců se nikam neperzistují. Reálné odeslání přes Resend nastane jen za
+// obou bran (env CC_NEWS_DRY_RUN=0 + admin přepínač cc_news_live_send, viz
+// settings.ts) a jen když je dodán obsah. Odhlášení (GDPR) je povinné a řeší se
+// přes suppression tabulku klíčovanou `emailHash` (žádné plain PII).
 //
 // Cílová množina (dle B-002):
 //   - aktivní purchase: status=active, expiresAt>now, kind ∈ {paid, manual}
@@ -122,29 +124,69 @@ export interface SendReport {
 interface NewsletterEnv {
   AUTH_INTERNAL_SECRET: string;
   CC_NEWS_DRY_RUN?: string;
+  RESEND_API_KEY?: string;
+}
+
+/** Sestaví HTML newsletteru pro jednoho příjemce (vč. jeho unsubscribe odkazu). */
+export interface NewsletterContent {
+  subject: string;
+  /** `(unsubscribeUrl) => html` — per-příjemce, aby šel zapéct osobní odkaz. */
+  renderHtml: (unsubscribeUrl: string) => string;
+  /** Základ pro odhlašovací odkaz, např. https://kurzy.vibecoding.cz. */
+  baseUrl: string;
 }
 
 /**
- * „Rozešle" newsletter — v dry-run jen spočítá příjemce a zaloguje počet +
- * vzorek maskovaných adres. NEodesílá. Live větev je zakázaná (mantinel fáze 1).
+ * „Rozešle" newsletter. Default = dry-run: jen spočítá příjemce a zaloguje počet
+ * + vzorek MASKOVANÝCH adres, NEodesílá. Reálné odeslání nastane jen když je
+ * `live=true` (volající ho odvodí z `isCcNewsLiveSend(db, env)`) A je dodán
+ * `content` — pak se každému příjemci pošle e-mail přes Resend s jeho osobním
+ * odhlašovacím odkazem. Bez `content` se live neodesílá (není co poslat).
  */
 export async function sendNewsletterDryRun(
   db: Db,
   env: NewsletterEnv,
-  now: Date
+  now: Date,
+  opts: { live?: boolean; content?: NewsletterContent } = {}
 ): Promise<SendReport> {
   const recipients = await buildRecipientSet(db, env.AUTH_INTERNAL_SECRET, now);
   const maskedSample = recipients.slice(0, 3).map(maskEmail);
 
-  if (env.CC_NEWS_DRY_RUN === "0") {
-    throw new Error("cc-news live rozeslání je zakázané (mantinel fáze 1) — vyžaduje eskalaci.");
+  if (!opts.live || !opts.content) {
+    console.log(
+      `[cc-news] DRY-RUN rozeslání: příjemců=${recipients.length} — NEODESLÁNO. ` +
+        `vzorek=${maskedSample.join(", ")}`
+    );
+    return { mode: "dry-run", recipientCount: recipients.length, maskedSample, sent: false };
+  }
+
+  // Live: každému příjemci zvlášť (osobní unsubscribe odkaz). Import emailu i
+  // unsub tokenu líně, ať dry-run cesta nezávisí na Resend/HMAC modulech.
+  const { sendEmail } = await import("../email");
+  const { signUnsubToken } = await import("./approval");
+  const base = opts.content.baseUrl.replace(/\/+$/, "");
+
+  let okCount = 0;
+  for (const to of recipients) {
+    const token = await signUnsubToken(env as { AUTH_INTERNAL_SECRET: string }, to);
+    const unsubscribeUrl = `${base}/novinky-cc/unsubscribe?token=${encodeURIComponent(token)}`;
+    const ok = await sendEmail(
+      { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
+      { to, subject: opts.content.subject, html: opts.content.renderHtml(unsubscribeUrl) }
+    );
+    if (ok) okCount++;
   }
 
   console.log(
-    `[cc-news] DRY-RUN rozeslání: příjemců=${recipients.length} — NEODESLÁNO. ` +
+    `[cc-news] LIVE rozeslání: příjemců=${recipients.length}, odesláno=${okCount}. ` +
       `vzorek=${maskedSample.join(", ")}`
   );
-  return { mode: "dry-run", recipientCount: recipients.length, maskedSample, sent: false };
+  return {
+    mode: "live",
+    recipientCount: recipients.length,
+    maskedSample,
+    sent: okCount > 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -245,4 +287,40 @@ export async function recordUnsubscribe(
     .returning({ emailHash: newsletterSuppression.emailHash });
 
   return { alreadyOptedOut: inserted.length === 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Opětovné přihlášení (opt-in) k newsletteru — smaže suppression řádek (dle
+// rozhodnutí architekta: zpětné zapnutí = DELETE záznamu, ne tombstone).
+// Idempotentní (opakované přihlášení už nepřihlášené adresy = no-op). Ukládá se
+// jen emailHash, nikdy plain e-mail — konzistentní s recordUnsubscribe.
+// ---------------------------------------------------------------------------
+export async function recordResubscribe(
+  db: Db,
+  secret: string,
+  email: string
+): Promise<{ wasOptedOut: boolean }> {
+  const hash = await emailHash(secret, email);
+  const deleted = await db
+    .delete(newsletterSuppression)
+    .where(eq(newsletterSuppression.emailHash, hash))
+    .returning({ emailHash: newsletterSuppression.emailHash });
+  return { wasOptedOut: deleted.length > 0 };
+}
+
+/**
+ * Zjistí, zda je daný e-mail odhlášený (v suppression). Čte jen přes emailHash,
+ * žádné plain PII se nečte ani neporovnává v DB. Pro zobrazení stavu na profilu.
+ */
+export async function isSuppressed(
+  db: Db,
+  secret: string,
+  email: string
+): Promise<boolean> {
+  const hash = await emailHash(secret, email);
+  const rows = await db
+    .select({ emailHash: newsletterSuppression.emailHash })
+    .from(newsletterSuppression)
+    .where(eq(newsletterSuppression.emailHash, hash));
+  return rows.length > 0;
 }

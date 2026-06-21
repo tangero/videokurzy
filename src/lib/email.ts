@@ -24,7 +24,10 @@ interface SendEmailOptions {
 }
 
 /** Odešle email přes Resend. Vrací true při úspěchu. */
-export async function sendEmail(env: Env, opts: SendEmailOptions): Promise<boolean> {
+export async function sendEmail(
+  env: Pick<Env, "RESEND_API_KEY">,
+  opts: SendEmailOptions,
+): Promise<boolean> {
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
