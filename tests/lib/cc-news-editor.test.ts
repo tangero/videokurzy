@@ -50,10 +50,17 @@ const DIGEST = `> ## Documentation Index
   <a className="digest-feature-link" href="/docs/en/troubleshooting#safe-mode">Safe mode</a>
 </div>
 
-## Other wins
+<div className="digest-wins">
+  <p className="digest-wins-title">Other wins</p>
 
-- \`/plugin list\` prints installed plugins inline.
-- Version requirements let managed deployments require an approved range.
+  <div className="digest-wins-grid">
+    <div><a href="/docs/en/model-config#fallback-model-chains"><code>fallbackModel</code></a> configures up to three fallback models tried in order</div>
+    <div>Session titles are now generated in the language of your conversation</div>
+    <div>Browsing a marketplace's plugins in <code>/plugin</code> now has a search bar</div>
+  </div>
+</div>
+
+[Full changelog for v2.1.166–v2.1.176 →](/en/changelog#2-1-166)
 `;
 
 describe("cc-news editor — parseDigest", () => {
@@ -80,9 +87,14 @@ describe("cc-news editor — parseDigest", () => {
     expect(d.features[1].title).toBe("Subagents can spawn subagents");
   });
 
-  it("collects minor wins from the Other wins section", () => {
-    expect(d.minorWins).toHaveLength(2);
-    expect(d.minorWins[0]).toMatch(/plugin list/);
+  it("collects minor wins from the real digest-wins-grid MDX block", () => {
+    expect(d.minorWins).toHaveLength(3);
+    // odkaz uvnitř položky převeden na markdown [text](url):
+    expect(d.minorWins[0]).toMatch(
+      /\[fallbackModel\]\(https:\/\/code\.claude\.com\/docs\/en\/model-config#fallback-model-chains\)/
+    );
+    expect(d.minorWins[1]).toMatch(/Session titles/);
+    expect(d.minorWins[2]).toMatch(/search bar/);
   });
 });
 
@@ -124,9 +136,10 @@ describe("cc-news editor — renderArticleSkeleton (R2 struktura)", () => {
     expect(md.indexOf("Troubleshoot with safe mode")).toBeLessThan(md.indexOf("Move a session with /cd"));
   });
 
-  it("lists minor wins as bullets at the end", () => {
+  it("lists minor wins from the real digest-wins-grid as bullets at the end", () => {
     expect(md).toMatch(/Drobnosti:/);
-    expect(md).toMatch(/- .*plugin list/);
+    expect(md).toMatch(/- \[fallbackModel\]\(https:\/\/code\.claude\.com\/docs\/en\/model-config#fallback-model-chains\)/);
+    expect(md).toMatch(/- Session titles/);
   });
 
   it("does not inject a changelog disclaimer into the perex", () => {

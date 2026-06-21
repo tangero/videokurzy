@@ -65,15 +65,54 @@ export function parseDigest(md: string): ParsedDigest {
     features.push({ title, version, lede, docLink });
   }
 
-  // Drobnosti: odrážky pod nadpisem „Other wins"/„Also this week".
-  const minorWins: string[] = [];
-  const minorSection = md.match(/(?:Other wins|Also this week)[\s\S]*?(?:\n#|$)/i)?.[0] ?? "";
-  for (const m of minorSection.matchAll(/^[-*]\s+(.+)$/gm)) {
-    const t = stripTags(m[1]);
-    if (t) minorWins.push(t);
-  }
+  const minorWins = parseMinorWins(md);
 
   return { weekLabel, dateRange, perex, versionRange, features, minorWins };
+}
+
+/**
+ * Drobnosti („Other wins"). Reálný digest je drží v MDX bloku
+ * `<div className="digest-wins-grid"><div>…</div>…</div>`, ne jako markdown
+ * odrážky. Primárně parsujeme grid; fallback na markdown odrážky pod nadpisem
+ * „Other wins"/„Also this week" pro starší/jiný tvar. Odkazy uvnitř položek se
+ * převedou na markdown `[text](url)`, zbylé HTML značky se odstraní.
+ */
+export function parseMinorWins(md: string): string[] {
+  const wins: string[] = [];
+
+  // Od začátku gridu po konec digest-wins bloku (nebo konec souboru). Hranici
+  // neurčujeme přes `</div></div>` (vnořené <a>/<code> by ji posunuly), ale
+  // bereme zbytek a posbíráme přímé <div>…</div> položky (bez vnořeného <div>).
+  const gridStart = md.search(/digest-wins-grid"?\s*>/i);
+  if (gridStart !== -1) {
+    const tail = md.slice(gridStart);
+    for (const m of tail.matchAll(/<div>((?:(?!<\/?div\b)[\s\S])*?)<\/div>/gi)) {
+      const t = htmlItemToMarkdown(m[1]);
+      if (t) wins.push(t);
+    }
+    if (wins.length > 0) return wins;
+  }
+
+  // Fallback: markdown odrážky pod nadpisem drobností.
+  const minorSection = md.match(/(?:Other wins|Also this week)[\s\S]*?(?:\n#|$)/i)?.[0] ?? "";
+  for (const m of minorSection.matchAll(/^[-*]\s+(.+)$/gm)) {
+    const t = htmlItemToMarkdown(m[1]);
+    if (t) wins.push(t);
+  }
+  return wins;
+}
+
+/** Převede HTML položku drobnosti na markdown: <a href> → [text](url), zbytek stripne. */
+function htmlItemToMarkdown(html: string): string {
+  const withLinks = html.replace(
+    /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
+    (_m, href, text) => {
+      const label = stripTags(text);
+      const url = href.startsWith("http") ? href : `${DOC_BASE}${href}`;
+      return label ? `[${label}](${url})` : "";
+    }
+  );
+  return stripTags(withLinks);
 }
 
 /** Pořadí velkých změn dle váhy (bezpečnost/schopnosti nahoru, komfort dolů). */
