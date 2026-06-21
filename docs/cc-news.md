@@ -41,6 +41,11 @@ spočítá `contentHash`. Idempotence: anti-join proti `cc_news_item`. `guid` a
 `pubDate` se na klíč nepoužívají (sousední týdny sdílejí `pubDate`). Nový/změněný
 záznam se zařadí do fronty `cc-news.detected` (`WEBHOOK_QUEUE`).
 
+Konzument fronty (`handleCcNewsDetected` v `queue.ts` → `processCcNewsItem` v
+`lib/cc-news/pipeline.ts`) na zprávu navazuje **automaticky**: stáhne `.md`
+detail, zavolá editor (krok 2), uloží draft a připraví schvalovací e-mail v
+dry-run (kroky 3–4). Tím je detekce zřetězená s celou redakční pipeline.
+
 ## Redakční zpracování (R2, varianta C dle schválení architekta)
 
 - **Deterministická vrstva** (`parseDigest` + `renderArticleSkeleton`): naparsuje

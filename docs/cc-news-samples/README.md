@@ -1,41 +1,54 @@
 # Sample článek „Novinky v Claude Code" (R8)
 
-`2026-w24-sample.md` je ukázka vygenerovaná pipeline z **reálného aktuálního**
-whats-new záznamu `https://code.claude.com/docs/en/whats-new/2026-w24.md`.
+`2026-w23-w24-sample.md` je ukázkový redakční článek za týdny 23–24 (verze
+v2.1.158–v2.1.176), připravený k lidskému publikačnímu posouzení (R8).
 
 ## Co tento sample dokládá
 
-Sample je výstup **deterministické vrstvy** editoru (`renderArticleSkeleton`).
-Dokládá strukturní část redakčních pravidel (R2), kterou lze ověřit bez LLM:
+Sample je **český redakční výstup** dle `redakcni-pravidla.md` — tedy výstup
+**LLM vrstvy** editoru (`renderArticle` s `CC_NEWS_LLM=1`), schválené architektem
+jako varianta C (deterministická kostra + LLM). Dokládá kompletní redakční
+zpracování:
 
 - `#` nadpis → YAML front matter (`author`, `categories`, `layout`, `title`,
   `post_excerpt`, `summary_points`);
-- věcný perex **bez** disclaimeru o changelogu;
+- věcný **rámující perex** bez disclaimeru o changelogu, se seřazením podle váhy;
 - bodový přehled velkých změn, u každé **číslo verze v závorce**;
-- velké změny jako **odstavce** (ne odrážky), **řazené dle váhy** — bezpečnost
-  (safe mode) nahoře, komfortní `/cd` dole — každá zakončená verzí a **odkazem na
-  konkrétní sekci dokumentace**;
-- drobnosti na konci jako **odrážky**, odkazy převedené na markdown.
+- velké změny jako **souvislé odstavce** (ne odrážky), řazené dle váhy —
+  bezpečnostní a provozní hardening i rozšíření schopností (vnořené subagenty)
+  nahoře, kosmetika dole — každá s **odkazem na konkrétní sekci dokumentace**;
+- drobnosti na konci jako **odrážky**, každá na jeden řádek;
+- spisovná čeština, vykání, pomlčky s mezerami, „subagenti" jako životné, české
+  výrazy s ponecháním zavedených termínů (prompt cache, hooks, MCP, auto mode,
+  safe mode, …);
+- rámující **interpretační věty** na začátku a konci, oddělené od faktického výčtu.
 
-## Jazyková redakce (LLM)
+## Jak vzniká
 
-Fakta v této kostře jsou v původním (anglickém) znění. **Plný převod do spisovné
-češtiny** dle jazykových pravidel (`redakcni-pravidla.md`) zajišťuje **LLM
-vrstva** (`renderArticle` s `CC_NEWS_LLM=1`, Anthropic klíč v repu) — schváleno
-architektem jako varianta C (deterministická kostra + LLM). LLM se drží
-naparsovaných faktů a nehalucinuje.
+1. **Detekce** stáhne týdenní `.md` digest z `code.claude.com/docs/en/whats-new`.
+2. **Editor** (`parseDigest`) naparsuje fakta na strukturovaný model a
+   deterministicky sestaví kostru — to je technický mezikrok, který drží
+   strukturu a zabraňuje halucinaci faktů.
+3. **LLM vrstva** (`renderArticle`, `CC_NEWS_LLM=1`, Anthropic klíč v repu)
+   převede kostru do plné spisovné češtiny podle jazykových pravidel. LLM se drží
+   naparsovaných faktů.
 
-Sample je záměrně deterministický, aby byl **reprodukovatelný** a šel ověřit v
-testech; produkční článek projde navíc LLM jazykovou vrstvou.
+Tento sample je výstup kroku 3 — finální článek, jaký pipeline produkuje a jaký
+jde Patrickovi ke schválení.
 
-## Reprodukce
+## Reprodukce přes pipeline
+
+V běhu zpracuje pipeline automaticky: cron detekuje nový digest → fronta
+`cc-news.detected` → `processCcNewsItem` (`lib/cc-news/pipeline.ts`) zavolá editor
+s LLM a uloží draft + připraví schvalovací e-mail (dry-run). Ručně:
 
 ```bash
-# z kořene repo videokurzy
+# z kořene repo videokurzy (s nastaveným ANTHROPIC_API_KEY a CC_NEWS_LLM=1)
 node --input-type=module -e '
-import { parseDigest, renderArticleSkeleton } from "./src/lib/cc-news/editor.ts";
+import { renderArticle } from "./src/lib/cc-news/editor.ts";
 import { readFileSync } from "fs";
-const md = readFileSync("/tmp/w24.md","utf8"); // stažený …/2026-w24.md
-console.log(renderArticleSkeleton(parseDigest(md)));
+const md = readFileSync("/tmp/digest.md","utf8"); // stažený …/<rok>-wNN.md
+const { markdown } = await renderArticle(md, { CC_NEWS_LLM: "1", ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY });
+console.log(markdown);
 '
 ```

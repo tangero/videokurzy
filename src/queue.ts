@@ -69,9 +69,11 @@ export async function handleQueue(
           break;
 
         case "cc-news.detected":
-          // W-003 končí detekcí + enqueue. Redakční zpracování (W-004) zatím
-          // není; zpráva se jen potvrdí a zaloguje, nic se neodesílá/nepublikuje.
-          await handleCcNewsDetected(data as unknown as CcNewsDetectedData);
+          // Napojení detekce na redakční pipeline: stáhne detail digestu,
+          // vyrobí článek (editor), uloží draft a připraví schvalovací e-mail
+          // v dry-run. NIC se neodesílá/nepublikuje — publikace až po lidském
+          // schválení (mantinel).
+          await handleCcNewsDetected(db, env, data as unknown as CcNewsDetectedData);
           break;
 
         default:
@@ -434,13 +436,26 @@ async function handleInvoicePaid(
 }
 
 /**
- * Konzument zprávy cc-news.detected (W-003). Zatím jen potvrzení + log —
- * redakční zpracování dorazí ve W-004. NIC se neodesílá ani nepublikuje;
- * publikace je vždy až po lidském schválení (mantinel kontraktu).
+ * Konzument zprávy cc-news.detected — napojuje detekci (W-003) na redakční
+ * pipeline (W-004/W-005): stáhne `.md` detail digestu, vyrobí článek editorem
+ * (deterministicky + volitelně LLM dle CC_NEWS_LLM), uloží draft a připraví
+ * schvalovací e-mail v DRY-RUN. NIC se neodesílá ani nepublikuje — publikace
+ * nastává až po lidském kliknutí na schvalovací link (mantinel kontraktu).
  */
-async function handleCcNewsDetected(data: CcNewsDetectedData): Promise<void> {
+async function handleCcNewsDetected(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  data: CcNewsDetectedData
+): Promise<void> {
+  const { processCcNewsItem } = await import("./lib/cc-news/pipeline");
+  const result = await processCcNewsItem(
+    db,
+    env,
+    { itemId: data.itemId, sourceId: data.sourceId },
+    new Date()
+  );
   console.log(
-    `[queue] cc-news.detected itemId=${data.itemId} sourceId=${data.sourceId} ` +
-      `(redakční zpracování W-004 zatím není; zpráva potvrzena)`
+    `[queue] cc-news.detected zpracováno: item=${data.itemId} llm=${result.usedLlm} ` +
+      `mode=${result.mode} sent=${result.sent} (schvalovací e-mail připraven, NEODESLÁNO)`
   );
 }
