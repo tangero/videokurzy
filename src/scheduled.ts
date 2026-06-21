@@ -8,6 +8,7 @@ import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas"
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
+import { detectLatest, defaultFetchers } from "./lib/cc-news/detect";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
 import { exportPurchaseInvoice } from "./lib/fakturoid";
@@ -81,6 +82,16 @@ export async function handleScheduled(
     console.log(`[cron] video stats: synced=${synced}, errors=${errors}`);
   } catch (err) {
     console.error("[cron] syncVideoStats failed:", err);
+  }
+
+  // Detekce nového whats-new digestu Claude Code (služba „Novinky v CC", W-003).
+  // Jen idempotentní detekce + zápis draftu; nic se neodesílá ani nepublikuje.
+  try {
+    const outcome = await detectLatest(db, defaultFetchers(), now);
+    console.log(`[cron] cc-news detect: ${outcome.kind}` +
+      (outcome.kind === "empty" ? "" : ` sourceId=${outcome.sourceId}`));
+  } catch (err) {
+    console.error("[cron] cc-news detect failed:", err);
   }
 }
 

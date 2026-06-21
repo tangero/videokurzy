@@ -236,4 +236,30 @@ export const lessonWatch = sqliteTable(
   (table) => [primaryKey({ columns: [table.userId, table.lessonId] })]
 );
 
+// Detekované týdenní záznamy z code.claude.com/docs/en/whats-new (služba
+// „Novinky v Claude Code"). Jedna řádka = jeden whats-new digest. Idempotence
+// detekce stojí na UNIKÁTNÍM sourceId (= canonical_url): cron při každém běhu
+// dělá anti-join proti této tabulce. contentHash zachytí změnu obsahu téhož
+// týdne (re-edit existujícího digestu) — viz lib/cc-news/detect.ts.
+//   status: draft (čeká redakční zpracování + schválení)
+//         → approved (člověk klikl schvalovací link)
+//         → published (zveřejněno v gated sekci „Novinky v CC").
+// Žádné PII; obsah článku se ukládá jako markdown soubor, articlePath drží cestu.
+export const ccNewsItem = sqliteTable("cc_news_item", {
+  id: text("id").primaryKey(),
+  // Kanonická URL detailu digestu, např. /docs/en/whats-new/2026-w24.
+  // UNIQUE = idempotency key. guid/pubDate z RSS se na klíč NEPOUŽÍVAJÍ
+  // (Week 24 a Week 23 mohou sdílet pubDate; guid se může změnit).
+  sourceId: text("sourceId").notNull().unique(),
+  // SHA-256 plného detailu .md; změna => stejný sourceId, nový obsah.
+  contentHash: text("contentHash").notNull(),
+  weekLabel: text("weekLabel"),        // „Week 24", lidský štítek z RSS
+  versionRange: text("versionRange"),  // rozsah verzí z kategorie RSS
+  status: text("status").notNull().default("draft"), // draft|approved|published
+  articlePath: text("articlePath"),    // cesta k markdown souboru článku v repu
+  approveNonce: text("approveNonce"),  // jednorázový nonce pro schvalovací link (W-005)
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  publishedAt: integer("publishedAt", { mode: "timestamp" }),
+});
+
 export { user, session, account, verification } from "./auth-schema";
