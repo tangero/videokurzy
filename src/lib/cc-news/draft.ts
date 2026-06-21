@@ -118,16 +118,26 @@ export async function prepareDraftAndApproval(
     return { itemId, articlePath, approveUrl, email, mode: "dry-run", sent: false };
   }
 
-  // Live: reálné odeslání přes Resend (sdílený sendEmail). Adminům jen jeden
-  // e-mail (Resend přijme pole adres). Selhání odeslání NEbrání tomu, aby byl
-  // koncept a approve link připraven — schvalovat lze i z logu / přímého odkazu.
+  // Live: reálné odeslání přes Resend (sdílený sendEmail). Koncept i approve
+  // link jsou už uložené (kroky 1–3), takže retry je bezpečný — nonce se jen
+  // přepíše (poslední link platí). Selhání odeslání EskaLUJEME výjimkou, ať
+  // queue zprávu retryuje; jinak by schvalovací e-mail tiše zmizel a novinka
+  // by uvízla nepublikovaná. (Duplicitní admin e-mail při retry je přijatelný,
+  // ztráta ne.)
   const sent = await sendEmail(
     { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
     { to: email.to, subject: email.subject, html: email.html },
   );
+  if (!sent) {
+    console.error(
+      `[cc-news] LIVE schvalovací e-mail pro ${meta.weekLabel} (item ${itemId}) SELHAL — ` +
+        `eskaluji (queue retry). příjemci=${email.to.length}.`
+    );
+    throw new Error(`cc-news: odeslání schvalovacího e-mailu selhalo pro item ${itemId}`);
+  }
   console.log(
-    `[cc-news] LIVE schvalovací e-mail pro ${meta.weekLabel} (item ${itemId}) — ` +
-      `odeslání=${sent ? "ok" : "selhalo"}, příjemci=${email.to.length}.`
+    `[cc-news] LIVE schvalovací e-mail pro ${meta.weekLabel} (item ${itemId}) odeslán. ` +
+      `příjemci=${email.to.length}.`
   );
   return { itemId, articlePath, approveUrl, email, mode: "live", sent };
 }

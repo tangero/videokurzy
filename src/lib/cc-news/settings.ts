@@ -27,13 +27,16 @@ export async function getCcNewsLiveSend(db: Db): Promise<boolean> {
 
 interface LiveSendEnv {
   CC_NEWS_DRY_RUN?: string;
+  RESEND_API_KEY?: string;
 }
 
 /**
  * Zda se mají e-maily reálně odeslat. Vyžaduje OBĚ brány: env přepínač i admin
- * nastavení. Jinak dry-run (mantinel fáze 1).
+ * nastavení, a navíc neprázdný RESEND_API_KEY (bez něj by Resend dostal prázdný
+ * Bearer a tiše selhal — radši zůstat v dry-run). Jinak dry-run (mantinel f. 1).
  */
 export async function isCcNewsLiveSend(db: Db, env: LiveSendEnv): Promise<boolean> {
   if (env.CC_NEWS_DRY_RUN !== "0") return false;
+  if (!env.RESEND_API_KEY) return false;
   return getCcNewsLiveSend(db);
 }

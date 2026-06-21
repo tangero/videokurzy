@@ -119,6 +119,9 @@ export interface SendReport {
   recipientCount: number;
   maskedSample: string[]; // jen pár maskovaných adres pro kontrolu, ne celý seznam
   sent: boolean;
+  /** V live režimu počet úspěšně odeslaných / selhání (dry-run: 0/0). */
+  delivered: number;
+  failed: number;
 }
 
 interface NewsletterEnv {
@@ -136,56 +139,77 @@ export interface NewsletterContent {
   baseUrl: string;
 }
 
+/** Souběžnost odesílání — kompromis mezi wall-clockem a Resend rate-limitem. */
+const SEND_CONCURRENCY = 8;
+
 /**
- * „Rozešle" newsletter. Default = dry-run: jen spočítá příjemce a zaloguje počet
- * + vzorek MASKOVANÝCH adres, NEodesílá. Reálné odeslání nastane jen když je
- * `live=true` (volající ho odvodí z `isCcNewsLiveSend(db, env)`) A je dodán
- * `content` — pak se každému příjemci pošle e-mail přes Resend s jeho osobním
- * odhlašovacím odkazem. Bez `content` se live neodesílá (není co poslat).
+ * Rozešle newsletter. Default = dry-run: jen spočítá příjemce a zaloguje počet +
+ * vzorek MASKOVANÝCH adres, NEodesílá. Reálné odeslání přes Resend nastane jen
+ * když `isCcNewsLiveSend(db, env)` (obě brány) vrátí true A je dodán `content` —
+ * brána se vyhodnocuje UVNITŘ (nelze ji obejít argumentem). Každému příjemci jde
+ * e-mail s jeho osobním odhlašovacím odkazem; odeslání běží po dávkách
+ * (SEND_CONCURRENCY) a selhání jednoho příjemce neshodí celé rozeslání.
  */
-export async function sendNewsletterDryRun(
+export async function sendNewsletter(
   db: Db,
   env: NewsletterEnv,
   now: Date,
-  opts: { live?: boolean; content?: NewsletterContent } = {}
+  opts: { content?: NewsletterContent } = {}
 ): Promise<SendReport> {
   const recipients = await buildRecipientSet(db, env.AUTH_INTERNAL_SECRET, now);
   const maskedSample = recipients.slice(0, 3).map(maskEmail);
 
-  if (!opts.live || !opts.content) {
+  const { isCcNewsLiveSend } = await import("./settings");
+  const live = await isCcNewsLiveSend(db, env);
+
+  if (!live || !opts.content) {
     console.log(
       `[cc-news] DRY-RUN rozeslání: příjemců=${recipients.length} — NEODESLÁNO. ` +
         `vzorek=${maskedSample.join(", ")}`
     );
-    return { mode: "dry-run", recipientCount: recipients.length, maskedSample, sent: false };
+    return {
+      mode: "dry-run", recipientCount: recipients.length, maskedSample,
+      sent: false, delivered: 0, failed: 0,
+    };
   }
 
-  // Live: každému příjemci zvlášť (osobní unsubscribe odkaz). Import emailu i
-  // unsub tokenu líně, ať dry-run cesta nezávisí na Resend/HMAC modulech.
+  const content = opts.content;
   const { sendEmail } = await import("../email");
-  const { signUnsubToken } = await import("./approval");
-  const base = opts.content.baseUrl.replace(/\/+$/, "");
+  const { buildUnsubscribeUrl } = await import("./approval");
+  const base = content.baseUrl.replace(/\/+$/, "");
+  const apiKey = env.RESEND_API_KEY ?? "";
 
-  let okCount = 0;
-  for (const to of recipients) {
-    const token = await signUnsubToken(env as { AUTH_INTERNAL_SECRET: string }, to);
-    const unsubscribeUrl = `${base}/novinky-cc/unsubscribe?token=${encodeURIComponent(token)}`;
-    const ok = await sendEmail(
-      { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
-      { to, subject: opts.content.subject, html: opts.content.renderHtml(unsubscribeUrl) }
+  // Per-příjemce izolace: výjimka (HMAC/render) u jednoho příjemce je odchycena
+  // a počítá se jako selhání, nesmí přerušit zbytek dávky. Dávkování omezuje
+  // souběžnost (Worker subrequest/wall-clock limit) místo striktně sériového I/O.
+  let delivered = 0;
+  let failed = 0;
+  for (let i = 0; i < recipients.length; i += SEND_CONCURRENCY) {
+    const batch = recipients.slice(i, i + SEND_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (to) => {
+        try {
+          const unsubscribeUrl = await buildUnsubscribeUrl(env, base, to);
+          return await sendEmail(
+            { RESEND_API_KEY: apiKey },
+            { to, subject: content.subject, html: content.renderHtml(unsubscribeUrl) }
+          );
+        } catch (err) {
+          console.error(`[cc-news] rozeslání selhalo pro ${maskEmail(to)}:`, (err as Error).message);
+          return false;
+        }
+      })
     );
-    if (ok) okCount++;
+    for (const ok of results) ok ? delivered++ : failed++;
   }
 
   console.log(
-    `[cc-news] LIVE rozeslání: příjemců=${recipients.length}, odesláno=${okCount}. ` +
-      `vzorek=${maskedSample.join(", ")}`
+    `[cc-news] LIVE rozeslání: příjemců=${recipients.length}, odesláno=${delivered}, ` +
+      `selhalo=${failed}. vzorek=${maskedSample.join(", ")}`
   );
   return {
-    mode: "live",
-    recipientCount: recipients.length,
-    maskedSample,
-    sent: okCount > 0,
+    mode: "live", recipientCount: recipients.length, maskedSample,
+    sent: delivered > 0, delivered, failed,
   };
 }
 
@@ -252,9 +276,21 @@ function stripCdata(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Odhlášení (GDPR, W-007) — zapíše suppression z ověřeného tokenu. Ukládá jen
-// emailHash, nikdy plain e-mail. Idempotentní (opakované odhlášení = no-op).
+// Suppression — zápis/čtení nad emailHash. Ukládá se jen hash, nikdy plain
+// e-mail. Sdílený lookup, ať record/resubscribe/isSuppressed nemají tři kopie.
 // ---------------------------------------------------------------------------
+
+/** Existuje suppression řádek pro daný hash? Jeden zdroj pravdy pro lookup. */
+async function existsSuppressionByHash(db: Db, hash: string): Promise<boolean> {
+  const rows = await db
+    .select({ emailHash: newsletterSuppression.emailHash })
+    .from(newsletterSuppression)
+    .where(eq(newsletterSuppression.emailHash, hash));
+  return rows.length > 0;
+}
+
+// Odhlášení (GDPR, W-007) — zapíše suppression z ověřeného tokenu nebo z profilu.
+// Idempotentní (opakované odhlášení = no-op).
 export async function recordUnsubscribe(
   db: Db,
   secret: string,
@@ -266,11 +302,7 @@ export async function recordUnsubscribe(
   // per-newsletter — různé newslettery dají různý hash a PK na emailHash je
   // korektní rozlišovač (žádná kolize napříč newslettery).
   const hash = await emailHash(secret, email);
-  const existing = await db
-    .select({ emailHash: newsletterSuppression.emailHash })
-    .from(newsletterSuppression)
-    .where(eq(newsletterSuppression.emailHash, hash));
-  if (existing.length > 0) return { alreadyOptedOut: true };
+  if (await existsSuppressionByHash(db, hash)) return { alreadyOptedOut: true };
 
   // onConflictDoNothing: pojistka proti závodu dvou souběžných odhlašovacích
   // kliků na stejný odkaz (oba projdou SELECT s prázdným výsledkem).
@@ -310,17 +342,86 @@ export async function recordResubscribe(
 
 /**
  * Zjistí, zda je daný e-mail odhlášený (v suppression). Čte jen přes emailHash,
- * žádné plain PII se nečte ani neporovnává v DB. Pro zobrazení stavu na profilu.
+ * žádné plain PII se nečte ani neporovnává v DB.
  */
 export async function isSuppressed(
   db: Db,
   secret: string,
   email: string
 ): Promise<boolean> {
-  const hash = await emailHash(secret, email);
-  const rows = await db
-    .select({ emailHash: newsletterSuppression.emailHash })
-    .from(newsletterSuppression)
-    .where(eq(newsletterSuppression.emailHash, hash));
-  return rows.length > 0;
+  return existsSuppressionByHash(db, await emailHash(secret, email));
+}
+
+// ---------------------------------------------------------------------------
+// Adresy účtu pro newsletter. buildRecipientSet cílí jak na user.email, tak na
+// purchase.email (fakturační adresa z aktivních nákupů může být jiná). Opt-out
+// na profilu proto musí pokrýt VŠECHNY tyto adresy, jinak by odhlášení nad jen
+// primární adresou nezasáhlo doručovanou nákupní adresu (GDPR).
+// ---------------------------------------------------------------------------
+
+/** Všechny adresy, na které účtu reálně může chodit newsletter (deduplikované). */
+export async function userNewsletterEmails(
+  db: Db,
+  userId: string,
+  primaryEmail: string,
+  now: Date
+): Promise<string[]> {
+  const emails = new Set<string>();
+  const primary = normalizeEmail(primaryEmail);
+  if (isLikelyEmail(primary)) emails.add(primary);
+
+  // Aktivní placené/manuální purchase navázané na účet (stejné podmínky jako
+  // buildRecipientSet) — jejich fakturační e-mail může být jiný než user.email.
+  const purchases = await db
+    .select({ email: purchase.email })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.userId, userId),
+        eq(purchase.status, "active"),
+        gt(purchase.expiresAt, now),
+        inArray(purchase.kind, ["paid", "manual"])
+      )
+    );
+  for (const p of purchases) {
+    const e = normalizeEmail(p.email);
+    if (isLikelyEmail(e)) emails.add(e);
+  }
+  return [...emails];
+}
+
+/** Odhlásí VŠECHNY adresy účtu (profil). Vrací počet nově odhlášených. */
+export async function unsubscribeUserAll(
+  db: Db,
+  secret: string,
+  emails: string[],
+  now: Date,
+  opts: { source?: string; userId?: string } = {}
+): Promise<void> {
+  for (const email of emails) {
+    await recordUnsubscribe(db, secret, email, now, opts);
+  }
+}
+
+/** Přihlásí (smaže suppression) VŠECHNY adresy účtu (profil). */
+export async function resubscribeUserAll(
+  db: Db,
+  secret: string,
+  emails: string[]
+): Promise<void> {
+  for (const email of emails) {
+    await recordResubscribe(db, secret, email);
+  }
+}
+
+/** Je účet odhlášen? True, jen když je odhlášená KTERÁKOLI jeho adresa. */
+export async function isUserSuppressed(
+  db: Db,
+  secret: string,
+  emails: string[]
+): Promise<boolean> {
+  for (const email of emails) {
+    if (await isSuppressed(db, secret, email)) return true;
+  }
+  return false;
 }

@@ -162,14 +162,17 @@ profile.post("/api/profile/cc-news", async (c) => {
     return c.json({ error: "subscribed:boolean required" }, 400);
   }
   const db = drizzle(c.env.DB);
-  const { recordUnsubscribe, recordResubscribe } = await import(
-    "../lib/cc-news/newsletter"
-  );
+  const { userNewsletterEmails, unsubscribeUserAll, resubscribeUserAll } =
+    await import("../lib/cc-news/newsletter");
+  const now = new Date();
   try {
+    // Opt-out i opt-in pokrývají VŠECHNY adresy účtu (user.email + fakturační
+    // purchase.email), ne jen primární — buildRecipientSet cílí i na ně.
+    const emails = await userNewsletterEmails(db, user.id, user.email, now);
     if (body.subscribed) {
-      await recordResubscribe(db, c.env.AUTH_INTERNAL_SECRET, user.email);
+      await resubscribeUserAll(db, c.env.AUTH_INTERNAL_SECRET, emails);
     } else {
-      await recordUnsubscribe(db, c.env.AUTH_INTERNAL_SECRET, user.email, new Date(), {
+      await unsubscribeUserAll(db, c.env.AUTH_INTERNAL_SECRET, emails, now, {
         source: "profile",
         userId: user.id,
       });
@@ -213,12 +216,15 @@ profile.get("/profile", async (c) => {
   const user = c.get("user");
   if (!user) return c.redirect("/login");
   const db = drizzle(c.env.DB);
-  const { isSuppressed } = await import("../lib/cc-news/newsletter");
-  // Default je přijímat → přihlášen, když NENÍ v suppression.
-  const ccNewsSubscribed = !(await isSuppressed(
+  const { userNewsletterEmails, isUserSuppressed } = await import(
+    "../lib/cc-news/newsletter"
+  );
+  // Default je přijímat → přihlášen, když NENÍ odhlášená žádná adresa účtu.
+  const emails = await userNewsletterEmails(db, user.id, user.email, new Date());
+  const ccNewsSubscribed = !(await isUserSuppressed(
     db,
     c.env.AUTH_INTERNAL_SECRET,
-    user.email
+    emails
   ));
   return c.html(
     <ProfilePage

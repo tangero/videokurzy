@@ -5,10 +5,14 @@ import { purchase, organization, user, newsletterSuppression } from "../../src/d
 import {
   emailHash,
   buildRecipientSet,
-  sendNewsletterDryRun,
+  sendNewsletter,
   recordUnsubscribe,
   recordResubscribe,
   isSuppressed,
+  userNewsletterEmails,
+  isUserSuppressed,
+  unsubscribeUserAll,
+  resubscribeUserAll,
   parseCcArticleLinks,
 } from "../../src/lib/cc-news/newsletter";
 import { signUnsubToken, verifyUnsubToken } from "../../src/lib/cc-news/approval";
@@ -95,18 +99,22 @@ describe("buildRecipientSet (R6 cílová množina)", () => {
   });
 });
 
-describe("sendNewsletterDryRun (R6 dry-run)", () => {
+describe("sendNewsletter (R6 dry-run)", () => {
   beforeEach(async () => {
     await env.DB.exec("DELETE FROM purchase");
     await env.DB.exec("DELETE FROM organization");
     await env.DB.exec("DELETE FROM user");
     await env.DB.exec("DELETE FROM newsletter_suppression");
+    await env.DB.exec("DELETE FROM site_config");
     await seedRecipients();
   });
 
-  it("does not send, returns count + only masked sample", async () => {
+  it("does not send, returns count + only masked sample (brána zavřená)", async () => {
     const db = drizzle(env.DB);
-    const report = await sendNewsletterDryRun(db, env as never, NOW);
+    // env.test nemá CC_NEWS_DRY_RUN=0 → live brána zavřená → dry-run i s obsahem
+    const report = await sendNewsletter(db, env as never, NOW, {
+      content: { subject: "x", renderHtml: () => "<p>x</p>", baseUrl: "https://k.cz" },
+    });
     expect(report.mode).toBe("dry-run");
     expect(report.sent).toBe(false);
     expect(report.recipientCount).toBeGreaterThanOrEqual(2);
@@ -117,9 +125,9 @@ describe("sendNewsletterDryRun (R6 dry-run)", () => {
     }
   });
 
-  it("zůstává dry-run, když je live=true ale chybí obsah (není co poslat)", async () => {
+  it("zůstává dry-run, když chybí obsah (není co poslat)", async () => {
     const db = drizzle(env.DB);
-    const report = await sendNewsletterDryRun(db, env as never, NOW, { live: true });
+    const report = await sendNewsletter(db, env as never, NOW);
     expect(report.mode).toBe("dry-run");
     expect(report.sent).toBe(false);
   });
@@ -183,6 +191,39 @@ describe("unsubscribe (GDPR, R6)", () => {
     expect(await isSuppressed(db, SECRET, "nikdy@y.cz")).toBe(false);
     await recordUnsubscribe(db, SECRET, "Case@Y.cz", NOW);
     expect(await isSuppressed(db, SECRET, "  case@y.cz ")).toBe(true);
+  });
+
+  it("opt-out z profilu pokryje i odlišný purchase.email (ne jen user.email)", async () => {
+    const db = drizzle(env.DB);
+    await env.DB.exec("DELETE FROM purchase");
+    await env.DB.exec("DELETE FROM \"user\"");
+    // účet jan@gmail.com s nákupem na odlišnou fakturační adresu firma@acme.cz
+    await db.insert(user).values({
+      id: "uX", email: "jan@gmail.com", emailVerified: true, role: "user",
+      createdAt: NOW, updatedAt: NOW,
+    });
+    await db.insert(purchase).values({
+      id: 50, email: "firma@acme.cz", userId: "uX", type: "individual",
+      paymentMethod: "stripe", status: "active", kind: "paid",
+      expiresAt: FUTURE, createdAt: NOW, amountPaid: 2000,
+    });
+
+    const emails = await userNewsletterEmails(db, "uX", "jan@gmail.com", NOW);
+    expect(emails.sort()).toEqual(["firma@acme.cz", "jan@gmail.com"]);
+
+    // opt-out přes profil odhlásí OBĚ adresy
+    await unsubscribeUserAll(db, SECRET, emails, NOW, { source: "profile", userId: "uX" });
+    expect(await isSuppressed(db, SECRET, "jan@gmail.com")).toBe(true);
+    expect(await isSuppressed(db, SECRET, "firma@acme.cz")).toBe(true);
+    expect(await isUserSuppressed(db, SECRET, emails)).toBe(true);
+
+    // a buildRecipientSet (cílí na purchase.email) je teď vyřadí
+    const recipients = await buildRecipientSet(db, SECRET, NOW);
+    expect(recipients).not.toContain("firma@acme.cz");
+
+    // opt-in zpět smaže obě
+    await resubscribeUserAll(db, SECRET, emails);
+    expect(await isUserSuppressed(db, SECRET, emails)).toBe(false);
   });
 });
 

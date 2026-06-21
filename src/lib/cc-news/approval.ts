@@ -76,3 +76,16 @@ export async function verifyUnsubToken(env: SecretEnv, token: string): Promise<s
   if (!payload?.email) return null;
   return payload.email.trim().toLowerCase();
 }
+
+/** Cesta odhlašovací routy (registrovaná v routes/cc-news.tsx). Jeden zdroj. */
+export const UNSUBSCRIBE_PATH = "/novinky-cc/unsubscribe";
+
+/** Sestaví podepsaný odhlašovací odkaz pro daný e-mail. `base` bez koncového /. */
+export async function buildUnsubscribeUrl(
+  env: SecretEnv,
+  base: string,
+  email: string
+): Promise<string> {
+  const token = await signUnsubToken(env, email);
+  return `${base.replace(/\/+$/, "")}${UNSUBSCRIBE_PATH}?token=${encodeURIComponent(token)}`;
+}

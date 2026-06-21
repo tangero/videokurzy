@@ -103,20 +103,31 @@ transakční e-maily. Aby k němu došlo, musí platit **obě** brány současn�
 2. **Admin přepínač** `cc_news_live_send="true"` v `site_config` — nastavitelný
    v `/admin/settings` („Novinky v Claude Code — odesílání e-mailů").
 
-Vyhodnocuje to `isCcNewsLiveSend(db, env)` v `lib/cc-news/settings.ts`. Dokud
-kterákoli brána chybí, běží **dry-run** (e-maily se jen logují, NEodejdou) —
-žádná výjimka, jen tichý dry-run. Dvě nezávislé brány = produkce nejde zapnout
-omylem jediným přepnutím (mantinel fáze 1).
+Vyhodnocuje to `isCcNewsLiveSend(db, env)` v `lib/cc-news/settings.ts`, které
+navíc vyžaduje neprázdný `RESEND_API_KEY` (bez něj by Resend dostal prázdný
+Bearer a tiše selhal — radši zůstat v dry-run). Dokud kterákoli podmínka chybí,
+běží **dry-run** (e-maily se jen logují, NEodejdou). Dvě nezávislé brány =
+produkce nejde zapnout omylem jediným přepnutím (mantinel fáze 1). Obě odesílací
+cesty (`prepareDraftAndApproval` i `sendNewsletter`) volají `isCcNewsLiveSend`
+**uvnitř** — bránu nelze obejít argumentem volajícího.
+
+Selhání reálného odeslání se **eskaluje výjimkou** (queue retry), ne tiše: u
+schvalovacího e-mailu by jinak novinka uvízla nepublikovaná. Rozeslání
+newsletteru izoluje selhání per-příjemce (jeden pád neshodí celou dávku) a
+odesílá po dávkách (`SEND_CONCURRENCY`), ne striktně sériově.
 
 ## Odběr na profilu (opt-in / opt-out)
 
 Na `/profile` má přihlášený uživatel přepínač „Novinky v Claude Code" (default
 **zapnuto** = přijímat). `POST /api/profile/cc-news` `{subscribed}` zapíše/smaže
-suppression nad **primární** adresou účtu: opt-out → `recordUnsubscribe`
-(suppression řádek, jen `emailHash`), opt-in → `recordResubscribe` (řádek se
-**smaže**). Stav se zjišťuje přes `isSuppressed` (anti-join přes `emailHash`,
-žádné plain PII). Odhlášení přes e-mailový link (`/novinky-cc/unsubscribe`) i
-přes profil zapisují do téže suppression tabulky.
+suppression nad **všemi adresami účtu** (`userNewsletterEmails`: `user.email` +
+fakturační `purchase.email` z aktivních nákupů) — `buildRecipientSet` totiž cílí
+i na `purchase.email`, takže opt-out jen nad primární adresou by doručovanou
+nákupní adresu minul. Opt-out → `unsubscribeUserAll` (suppression řádky, jen
+`emailHash`), opt-in → `resubscribeUserAll` (řádky se **smažou**). Stav přes
+`isUserSuppressed` (účet je odhlášen, je-li odhlášená kterákoli jeho adresa;
+anti-join přes `emailHash`, žádné plain PII). Odhlášení přes e-mailový link
+(`/novinky-cc/unsubscribe`) i přes profil zapisují do téže suppression tabulky.
 
 ## Provozní přepínače
 
