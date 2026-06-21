@@ -23,11 +23,17 @@ schválení se publikuje v gated sekci a rozešle platícím uživatelům.
 
 ## Datový model (D1)
 
-- **`cc_news_item`** (migrace `0025`) — jeden whats-new digest. Idempotence
-  detekce stojí na `UNIQUE(sourceId)` (= canonical URL detailu, např.
+- **`cc_news_item`** (migrace `0025`, `0027`) — jeden whats-new digest.
+  Idempotence detekce stojí na `UNIQUE(sourceId)` (= canonical URL detailu, např.
   `/docs/en/whats-new/2026-w24`). `contentHash` (SHA-256) zachytí re-edit téhož
   týdne. `status`: `draft → published`. `approveNonce` = jednorázovost schválení.
-  Žádné PII.
+  `pendingContentHash` — když se re-edituje **už publikovaný** týden, živá verze
+  zůstává viditelná (nedepublikuje se) a nový obsah čeká ve `pendingContentHash`
+  na lidské schválení. Žádné PII.
+  - **KV oddělení obsahu:** `cc-news:draft:{id}` drží rozpracovaný koncept
+    (přepisuje se re-editem), `cc-news:published:{id}` drží živou publikovanou
+    verzi (čte gated detail). `approveItem` při schválení promotuje draft →
+    published.
 - **`newsletter_suppression`** (migrace `0026`) — GDPR opt-out. Klíč `emailHash`
   = HMAC-SHA256(normalizovaný e-mail, účel `claude_code_news`). **Žádné plain
   PII**; samostatná tabulka, aby suppression přežil GDPR výmaz uživatele.

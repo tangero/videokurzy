@@ -157,6 +157,10 @@ describe("cc-news approveItem (R4 publikace + jednorázovost)", () => {
     expect(rows[0].status).toBe("published");
     expect(rows[0].publishedAt).not.toBeNull();
     expect(rows[0].approveNonce).toBeNull(); // nonce spotřebován
+
+    // promote: draft blob se zkopíroval do published KV (živá verze pro detail)
+    const { publishedKvKey, draftKvKey } = await import("../../src/lib/cc-news/draft");
+    expect(await env.KV.get(publishedKvKey("item-1"))).toBe(await env.KV.get(draftKvKey("item-1")));
   });
 
   it("rejects the SECOND click with the same link (one-time use)", async () => {

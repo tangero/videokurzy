@@ -91,7 +91,10 @@ export function parseFirstRssItem(xml: string): RssItem | null {
   };
 
   const encoded = pick("content:encoded") ?? "";
-  const detailLink = extractDigestLink(encoded);
+  // weekLabel (např. „Week 24") pomáhá vybrat SPRÁVNÝ digest odkaz, když text
+  // odkazuje i na jiné (předchozí) týdny — viz extractDigestLink.
+  const weekLabel = pick("title");
+  const detailLink = extractDigestLink(encoded, weekLabel);
   const fallbackLink = pick("link");
   const source = detailLink ?? fallbackLink;
   if (!source) return null;
@@ -110,14 +113,28 @@ export function parseFirstRssItem(xml: string): RssItem | null {
 }
 
 /**
- * Najde v HTML `content:encoded` odkaz na týdenní digest `…/whats-new/2026-wNN`.
- * Bere první `href` mířící na cestu `/whats-new/<rok>-w<týden>`.
+ * Najde v HTML `content:encoded` odkaz na týdenní digest `…/whats-new/<rok>-wNN`.
+ *
+ * Digest může v textu odkazovat i na JINÉ (předchozí) týdny, takže „první href"
+ * by mohl ukázat na špatný týden. Když známe `weekLabel` (např. „Week 24"),
+ * preferujeme href, jehož číslo týdne se shoduje. Jinak fallback na POSLEDNÍ
+ * digest odkaz — cílový „Read the Week N digest →" bývá na konci bloku, kdežto
+ * odkazy na předchozí týdny v úvodu textu.
  */
-export function extractDigestLink(encodedHtml: string): string | null {
-  const m = encodedHtml.match(
-    /href=["'](https?:\/\/[^"']*?\/whats-new\/\d{4}-w\d{1,2}[^"']*)["']/i
-  );
-  return m ? decodeXml(m[1]) : null;
+export function extractDigestLink(
+  encodedHtml: string,
+  weekLabel?: string | null
+): string | null {
+  const re = /href=["'](https?:\/\/[^"']*?\/whats-new\/(\d{4})-w(\d{1,2})[^"']*)["']/gi;
+  const matches = [...encodedHtml.matchAll(re)];
+  if (matches.length === 0) return null;
+
+  const wantedWeek = weekLabel?.match(/week\s*(\d{1,2})/i)?.[1];
+  if (wantedWeek) {
+    const exact = matches.find((m) => parseInt(m[3], 10) === parseInt(wantedWeek, 10));
+    if (exact) return decodeXml(exact[1]);
+  }
+  return decodeXml(matches[matches.length - 1][1]);
 }
 
 /** True pro kanonickou cestu týdenního detailu `…/whats-new/<rok>-w<týden>`. */
@@ -197,6 +214,22 @@ export async function detectLatest(
 
   if (existing.length > 0) {
     const row = existing[0];
+
+    // Už publikovaný týden: živou verzi NEDEPUBLIKUJEME. Pokud se obsah zdroje
+    // změnil, zaznamenáme to do pendingContentHash a necháme rozhodnutí na
+    // dalším kroku — re-publikace nové verze je až po lidském schválení.
+    if (row.status === "published") {
+      if (row.pendingContentHash === contentHash || row.contentHash === contentHash) {
+        return { kind: "unchanged", sourceId: item.sourceId, itemId: row.id };
+      }
+      await db
+        .update(ccNewsItem)
+        .set({ pendingContentHash: contentHash })
+        .where(eq(ccNewsItem.id, row.id));
+      return { kind: "changed", sourceId: item.sourceId, itemId: row.id };
+    }
+
+    // Dosud nepublikovaný (draft/approved): obsah lze přepsat, idempotence dle hashe.
     if (row.contentHash === contentHash) {
       return { kind: "unchanged", sourceId: item.sourceId, itemId: row.id };
     }
@@ -212,15 +245,32 @@ export async function detectLatest(
     return { kind: "changed", sourceId: item.sourceId, itemId: row.id };
   }
 
+  // Nový sourceId. onConflictDoNothing ošetří závod (souběžný cron + ruční
+  // trigger): pokud řádku vloží jiný běh mezi naším SELECT a INSERT, druhý
+  // insert se tiše přeskočí a my načteme existující id místo pádu na UNIQUE.
   const id = nanoid();
-  await db.insert(ccNewsItem).values({
-    id,
-    sourceId: item.sourceId,
-    contentHash,
-    weekLabel: item.weekLabel,
-    versionRange: item.versionRange,
-    status: "draft",
-    createdAt: now,
-  });
+  const inserted = await db
+    .insert(ccNewsItem)
+    .values({
+      id,
+      sourceId: item.sourceId,
+      contentHash,
+      weekLabel: item.weekLabel,
+      versionRange: item.versionRange,
+      status: "draft",
+      createdAt: now,
+    })
+    .onConflictDoNothing({ target: ccNewsItem.sourceId })
+    .returning({ id: ccNewsItem.id });
+
+  if (inserted.length === 0) {
+    // Vložil souběžný běh — vrátíme existující řádku jako unchanged.
+    const raced = await db
+      .select({ id: ccNewsItem.id })
+      .from(ccNewsItem)
+      .where(eq(ccNewsItem.sourceId, item.sourceId))
+      .limit(1);
+    return { kind: "unchanged", sourceId: item.sourceId, itemId: raced[0]?.id ?? id };
+  }
   return { kind: "new", sourceId: item.sourceId, itemId: id };
 }

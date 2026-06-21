@@ -133,13 +133,16 @@ describe("cc-news editor — orderByWeight", () => {
 describe("cc-news editor — renderArticleSkeleton (R2 struktura)", () => {
   const md = renderArticleSkeleton(parseDigest(DIGEST));
 
-  it("starts with # heading then YAML front matter with required keys", () => {
-    expect(md.startsWith("# Co je nového v Claude Code — Week 24")).toBe(true);
+  it("starts with YAML front matter (first line ---) then the # heading", () => {
+    // Front matter MUSÍ být na začátku .md dokumentu, nadpis až za ním.
+    expect(md.startsWith("---\n")).toBe(true);
     expect(md).toMatch(/author: Patrick Zandl/);
     expect(md).toMatch(/categories:/);
     expect(md).toMatch(/title: /);
     expect(md).toMatch(/post_excerpt: /);
     expect(md).toMatch(/summary_points:/);
+    // nadpis je za uzavřením front matteru
+    expect(md).toMatch(/\n---\n\n# Co je nového v Claude Code — Week 24/);
   });
 
   it("includes a bullet overview with version numbers in parentheses", () => {

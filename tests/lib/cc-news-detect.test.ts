@@ -74,6 +74,16 @@ describe("cc-news detect — pure helpers", () => {
     expect(extractDigestLink("<p>no link here</p>")).toBeNull();
   });
 
+  it("picks the link matching weekLabel, not an earlier-week link in the text", () => {
+    // úvod odkazuje na předchozí týden (w23), cílový digest (w24) je až dál
+    const html =
+      '<p>minulý týden viz <a href="https://code.claude.com/docs/en/whats-new/2026-w23">Week 23</a></p>' +
+      '<p><a href="https://code.claude.com/docs/en/whats-new/2026-w24">Read the Week 24 digest →</a></p>';
+    expect(extractDigestLink(html, "Week 24")).toBe("https://code.claude.com/docs/en/whats-new/2026-w24");
+    // bez weekLabel fallback na poslední odkaz (cílový bývá na konci)
+    expect(extractDigestLink(html)).toBe("https://code.claude.com/docs/en/whats-new/2026-w24");
+  });
+
   it("derives sourceId from content:encoded digest link, NOT from <link> index", () => {
     const item = parseFirstRssItem(rss(24, "v2.1.166–v2.1.176"));
     expect(item).not.toBeNull();
@@ -135,11 +145,22 @@ describe("cc-news detect — idempotent detection (R1)", () => {
     expect(rows).toHaveLength(1); // žádný duplikát
   });
 
-  it("detects changed content for the same week and resets status to draft", async () => {
+  it("re-edit of a DRAFT item updates content and stays draft", async () => {
     const db = drizzle(env.DB);
-
     await detectLatest(db, fetchers(xml, "# Week 24\nold body"), NOW);
-    // mezitím se řádka posunula dál v pipeline:
+
+    const out = await detectLatest(db, fetchers(xml, "# Week 24\nNEW body"), NOW);
+
+    expect(out.kind).toBe("changed");
+    const rows = await db.select().from(ccNewsItem);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("draft");
+  });
+
+  it("re-edit of a PUBLISHED item does NOT depublish it (keeps published, sets pendingContentHash)", async () => {
+    const db = drizzle(env.DB);
+    await detectLatest(db, fetchers(xml, "# Week 24\nold body"), NOW);
+    // článek byl publikován:
     await env.DB.exec("UPDATE cc_news_item SET status = 'published'");
 
     const out = await detectLatest(db, fetchers(xml, "# Week 24\nNEW body"), NOW);
@@ -147,7 +168,22 @@ describe("cc-news detect — idempotent detection (R1)", () => {
     expect(out.kind).toBe("changed");
     const rows = await db.select().from(ccNewsItem);
     expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe("draft"); // re-edit => zpět ke schválení
+    // KLÍČOVÉ: živá verze zůstává published, nedepublikuje se
+    expect(rows[0].status).toBe("published");
+    expect(rows[0].pendingContentHash).toBeTruthy();
+  });
+
+  it("published item with unchanged pending hash returns unchanged on re-run", async () => {
+    const db = drizzle(env.DB);
+    await detectLatest(db, fetchers(xml, "# Week 24\nold body"), NOW);
+    await env.DB.exec("UPDATE cc_news_item SET status = 'published'");
+
+    const f = fetchers(xml, "# Week 24\nNEW body");
+    const first = await detectLatest(db, f, NOW);
+    const second = await detectLatest(db, f, NOW);
+
+    expect(first.kind).toBe("changed");
+    expect(second.kind).toBe("unchanged"); // pending hash už sedí → žádný další zápis
   });
 
   it("returns empty for a feed with no items and writes nothing", async () => {

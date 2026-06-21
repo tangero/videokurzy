@@ -447,15 +447,34 @@ async function handleCcNewsDetected(
   env: Env,
   data: CcNewsDetectedData
 ): Promise<void> {
+  // Validace tvaru zprávy: malformovaná zpráva (chybí itemId/sourceId) je
+  // NEVRATNÁ — retry by jen opakoval pád. Zalogovat a tiše zahodit (ack v
+  // handleQueue), ne retryovat do DLQ.
+  if (!data || typeof data.itemId !== "string" || typeof data.sourceId !== "string") {
+    console.error(`[queue] cc-news.detected: malformovaná zpráva, zahazuji:`, data);
+    return;
+  }
+
   const { processCcNewsItem } = await import("./lib/cc-news/pipeline");
-  const result = await processCcNewsItem(
-    db,
-    env,
-    { itemId: data.itemId, sourceId: data.sourceId },
-    new Date()
-  );
-  console.log(
-    `[queue] cc-news.detected zpracováno: item=${data.itemId} llm=${result.usedLlm} ` +
-      `mode=${result.mode} sent=${result.sent} (schvalovací e-mail připraven, NEODESLÁNO)`
-  );
+  try {
+    const result = await processCcNewsItem(
+      db,
+      env,
+      { itemId: data.itemId, sourceId: data.sourceId },
+      new Date()
+    );
+    console.log(
+      `[queue] cc-news.detected zpracováno: item=${data.itemId} llm=${result.usedLlm} ` +
+        `mode=${result.mode} sent=${result.sent} (schvalovací e-mail připraven, NEODESLÁNO)`
+    );
+  } catch (err) {
+    // Konfigurační chyba (CC_NEWS_DRY_RUN=0 = zakázaný live) je nevratná —
+    // retry by jen opakoval placené LLM volání. Zalogovat a neretryovat.
+    const msg = (err as Error).message;
+    if (msg.includes("live odeslání je zakázané")) {
+      console.error(`[queue] cc-news.detected: ${msg} — neretryuji (nevratná konfigurace).`);
+      return;
+    }
+    throw err; // přechodné chyby (fetch/LLM výpadek) ať se retryují
+  }
 }

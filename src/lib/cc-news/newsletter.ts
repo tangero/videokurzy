@@ -21,6 +21,10 @@ const SUPPRESSION_PURPOSE = "claude_code_news";
 
 export const normalizeEmail = (raw: string): string => raw.trim().toLowerCase();
 
+/** Základní sanity check tvaru e-mailu (ne plná RFC validace): local@domain.tld. */
+export const isLikelyEmail = (email: string): boolean =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
 /** HMAC-SHA256 hex z (normalizovaný e-mail, účel). Stejný klíč jako suppression. */
 export async function emailHash(secret: string, email: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -68,7 +72,13 @@ export async function buildRecipientSet(
     : [];
 
   const candidates = new Set<string>();
-  for (const p of purchases) candidates.add(normalizeEmail(p.email));
+  // purchase.email je uživatelem zadané pole (neprošlo ověřením jako u user.
+  // emailVerified větve) — aspoň základní validace tvaru, ať se do rozeslání
+  // nedostanou zjevně nevalidní adresy (překlepy, prázdné, bez @).
+  for (const p of purchases) {
+    const email = normalizeEmail(p.email);
+    if (isLikelyEmail(email)) candidates.add(email);
+  }
   for (const u of verifiedUsers) {
     const email = normalizeEmail(u.email);
     const domain = email.slice(email.lastIndexOf("@") + 1);

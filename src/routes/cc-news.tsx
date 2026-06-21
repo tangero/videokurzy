@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { desc, eq } from "drizzle-orm";
-import { approveItem, draftKvKey } from "../lib/cc-news/draft";
+import { and, desc, eq } from "drizzle-orm";
+import { approveItem, articleRepoPath, draftKvKey, publishedKvKey } from "../lib/cc-news/draft";
 import { ccNewsItem } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { renderMarkdown, escapeHtml } from "../lib/markdown";
@@ -12,6 +12,15 @@ import type { Env, Variables } from "../types";
 export function slugFromPath(articlePath: string | null): string | null {
   if (!articlePath) return null;
   return articlePath.replace(/^.*\//, "").replace(/\.md$/i, "") || null;
+}
+
+/**
+ * Odstraní YAML front matter (`---\n…\n---`) ze začátku markdownu. Front matter
+ * patří do .md souboru v repu, ne do HTML zobrazení — bez stripnutí by se
+ * čtenáři na detailu zobrazil syrový YAML blok jako text.
+ */
+export function stripFrontMatter(md: string): string {
+  return md.replace(/^﻿?\s*---\n[\s\S]*?\n---\s*\n?/, "").trimStart();
 }
 
 /**
@@ -101,18 +110,45 @@ ccNewsRoutes.get("/novinky-cc/:slug", async (c) => {
 
   const slug = c.req.param("slug");
   const db = drizzle(c.env.DB);
+  // Cílený lookup přes articlePath odvozenou ze slugu (ne full-table scan).
   const rows = await db
     .select()
     .from(ccNewsItem)
-    .where(eq(ccNewsItem.status, "published"));
+    .where(and(eq(ccNewsItem.status, "published"), eq(ccNewsItem.articlePath, articleRepoPath(slug))))
+    .limit(1);
 
-  const row = rows.find((r) => slugFromPath(r.articlePath) === slug);
+  const row = rows[0];
   if (!row) return c.html(pageShell("Nenalezeno", "<p>Článek nenalezen.</p>"), 404);
 
-  const markdown = await c.env.KV.get(draftKvKey(row.id));
+  // Živá publikovaná verze (ne rozpracovaný draft) + strip YAML front matteru.
+  const markdown = await c.env.KV.get(publishedKvKey(row.id));
   if (!markdown) return c.html(pageShell("Nenalezeno", "<p>Obsah článku není dostupný.</p>"), 404);
 
-  return c.html(pageShell(row.weekLabel ?? "Novinky v Claude Code", renderMarkdown(markdown)));
+  return c.html(
+    pageShell(row.weekLabel ?? "Novinky v Claude Code", renderMarkdown(stripFrontMatter(markdown)))
+  );
+});
+
+// Náhled rozpracovaného konceptu pro admina ze schvalovacího e-mailu
+// (odkaz „Otevřít koncept k editaci"). ADMIN-only: koncept ještě není
+// publikovaný. Registrováno PŘED internalRoutes, aby ji nezachytil
+// requireInternalSecret (lidský klik z e-mailu nemá service secret).
+ccNewsRoutes.get("/internal/cc-news/draft/:id", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.redirect("/login");
+  if (user.role !== "admin") return c.html(pageShell("Náhled konceptu", "<p>Jen pro administrátory.</p>"), 403);
+
+  const id = c.req.param("id");
+  const draft = await c.env.KV.get(draftKvKey(id));
+  if (!draft) return c.html(pageShell("Náhled konceptu", "<p>Koncept nenalezen.</p>"), 404);
+
+  return c.html(
+    pageShell(
+      "Náhled konceptu — Novinky v Claude Code",
+      `<p style="color:#b45309"><strong>Koncept (zatím nepublikováno).</strong> Úpravy se dělají na GitHubu; po schválení se publikuje.</p>` +
+        renderMarkdown(stripFrontMatter(draft))
+    )
+  );
 });
 
 ccNewsRoutes.get("/internal/cc-news/approve", async (c) => {
@@ -131,6 +167,7 @@ ccNewsRoutes.get("/internal/cc-news/approve", async (c) => {
 
   const status =
     result.reason === "already-published" ? 409 :
+    result.reason === "nonce-mismatch" ? 409 :
     result.reason === "invalid-token" ? 401 : 404;
   const msg =
     result.reason === "already-published" ? "Tento odkaz už byl použit — článek je publikovaný." :

@@ -41,9 +41,17 @@ export async function processCcNewsItem(
   now: Date,
   fetchers: Fetchers = defaultFetchers()
 ): Promise<PreparedDraft & { usedLlm: boolean }> {
+  // Guard PŘED jakoukoli (placenou) prací: live odeslání je ve fázi 1 zakázané.
+  // Kdyby se kontrolovalo až v prepareDraftAndApproval (po fetchi a LLM volání),
+  // každý queue retry by znovu zaplatil LLM, než zpráva spadne do DLQ.
+  if (env.CC_NEWS_DRY_RUN === "0") {
+    throw new Error("cc-news live odeslání je zakázané (mantinel fáze 1) — vyžaduje eskalaci.");
+  }
+
   const digestMd = await fetchers.fetchDetail(ref.sourceId);
   const parsed = parseDigest(digestMd);
-  const { markdown, usedLlm } = await renderArticle(digestMd, env);
+  // renderArticle dostane už naparsovaný digest, aby se neparsovalo dvakrát.
+  const { markdown, usedLlm } = await renderArticle(digestMd, env, { parsed });
 
   const prepared = await prepareDraftAndApproval(
     db,

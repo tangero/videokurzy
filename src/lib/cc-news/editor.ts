@@ -173,7 +173,8 @@ export function renderArticleSkeleton(d: ParsedDigest): string {
     "---",
   ].join("\n");
 
-  const lines: string[] = [`# ${title}`, "", fm, ""];
+  // Front matter MUSÍ být na začátku dokumentu (YAML hlavička .md), pak nadpis.
+  const lines: string[] = [fm, "", `# ${title}`, ""];
 
   // Perex (rámující věta + věcný souhrn). Bez disclaimeru o changelogu.
   lines.push(
@@ -221,6 +222,8 @@ const DEFAULT_LLM_MODEL = "anthropic/claude-sonnet-4.6";
 export interface RenderOptions {
   /** Injektovatelný LLM volač pro testy; bez něj se použije reálné API. */
   llm?: (systemPrompt: string, userContent: string) => Promise<string>;
+  /** Už naparsovaný digest (ušetří druhý parseDigest, když volající parsuje sám). */
+  parsed?: ParsedDigest;
 }
 
 /**
@@ -233,7 +236,7 @@ export async function renderArticle(
   env: EditorEnv,
   opts: RenderOptions = {}
 ): Promise<{ markdown: string; usedLlm: boolean }> {
-  const parsed = parseDigest(digestMd);
+  const parsed = opts.parsed ?? parseDigest(digestMd);
   const skeleton = renderArticleSkeleton(parsed);
 
   const llmEnabled = env.CC_NEWS_LLM === "1" && (opts.llm || env.OPENROUTER_API_KEY);

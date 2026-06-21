@@ -32,6 +32,11 @@ async function seedRecipients() {
     id: 3, email: "old@example.cz", type: "individual", paymentMethod: "stripe",
     status: "active", kind: "paid", expiresAt: new Date("2020-01-01"), createdAt: NOW, amountPaid: 2000,
   });
+  // nevalidní e-mail (překlep, chybí TLD) — NESMÍ projít sanity filtrem
+  await db.insert(purchase).values({
+    id: 4, email: "rozbity-email", type: "individual", paymentMethod: "stripe",
+    status: "active", kind: "paid", expiresAt: FUTURE, createdAt: NOW, amountPaid: 2000,
+  });
   // aktivní org doména + ověřený uživatel na ní
   await db.insert(organization).values({
     id: 1, publicId: "org1", domain: "firma.cz", status: "active", createdAt: NOW,
@@ -73,6 +78,7 @@ describe("buildRecipientSet (R6 cílová množina)", () => {
     expect(recipients).not.toContain("comp@example.cz");
     expect(recipients).not.toContain("old@example.cz");
     expect(recipients).not.toContain("neoverenyk@firma.cz");
+    expect(recipients).not.toContain("rozbity-email"); // sanity filtr tvaru e-mailu
   });
 
   it("excludes suppressed recipients (anti-join via emailHash)", async () => {

@@ -30,8 +30,15 @@ interface DraftEnv {
   CC_NEWS_DRY_RUN?: string; // "0" povolí reálné odeslání; jinak dry-run
 }
 
-/** KV klíč pro markdown konceptu. */
+/** KV klíč pro markdown rozpracovaného konceptu (přepisuje se každým re-editem). */
 export const draftKvKey = (itemId: string): string => `cc-news:draft:${itemId}`;
+
+/**
+ * KV klíč pro PUBLIKOVANÝ markdown (živá verze, kterou čte gated detail).
+ * Oddělený od draftu: re-edit digestu přepíše jen draft; publikovaná verze
+ * zůstává beze změny, dokud člověk nový draft neschválí (viz approveItem).
+ */
+export const publishedKvKey = (itemId: string): string => `cc-news:published:${itemId}`;
 
 /** Zamýšlená cesta článku v repu (gated sekce „Novinky v CC"). */
 export const articleRepoPath = (slug: string): string =>
@@ -119,13 +126,15 @@ export type ApproveResult =
 /**
  * Zpracuje klik na schvalovací link (W-005/W-006, R4). Ověří podpis tokenu
  * (přes verifyApprovalIntent), pak JEDNORÁZOVOST: nonce z tokenu musí sedět s
- * `approveNonce` na řádce. Při shodě nastaví `status=published`, `publishedAt`
- * a nonce SMAŽE (druhý klik už neprojde → reason already-published). Lidské
- * schválení je jediná cesta k publikaci (mantinel).
+ * `approveNonce` na řádce. Při shodě PROMOTUJE rozpracovaný draft na živou
+ * publikovanou verzi (zkopíruje draft KV blob → published KV), nastaví
+ * `status=published`, `publishedAt`, srovná `contentHash` (z pending) a nonce
+ * SMAŽE (druhý klik už neprojde → already-published). Lidské schválení je
+ * jediná cesta k publikaci (mantinel).
  */
 export async function approveItem(
   db: Db,
-  env: Pick<DraftEnv, "AUTH_INTERNAL_SECRET">,
+  env: Pick<DraftEnv, "AUTH_INTERNAL_SECRET" | "KV">,
   token: string,
   now: Date
 ): Promise<ApproveResult> {
@@ -141,9 +150,22 @@ export async function approveItem(
   if (!row.approveNonce) return { ok: false, reason: "already-published" };
   if (row.approveNonce !== intent.nonce) return { ok: false, reason: "nonce-mismatch" };
 
+  // Promote: rozpracovaný draft se stává živou publikovanou verzí.
+  const draftMd = await env.KV.get(draftKvKey(intent.itemId));
+  if (draftMd !== null) {
+    await env.KV.put(publishedKvKey(intent.itemId), draftMd);
+  }
+
   await db
     .update(ccNewsItem)
-    .set({ status: "published", publishedAt: now, approveNonce: null })
+    .set({
+      status: "published",
+      publishedAt: now,
+      approveNonce: null,
+      // pending verze schválena → srovnat hash živé verze a vynulovat pending.
+      ...(row.pendingContentHash ? { contentHash: row.pendingContentHash } : {}),
+      pendingContentHash: null,
+    })
     .where(eq(ccNewsItem.id, intent.itemId));
 
   return { ok: true, itemId: intent.itemId, status: "published" };

@@ -3,7 +3,8 @@ import { drizzle } from "drizzle-orm/d1";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ccNewsItem } from "../../src/db/schema";
 import { slugFromPath } from "../../src/routes/cc-news";
-import { draftKvKey } from "../../src/lib/cc-news/draft";
+import { publishedKvKey } from "../../src/lib/cc-news/draft";
+import { stripFrontMatter } from "../../src/routes/cc-news";
 
 const NOW = new Date("2026-06-21T12:00:00.000Z");
 
@@ -12,6 +13,20 @@ describe("slugFromPath", () => {
     expect(slugFromPath("src/content/novinky-cc/2026-w24.md")).toBe("2026-w24");
     expect(slugFromPath("2026-w24.md")).toBe("2026-w24");
     expect(slugFromPath(null)).toBeNull();
+  });
+});
+
+describe("stripFrontMatter", () => {
+  it("removes leading YAML front matter so it never renders to readers", () => {
+    const md = "---\nauthor: X\ntitle: Y\n---\n\n# Nadpis\ntělo";
+    const out = stripFrontMatter(md);
+    expect(out.startsWith("# Nadpis")).toBe(true);
+    expect(out).not.toMatch(/author:/);
+    expect(out).not.toMatch(/^---/);
+  });
+
+  it("leaves markdown without front matter untouched", () => {
+    expect(stripFrontMatter("# Nadpis\ntělo")).toBe("# Nadpis\ntělo");
   });
 });
 
@@ -30,7 +45,7 @@ describe("gated sekce Novinky v CC (R5 — jen přihlášení s přístupem)", (
       publishedAt: NOW,
       createdAt: NOW,
     });
-    await env.KV.put(draftKvKey("pub-1"), "# Week 24\nobsah");
+    await env.KV.put(publishedKvKey("pub-1"), "---\ntitle: X\n---\n\n# Week 24\nobsah");
   });
 
   it("nepřihlášený je z přehledu přesměrován (login/ceník)", async () => {

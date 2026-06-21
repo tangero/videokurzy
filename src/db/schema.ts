@@ -258,6 +258,11 @@ export const ccNewsItem = sqliteTable("cc_news_item", {
   status: text("status").notNull().default("draft"), // draft|approved|published
   articlePath: text("articlePath"),    // cesta k markdown souboru článku v repu
   approveNonce: text("approveNonce"),  // jednorázový nonce pro schvalovací link (W-005)
+  // Když se re-edituje digest týdne, který je UŽ publikovaný: živá publikovaná
+  // verze (publikovaný KV blob + status=published) zůstává beze změny, aby
+  // čtenáři nezmizel obsah, a nový obsah čeká na lidské schválení. pendingContentHash
+  // drží hash této čekající verze; po schválení se promotuje a vynuluje.
+  pendingContentHash: text("pendingContentHash"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   publishedAt: integer("publishedAt", { mode: "timestamp" }),
 });
