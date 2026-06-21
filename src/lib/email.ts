@@ -128,6 +128,28 @@ export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "or
     </p>`);
 }
 
+/**
+ * Schvalovací e-mail pro článek „Novinky v Claude Code" (W-005). Míří adminovi;
+ * klik na link = jednorázové schválení a publikace. Odesílá se jen po lidském
+ * potvrzení (mantinel) a v dry-run režimu se NEodesílá vůbec.
+ */
+export function ccNewsApprovalHtml(opts: {
+  weekLabel: string;
+  versionRange: string | null;
+  approveUrl: string;
+  editUrl: string | null;
+}): string {
+  const versions = opts.versionRange ? ` (${opts.versionRange})` : "";
+  return emailWrapper(`
+    <p style="font-size: 16px; line-height: 1.5;">Nový koncept článku <strong>Novinky v Claude Code — ${opts.weekLabel}</strong>${versions} čeká na schválení.</p>
+    <p style="font-size: 16px; line-height: 1.5;">Po kliknutí se článek publikuje v gated sekci „Novinky v CC" a připraví k rozeslání. Odkaz je jednorázový.</p>
+    ${primaryButton(opts.approveUrl, "Schválit a publikovat")}
+    ${opts.editUrl ? `<p style="font-size: 14px; color: #4b5563; line-height: 1.5;">Chcete nejdřív upravit? <a href="${opts.editUrl}">Otevřít koncept k editaci</a>.</p>` : ""}
+    <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
+      Odkaz je platný 7 dní a lze ho použít jen jednou. Pokud článek publikovat nechcete, e-mail ignorujte.
+    </p>`);
+}
+
 /** Potvrzení self-service výmazu účtu (GDPR). Odkaz platí 15 minut. */
 export function accountDeletionConfirmHtml(confirmUrl: string): string {
   return emailWrapper(`
