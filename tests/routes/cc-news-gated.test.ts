@@ -51,3 +51,29 @@ describe("gated sekce Novinky v CC (R5 — jen přihlášení s přístupem)", (
     expect(text).not.toMatch(/obsah/);
   });
 });
+
+describe("GET /novinky-cc/unsubscribe (GDPR odhlášení)", () => {
+  it("400 bez tokenu", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc/unsubscribe", { redirect: "manual" });
+    expect(res.status).toBe(400);
+  });
+
+  it("401 na zfalšovaný token", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc/unsubscribe?token=bad.sig", { redirect: "manual" });
+    expect(res.status).toBe(401);
+  });
+
+  it("platný odhlašovací link zapíše suppression (bez přihlášení)", async () => {
+    await env.DB.exec("DELETE FROM newsletter_suppression");
+    const { signUnsubToken } = await import("../../src/lib/cc-news/approval");
+    const token = await signUnsubToken(env as never, "leaver@example.cz");
+    const res = await SELF.fetch(`https://test.local/novinky-cc/unsubscribe?token=${encodeURIComponent(token)}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/Odhlášení proběhlo/);
+
+    const db = drizzle(env.DB);
+    const { newsletterSuppression } = await import("../../src/db/schema");
+    const rows = await db.select().from(newsletterSuppression);
+    expect(rows).toHaveLength(1);
+  });
+});

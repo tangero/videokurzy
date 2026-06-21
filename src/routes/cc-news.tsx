@@ -68,6 +68,32 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
   return c.html(pageShell("Novinky v Claude Code", body));
 });
 
+// Odhlášení z newsletteru (GDPR, W-007). Veřejné — chráněné jen podepsaným
+// unsub tokenem (oddělený účel od schválení). Vloží suppression (emailHash).
+// MUSÍ být registrováno PŘED /novinky-cc/:slug, jinak by ho :slug zachytilo.
+ccNewsRoutes.get("/novinky-cc/unsubscribe", async (c) => {
+  const token = c.req.query("token");
+  if (!token) return c.html(pageShell("Odhlášení", "<p>Chybí token.</p>"), 400);
+
+  const { verifyUnsubToken } = await import("../lib/cc-news/approval");
+  const email = await verifyUnsubToken(c.env, token);
+  if (!email) return c.html(pageShell("Odhlášení", "<p>Neplatný odhlašovací odkaz.</p>"), 401);
+
+  const { recordUnsubscribe } = await import("../lib/cc-news/newsletter");
+  const db = drizzle(c.env.DB);
+  const { alreadyOptedOut } = await recordUnsubscribe(
+    db,
+    c.env.AUTH_INTERNAL_SECRET,
+    email,
+    new Date(),
+    { source: "unsubscribe-link" }
+  );
+  const msg = alreadyOptedOut
+    ? "Tato adresa už je odhlášená. Newsletter „Novinky v Claude Code“ vám nebudeme posílat."
+    : "Odhlášení proběhlo. Newsletter „Novinky v Claude Code“ vám už nebudeme posílat.";
+  return c.html(pageShell("Odhlášení", `<p>${msg}</p>`));
+});
+
 // Detail článku — gated.
 ccNewsRoutes.get("/novinky-cc/:slug", async (c) => {
   const redirect = await gateOrRedirect(c);

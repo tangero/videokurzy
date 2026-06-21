@@ -262,4 +262,18 @@ export const ccNewsItem = sqliteTable("cc_news_item", {
   publishedAt: integer("publishedAt", { mode: "timestamp" }),
 });
 
+// Odhlášení z newsletteru „Novinky v Claude Code" (GDPR, W-007). ZÁMĚRNĚ NEdrží
+// plain e-mail: klíč je `emailHash` = HMAC-SHA256(normalizovaný e-mail, účel
+// `claude_code_news`). Výběr příjemců spočítá stejný hash a udělá anti-join.
+//   - Neukládat sem PII: suppression přežije i GDPR výmaz uživatele (proto
+//     samostatná tabulka, ne sloupec na user/purchase — viz B-002).
+//   - `createdFromUserId` je volitelná, BEZ FK (nesmí bránit výmazu uživatele).
+export const newsletterSuppression = sqliteTable("newsletter_suppression", {
+  emailHash: text("emailHash").primaryKey(),
+  newsletter: text("newsletter").notNull().default("claude_code_news"),
+  optedOutAt: integer("optedOutAt", { mode: "timestamp" }).notNull(),
+  source: text("source"),                 // „unsubscribe-link" | „admin" | …
+  createdFromUserId: text("createdFromUserId"), // nullable, bez FK
+});
+
 export { user, session, account, verification } from "./auth-schema";

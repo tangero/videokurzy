@@ -119,3 +119,35 @@ export async function verifyApprovalIntent(
 
   return { itemId: payload.itemId, nonce: payload.nonce, expiresAt: payload.expiresAt };
 }
+
+// ---------------------------------------------------------------------------
+// Odhlašovací token (W-007, GDPR). ODDĚLENÝ účel od schválení — token pro jednu
+// akci nelze použít k druhé. Nese normalizovaný e-mail; klik vloží suppression.
+// Bez expirace (odhlásit se musí jít kdykoli z libovolně starého e-mailu).
+// ---------------------------------------------------------------------------
+const UNSUB_PURPOSE = "cc-news-unsub:";
+
+export async function signUnsubToken(env: SecretEnv, email: string): Promise<string> {
+  const body = base64UrlEncodeText(JSON.stringify({ email: email.trim().toLowerCase() }));
+  const sig = await hmacSha256Base64Url(env.AUTH_INTERNAL_SECRET, `${UNSUB_PURPOSE}${body}`);
+  return `${body}.${sig}`;
+}
+
+export async function verifyUnsubToken(env: SecretEnv, token: string): Promise<string | null> {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
+  if (!body || !sig) return null;
+
+  const expectedSig = await hmacSha256Base64Url(env.AUTH_INTERNAL_SECRET, `${UNSUB_PURPOSE}${body}`);
+  if (!constantTimeEqual(sig, expectedSig)) return null;
+
+  const decoded = base64UrlDecodeText(body);
+  if (!decoded) return null;
+  try {
+    const payload = JSON.parse(decoded) as { email?: string };
+    return payload.email ? payload.email.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
