@@ -85,8 +85,29 @@ export function detailMarkdownUrl(sourceId: string): string {
 export function parseFirstRssItem(xml: string): RssItem | null {
   const itemMatch = xml.match(/<item\b[^>]*>([\s\S]*?)<\/item>/i);
   if (!itemMatch) return null;
-  const block = itemMatch[1];
+  return parseRssItemBlock(itemMatch[1]);
+}
 
+/**
+ * Naparsuje VÍCE položek z RSS feedu (nejnovější první), nejvýše `limit`.
+ * Sourozenec `parseFirstRssItem` pro hromadné zpracování (backfill posledních
+ * N týdnů). Položky bez stabilní týdenní detailní URL se přeskočí, takže výsledek
+ * může být kratší než `limit` i počet `<item>` ve feedu.
+ */
+export function parseRssItems(xml: string, limit = 4): RssItem[] {
+  const blocks = [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)];
+  const out: RssItem[] = [];
+  for (const m of blocks) {
+    if (out.length >= limit) break;
+    const item = parseRssItemBlock(m[1]);
+    // Deduplikace dle sourceId — feed může mít víc <item> mířících na týž týden.
+    if (item && !out.some((o) => o.sourceId === item.sourceId)) out.push(item);
+  }
+  return out;
+}
+
+/** Naparsuje jeden `<item>` blok na `RssItem` (sdílené jádro obou parserů). */
+function parseRssItemBlock(block: string): RssItem | null {
   const pick = (tag: string): string | null => {
     const re = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, "i");
     const m = block.match(re);
@@ -110,7 +131,7 @@ export function parseFirstRssItem(xml: string): RssItem | null {
 
   return {
     sourceId,
-    weekLabel: pick("title"),
+    weekLabel,
     versionRange: pick("category"),
     guid: pick("guid"),
   };
@@ -210,7 +231,40 @@ export async function detectLatest(
   const xml = await fetchers.fetchRss();
   const item = parseFirstRssItem(xml);
   if (!item) return { kind: "empty" };
+  return upsertDetectedItem(db, fetchers, item, now);
+}
 
+/**
+ * Detekce posledních `limit` týdnů z RSS (nejnovější první). Pro každý naparsovaný
+ * `<item>` provede stejný idempotentní upsert jako `detectLatest`. Prázdný feed
+ * vrátí `[]`. Slouží backfillu (doplnění více týdnů na web najednou).
+ */
+export async function detectRecent(
+  db: Db,
+  fetchers: Fetchers,
+  now: Date,
+  limit = 4
+): Promise<DetectOutcome[]> {
+  const xml = await fetchers.fetchRss();
+  const items = parseRssItems(xml, limit);
+  const out: DetectOutcome[] = [];
+  for (const item of items) {
+    out.push(await upsertDetectedItem(db, fetchers, item, now));
+  }
+  return out;
+}
+
+/**
+ * Idempotentní upsert jednoho naparsovaného RSS záznamu (sdílené jádro
+ * `detectLatest`/`detectRecent`). Stáhne `.md` detail, spočítá hash a podle
+ * stavu řádky vrátí `new`/`changed`/`unchanged`. Sémantika viz `detectLatest`.
+ */
+async function upsertDetectedItem(
+  db: Db,
+  fetchers: Fetchers,
+  item: RssItem,
+  now: Date
+): Promise<DetectOutcome> {
   const detail = await fetchers.fetchDetail(item.sourceId);
   const contentHash = await sha256Hex(detail);
 

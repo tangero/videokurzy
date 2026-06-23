@@ -17,7 +17,7 @@ import { sendEmail } from "../email";
 
 type Db = ReturnType<typeof drizzle>;
 
-interface PipelineEnv extends EditorEnv {
+export interface PipelineEnv extends EditorEnv {
   KV: KVNamespace;
   AUTH_INTERNAL_SECRET: string;
   BETTER_AUTH_URL?: string;

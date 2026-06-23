@@ -5,9 +5,11 @@ import { ccNewsItem } from "../../src/db/schema";
 import { enqueueCcNewsItem } from "../../src/queue";
 import {
   detectLatest,
+  detectRecent,
   normalizeSourceId,
   detailMarkdownUrl,
   parseFirstRssItem,
+  parseRssItems,
   extractDigestLink,
   sha256Hex,
   type Fetchers,
@@ -195,6 +197,93 @@ describe("cc-news detect — idempotent detection (R1)", () => {
     );
     expect(out.kind).toBe("empty");
     expect(await db.select().from(ccNewsItem)).toHaveLength(0);
+  });
+});
+
+// Feed s `count` po sobě jdoucími týdny (nejnovější = startWeek, klesá dolů).
+// Každý <item> má vlastní detailní digest odkaz v content:encoded.
+function rssMany(startWeek: number, count: number): string {
+  const items = Array.from({ length: count }, (_, i) => {
+    const w = startWeek - i;
+    const detail = `https://code.claude.com/docs/en/whats-new/2026-w${w}`;
+    return `    <item>
+      <title><![CDATA[Week ${w}]]></title>
+      <link>https://code.claude.com/docs/en/whats-new#week-${w}</link>
+      <guid isPermaLink="false">guid-${w}</guid>
+      <category><![CDATA[v2.1.${w}]]></category>
+      <pubDate>Mon, 15 Jun 2026 23:17:00 GMT</pubDate>
+      <content:encoded><![CDATA[<p><a href="${detail}">Read the Week ${w} digest →</a></p>]]></content:encoded>
+    </item>`;
+  }).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0"><channel>
+${items}
+  </channel></rss>`;
+}
+
+describe("cc-news detect — parseRssItems (více týdnů)", () => {
+  it("vrátí posledních N položek, nejnovější první", () => {
+    const items = parseRssItems(rssMany(24, 4), 4);
+    expect(items).toHaveLength(4);
+    expect(items.map((i) => i.sourceId)).toEqual([
+      "/docs/en/whats-new/2026-w24",
+      "/docs/en/whats-new/2026-w23",
+      "/docs/en/whats-new/2026-w22",
+      "/docs/en/whats-new/2026-w21",
+    ]);
+  });
+
+  it("ořízne na limit i když feed má víc položek", () => {
+    expect(parseRssItems(rssMany(24, 6), 4)).toHaveLength(4);
+  });
+
+  it("deduplikuje položky mířící na týž týden", () => {
+    // dva <item> na týž digest → jen jeden sourceId
+    const dup = rssMany(24, 1) + rssMany(24, 1);
+    expect(parseRssItems(`<rss><channel>${dup}</channel></rss>`, 4).length).toBeLessThanOrEqual(1);
+  });
+
+  it("prázdný feed → []", () => {
+    expect(parseRssItems("<rss><channel></channel></rss>", 4)).toEqual([]);
+  });
+});
+
+describe("cc-news detect — detectRecent (backfill detekce)", () => {
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM cc_news_item");
+  });
+
+  it("vloží draft řádku pro každý detekovaný týden", async () => {
+    const db = drizzle(env.DB);
+    let n = 0;
+    const f: Fetchers = {
+      fetchRss: async () => rssMany(24, 4),
+      // každý týden má jiný obsah (jinak by se hash shodoval napříč týdny — to
+      // tu nevadí, sourceId je klíč, ale ať je test realistický)
+      fetchDetail: async () => `# digest ${n++}`,
+    };
+
+    const outcomes = await detectRecent(db, f, NOW, 4);
+
+    expect(outcomes).toHaveLength(4);
+    expect(outcomes.every((o) => o.kind === "new")).toBe(true);
+    const rows = await db.select().from(ccNewsItem);
+    expect(rows).toHaveLength(4);
+  });
+
+  it("je idempotentní — druhý běh nevytvoří duplikáty (unchanged)", async () => {
+    const db = drizzle(env.DB);
+    const f: Fetchers = {
+      fetchRss: async () => rssMany(24, 3),
+      fetchDetail: async (sourceId) => `# digest for ${sourceId}`,
+    };
+
+    const first = await detectRecent(db, f, NOW, 3);
+    const second = await detectRecent(db, f, NOW, 3);
+
+    expect(first.every((o) => o.kind === "new")).toBe(true);
+    expect(second.every((o) => o.kind === "unchanged")).toBe(true);
+    expect(await db.select().from(ccNewsItem)).toHaveLength(3);
   });
 });
 
