@@ -7,6 +7,7 @@ import {
   handleQueue,
   handleDlq,
   issueFakturoidInvoiceForTest,
+  enqueueCcNewsItem,
 } from "../src/queue";
 
 describe("queue Fakturoid idempotence", () => {
@@ -237,5 +238,31 @@ describe("handleDlq — dead-letter queue", () => {
 
     fetchSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+});
+
+describe("enqueueCcNewsItem — payload pro frontu", () => {
+  it("bez opts: jen itemId + sourceId (cron cesta)", async () => {
+    const sent: unknown[] = [];
+    const fakeEnv = { WEBHOOK_QUEUE: { send: async (m: unknown) => { sent.push(m); } } } as never;
+    await enqueueCcNewsItem(fakeEnv, "item-1", "/docs/en/whats-new/2026-w24");
+    expect(sent).toEqual([
+      { type: "cc-news.detected", data: { itemId: "item-1", sourceId: "/docs/en/whats-new/2026-w24" } },
+    ]);
+  });
+
+  it("s manualTrigger+force: příznaky se propíšou do payloadu (ruční trigger na pozadí)", async () => {
+    const sent: any[] = [];
+    const fakeEnv = { WEBHOOK_QUEUE: { send: async (m: unknown) => { sent.push(m); } } } as never;
+    await enqueueCcNewsItem(fakeEnv, "item-1", "/docs/en/whats-new/2026-w24", {
+      manualTrigger: true,
+      force: true,
+    });
+    expect(sent[0].data).toEqual({
+      itemId: "item-1",
+      sourceId: "/docs/en/whats-new/2026-w24",
+      manualTrigger: true,
+      force: true,
+    });
   });
 });

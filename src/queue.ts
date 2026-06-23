@@ -29,19 +29,27 @@ interface WebhookMessage {
 export interface CcNewsDetectedData {
   itemId: string;
   sourceId: string;
+  /** Ruční admin trigger: vynutit odeslání schvalovacího e-mailu (ne jen dry-run). */
+  manualTrigger?: boolean;
+  /** Obejít idempotenci (přegenerovat i když approvalEmailSentAt už je). */
+  force?: boolean;
 }
 
 /**
  * Zařadí nově detekovaný / změněný whats-new digest do fronty pro navazující
  * redakční zpracování (W-004). Používá stávající WEBHOOK_QUEUE (vzor dle B-003);
  * žádný nový binding ani poskytovatel. Volá se jen pro outcome new/changed.
+ * Volitelný `opts` přidá příznaky ručního triggeru (vynucené odeslání e-mailu),
+ * který kvůli LLM překladu (desítky sekund) MUSÍ běžet na pozadí, ne v HTTP
+ * requestu — jinak ho prohlížeč/CF utne timeoutem.
  */
 export async function enqueueCcNewsItem(
   env: Env,
   itemId: string,
-  sourceId: string
+  sourceId: string,
+  opts: { manualTrigger?: boolean; force?: boolean } = {}
 ): Promise<void> {
-  const data: CcNewsDetectedData = { itemId, sourceId };
+  const data: CcNewsDetectedData = { itemId, sourceId, ...opts };
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.detected", data });
 }
 
@@ -455,13 +463,30 @@ async function handleCcNewsDetected(
     return;
   }
 
+  const ref = { itemId: data.itemId, sourceId: data.sourceId };
+  const now = new Date();
+
+  // Ruční admin trigger: vynutit odeslání schvalovacího e-mailu (i mimo live
+  // brány). Běží TADY na pozadí, protože LLM přepis trvá desítky sekund a v HTTP
+  // requestu by ho prohlížeč/CF utnul timeoutem. Konzument fronty má delší limit.
+  if (data.manualTrigger) {
+    const { triggerCcNewsApproval } = await import("./lib/cc-news/pipeline");
+    const result = await triggerCcNewsApproval(db, env, ref, now, undefined, {
+      force: data.force === true,
+    });
+    if ("skipped" in result && result.skipped) {
+      console.log(`[queue] cc-news manuální trigger: item=${data.itemId} SKIPPED (už odesláno)`);
+    } else {
+      console.log(
+        `[queue] cc-news manuální trigger: item=${data.itemId} llm=${result.usedLlm} ` +
+          `mode=${result.mode} sent=${result.sent}`
+      );
+    }
+    return;
+  }
+
   const { processCcNewsItem } = await import("./lib/cc-news/pipeline");
-  const result = await processCcNewsItem(
-    db,
-    env,
-    { itemId: data.itemId, sourceId: data.sourceId },
-    new Date()
-  );
+  const result = await processCcNewsItem(db, env, ref, now);
   // mode=live znamená, že schvalovací e-mail reálně odešel (za oběma branami);
   // mode=dry-run = jen připraven a zalogován. Přechodné chyby (fetch/LLM výpadek)
   // nechytáme — ať se zpráva retryuje konzumentem fronty.
