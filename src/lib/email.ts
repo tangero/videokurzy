@@ -153,6 +153,31 @@ export function ccNewsApprovalHtml(opts: {
     </p>`);
 }
 
+/**
+ * HTML rozesílaného newsletteru „Novinky v Claude Code". Skládá volitelný
+ * úvodník (osobní komentář redaktora, jen do e-mailu — ne na web) NAD vlastní
+ * článek a obojí vloží do brandového wrapperu. `introHtml` i `articleHtml` jsou
+ * UŽ vyrenderované z markdownu (volající používá sdílený renderMarkdown), proto
+ * je sem vkládáme přímo. `unsubscribeUrl` je per-příjemce odhlašovací odkaz.
+ */
+export function ccNewsNewsletterHtml(opts: {
+  introHtml: string | null;
+  articleHtml: string;
+  unsubscribeUrl: string;
+}): string {
+  const intro = opts.introHtml
+    ? `<div style="margin: 0 0 24px; font-size: 16px; line-height: 1.6; color: ${TEXT};">${opts.introHtml}</div>
+       <hr style="border: none; border-top: 1px solid ${DIVIDER}; margin: 24px 0;">`
+    : "";
+  return emailWrapper(`
+    ${intro}
+    <div style="font-size: 15px; line-height: 1.6; color: ${TEXT};">${opts.articleHtml}</div>
+    <p style="font-size: 12px; color: ${TEXT_MUTED}; text-align: center; margin-top: 24px;">
+      Newsletter dostáváte jako platící uživatel kurzy.vibecoding.cz.
+      <a href="${opts.unsubscribeUrl}" style="color: ${TEXT_MUTED};">Odhlásit odběr</a>.
+    </p>`);
+}
+
 /** Potvrzení self-service výmazu účtu (GDPR). Odkaz platí 15 minut. */
 export function accountDeletionConfirmHtml(confirmUrl: string): string {
   return emailWrapper(`

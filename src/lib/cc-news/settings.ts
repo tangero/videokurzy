@@ -10,11 +10,45 @@
 import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { siteConfig } from "../../db/schema";
+import { ADMIN_EMAILS } from "../../config/admin";
 
 type Db = ReturnType<typeof drizzle>;
 
 /** Klíč v `site_config` pro admin přepínač reálného odesílání. */
 export const CC_NEWS_LIVE_SEND_KEY = "cc_news_live_send";
+
+/** Klíč v `site_config` pro příjemce schvalovacího e-mailu (řádky/čárky). */
+export const CC_NEWS_APPROVAL_EMAILS_KEY = "cc_news_approval_emails";
+
+/** Základní sanity check tvaru e-mailu (local@domain.tld). */
+const isLikelyEmail = (email: string): boolean =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+/** Rozseká uložený seznam (oddělený čárkami / novými řádky / středníky) na e-maily. */
+export function parseApprovalEmails(raw: string | null | undefined): string[] {
+  return [...new Set(
+    (raw ?? "")
+      .split(/[\n,;]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => isLikelyEmail(s)),
+  )];
+}
+
+/**
+ * Příjemci schvalovacího e-mailu „Novinky v Claude Code". Bere se z `site_config`
+ * (klíč cc_news_approval_emails, nastavitelné v /admin/settings); když není nebo
+ * je prázdný/neplatný, FALLBACK na natvrdo zadané `ADMIN_EMAILS`. Záměrně oddělené
+ * od admin OPRÁVNĚNÍ (auth.ts): měnit, kam chodí notifikace, smí admin přes UI,
+ * měnit, kdo JE admin, ne — to zůstává v kódu.
+ */
+export async function getCcNewsApprovalEmails(db: Db): Promise<string[]> {
+  const rows = await db
+    .select({ value: siteConfig.value })
+    .from(siteConfig)
+    .where(eq(siteConfig.key, CC_NEWS_APPROVAL_EMAILS_KEY));
+  const parsed = parseApprovalEmails(rows[0]?.value);
+  return parsed.length > 0 ? parsed : [...ADMIN_EMAILS];
+}
 
 /** Přečte admin přepínač (default false, když řádek chybí). */
 export async function getCcNewsLiveSend(db: Db): Promise<boolean> {

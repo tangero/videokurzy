@@ -1,10 +1,15 @@
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
-import { ccNewsItem } from "../../src/db/schema";
-import { processCcNewsItem, articleSlug } from "../../src/lib/cc-news/pipeline";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ccNewsItem, siteConfig } from "../../src/db/schema";
+import {
+  processCcNewsItem,
+  articleSlug,
+  triggerCcNewsApproval,
+} from "../../src/lib/cc-news/pipeline";
 import { draftKvKey } from "../../src/lib/cc-news/draft";
+import { CC_NEWS_LIVE_SEND_KEY } from "../../src/lib/cc-news/settings";
 import type { Fetchers } from "../../src/lib/cc-news/detect";
 
 const NOW = new Date("2026-06-21T12:00:00.000Z");
@@ -88,5 +93,69 @@ describe("processCcNewsItem — detekce → editor → draft (napojení pipeline
       fetchers(DIGEST)
     );
     expect(result.usedLlm).toBe(false);
+  });
+});
+
+describe("triggerCcNewsApproval — ruční trigger neduplikuje e-mail", () => {
+  let fetchSpy: typeof globalThis.fetch;
+  let resendCalls: number;
+
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM cc_news_item");
+    await env.DB.exec("DELETE FROM site_config");
+    const db = drizzle(env.DB);
+    await db.insert(ccNewsItem).values({
+      id: "item-1",
+      sourceId: "/docs/en/whats-new/2026-w24",
+      contentHash: "h",
+      weekLabel: "Week 24",
+      versionRange: "v2.1.166 → v2.1.176",
+      status: "draft",
+      createdAt: NOW,
+    });
+    // Spočítej reálná odeslání na Resend API přes mock fetch.
+    resendCalls = 0;
+    fetchSpy = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("api.resend.com")) {
+        resendCalls++;
+        return new Response(JSON.stringify({ id: "mock" }), { status: 200 });
+      }
+      return fetchSpy(input as never, init);
+    }) as typeof globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = fetchSpy;
+  });
+
+  it("dry-run brány: trigger odešle PRÁVĚ jednou (vynucené odeslání)", async () => {
+    const db = drizzle(env.DB);
+    const result = await triggerCcNewsApproval(
+      db,
+      { ...(env as unknown as Record<string, unknown>), RESEND_API_KEY: "re_test" } as never,
+      { itemId: "item-1", sourceId: "/docs/en/whats-new/2026-w24" },
+      NOW,
+      fetchers(DIGEST)
+    );
+    expect(result.sent).toBe(true);
+    expect(resendCalls).toBe(1);
+  });
+
+  it("live brány zapnuté: trigger NEodešle podruhé (prepareDraftAndApproval už poslala)", async () => {
+    const db = drizzle(env.DB);
+    // Zapni obě brány: admin přepínač + env CC_NEWS_DRY_RUN=0 + klíč.
+    await db.insert(siteConfig).values({ key: CC_NEWS_LIVE_SEND_KEY, value: "true" });
+    const result = await triggerCcNewsApproval(
+      db,
+      { ...(env as unknown as Record<string, unknown>), CC_NEWS_DRY_RUN: "0", RESEND_API_KEY: "re_test" } as never,
+      { itemId: "item-1", sourceId: "/docs/en/whats-new/2026-w24" },
+      NOW,
+      fetchers(DIGEST)
+    );
+    expect(result.sent).toBe(true);
+    // Klíčové: jen JEDNO odeslání, ne dvě (regrese, kterou našel Greptile).
+    expect(resendCalls).toBe(1);
   });
 });

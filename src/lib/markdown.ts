@@ -51,6 +51,13 @@ export function renderMarkdown(markdown: string | null | undefined): string {
       continue;
     }
 
+    // `# ` (h1) musí být AŽ po `###`/`##`, jinak by „# " chytlo i je. Bez téhle
+    // větve nadpis `# …` propadne do <p> a vykreslí se doslova včetně mřížky.
+    if (first.startsWith("# ")) {
+      html.push(`<h1>${renderInline(first.slice(2).trim())}</h1>`);
+      continue;
+    }
+
     if (lines.every((line) => line.trim().startsWith("- "))) {
       const items = lines
         .map((line) => `<li>${renderInline(line.trim().slice(2).trim())}</li>`)

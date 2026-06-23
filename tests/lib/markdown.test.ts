@@ -18,4 +18,15 @@ describe("renderMarkdown", () => {
     expect(html).toContain('href="https://vibecoding.cz/"');
     expect(html).toContain('href="#"');
   });
+
+  it("renders heading levels h1, h2, h3 (ne doslovné mřížky v <p>)", () => {
+    const html = renderMarkdown("# Nadpis 1\n\n## Nadpis 2\n\n### Nadpis 3");
+
+    expect(html).toContain("<h1>Nadpis 1</h1>");
+    expect(html).toContain("<h2>Nadpis 2</h2>");
+    expect(html).toContain("<h3>Nadpis 3</h3>");
+    // Mřížka se nesmí objevit jako doslovný text odstavce.
+    expect(html).not.toContain("<p># ");
+    expect(html).not.toContain("# Nadpis");
+  });
 });

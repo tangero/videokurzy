@@ -7,7 +7,7 @@ import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch } from "../db/schema";
 import { Layout } from "../views/layout";
-import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml } from "../lib/email";
+import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml, ccNewsNewsletterHtml } from "../lib/email";
 import {
   createAdminUsers,
   defaultAdminGrantExpiresOn,
@@ -619,6 +619,42 @@ admin.get("/admin", async (c) => {
               })();
             `}} />
           )}
+        </div>
+
+        {/* Novinky v Claude Code — ruční trigger schvalovacího e-mailu */}
+        <div class="mb-6 bg-white border rounded-lg p-4">
+          {c.req.query("ccNews") && (() => {
+            const msg = c.req.query("ccNews") ?? "";
+            const isError = /chyba|error|failed|selhal/i.test(msg);
+            return (
+              <div
+                class={`mb-3 rounded-md px-3 py-2 text-xs ${
+                  isError ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"
+                }`}
+              >
+                <strong>{isError ? "✕ Novinky v CC" : "✓ Novinky v CC"}</strong>{" "}
+                <span class="font-mono break-all">{msg}</span>
+              </div>
+            );
+          })()}
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-gray-900">Novinky v Claude Code</h3>
+              <p class="text-xs text-gray-500 mt-1">
+                Stáhne nejnovější whats-new digest, vyrobí koncept a pošle schvalovací
+                e-mail na adminy. Publikace nastane až po kliknutí na odkaz v e-mailu.
+              </p>
+            </div>
+            <form method="post" action="/admin/api/cc-news/trigger" hx-boost="false">
+              <button
+                type="submit"
+                class="text-sm bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700"
+                title="Spustí detekci + redakční pipeline a reálně odešle schvalovací e-mail na ADMIN_EMAILS."
+              >
+                Poslat ke schválení
+              </button>
+            </form>
+          </div>
         </div>
 
         {/* Users */}
@@ -1715,6 +1751,188 @@ admin.post("/admin/api/fio/scan", async (c) => {
   }
 });
 
+// ─── Novinky v Claude Code — ruční trigger ────────────────────────
+//
+// Spustí detekci nejnovějšího whats-new digestu + redakční pipeline a REÁLNĚ
+// odešle schvalovací e-mail na ADMIN_EMAILS (mimo dry-run brány, viz
+// triggerCcNewsApproval). Slouží k ručnímu vyvolání schválení bez čekání na cron.
+admin.post("/admin/api/cc-news/trigger", async (c) => {
+  const db = drizzle(c.env.DB);
+  try {
+    const { detectLatest, defaultFetchers } = await import("../lib/cc-news/detect");
+    const { triggerCcNewsApproval } = await import("../lib/cc-news/pipeline");
+    const now = new Date();
+
+    const outcome = await detectLatest(db, defaultFetchers(), now);
+    if (outcome.kind === "empty") {
+      return c.redirect(`/admin?ccNews=${encodeURIComponent("Feed neobsahuje žádný týdenní digest — nic k odeslání.")}`);
+    }
+
+    const result = await triggerCcNewsApproval(
+      db,
+      c.env,
+      { itemId: outcome.itemId, sourceId: outcome.sourceId },
+      now
+    );
+
+    const summary = result.sent
+      ? `Schvalovací e-mail odeslán (${outcome.kind}, ${outcome.sourceId}). Příjemci: ${result.email.to.join(", ")}.`
+      : `Detekce OK (${outcome.kind}, ${outcome.sourceId}), ale odeslání e-mailu SELHALO — zkontroluj RESEND_API_KEY.`;
+    return c.redirect(`/admin?ccNews=${encodeURIComponent(summary)}`);
+  } catch (err) {
+    return c.redirect(`/admin?ccNews=${encodeURIComponent("chyba: " + (err as Error).message)}`);
+  }
+});
+
+// ─── Newsletter „Novinky v Claude Code" — admin stránka ───────────
+//
+// Seznam vydání + editor úvodníku (jen e-mail) + náhled HTML e-mailu v iframe
+// + publikace na web. Rozeslání předplatitelům je samostatný krok (dry-run brány).
+
+admin.get("/admin/newsletter", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const { ccNewsItem } = await import("../db/schema");
+  const { slugFromPath } = await import("./cc-news");
+  const { draftKvKey, publishedKvKey } = await import("../lib/cc-news/draft");
+  const { AdminNewsletterPage } = await import("../views/admin-newsletter");
+
+  const rows = await db
+    .select()
+    .from(ccNewsItem)
+    .orderBy(desc(ccNewsItem.createdAt));
+
+  const items = rows.map((r) => ({
+    id: r.id,
+    weekLabel: r.weekLabel,
+    versionRange: r.versionRange,
+    status: r.status,
+    slug: slugFromPath(r.articlePath),
+    publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
+    hasEditorial: Boolean(r.editorialMarkdown && r.editorialMarkdown.trim()),
+  }));
+
+  const selectedId = c.req.query("item");
+  let selected = null;
+  if (selectedId) {
+    const row = rows.find((r) => r.id === selectedId);
+    if (row) {
+      // Tělo článku: publikovaná verze má přednost, jinak draft.
+      const body =
+        (await c.env.KV.get(publishedKvKey(row.id))) ??
+        (await c.env.KV.get(draftKvKey(row.id)));
+      selected = {
+        id: row.id,
+        weekLabel: row.weekLabel,
+        status: row.status,
+        slug: slugFromPath(row.articlePath),
+        editorialMarkdown: row.editorialMarkdown ?? "",
+        hasBody: body !== null,
+      };
+    }
+  }
+
+  return c.html(
+    <AdminNewsletterPage
+      user={{ name: currentUser.name ?? null, email: currentUser.email }}
+      items={items}
+      selected={selected}
+    />,
+  );
+});
+
+// Uložení úvodníku k vydání (markdown, jen do e-mailu). Prázdný = smazat.
+admin.post("/admin/api/cc-news/editorial", async (c) => {
+  const body = await c.req
+    .json<{ itemId?: string; markdown?: string }>()
+    .catch(() => ({}) as { itemId?: string; markdown?: string });
+  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+  const db = drizzle(c.env.DB);
+  const { ccNewsItem } = await import("../db/schema");
+  const trimmed = (body.markdown ?? "").trim();
+  await db
+    .update(ccNewsItem)
+    .set({ editorialMarkdown: trimmed || null })
+    .where(eq(ccNewsItem.id, body.itemId));
+  return c.json({ ok: true });
+});
+
+// Náhled HTML e-mailu (úvodník + článek v brandové šabloně). Markdown úvodníku
+// bere z requestu (živá hodnota z textarea), tělo článku z KV.
+admin.post("/admin/api/cc-news/preview", async (c) => {
+  const body = await c.req
+    .json<{ itemId?: string; markdown?: string }>()
+    .catch(() => ({}) as { itemId?: string; markdown?: string });
+  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+
+  const { draftKvKey, publishedKvKey } = await import("../lib/cc-news/draft");
+  const { buildNewsletterHtml } = await import("../lib/cc-news/newsletter");
+  const { renderMarkdown } = await import("../lib/markdown");
+  const { stripFrontMatter } = await import("./cc-news");
+
+  const articleMarkdown =
+    (await c.env.KV.get(publishedKvKey(body.itemId))) ??
+    (await c.env.KV.get(draftKvKey(body.itemId))) ??
+    "_Tělo článku zatím není k dispozici._";
+
+  const html = buildNewsletterHtml(
+    {
+      articleMarkdown,
+      editorialMarkdown: body.markdown ?? null,
+      unsubscribeUrl: "#nahled-odhlaseni",
+    },
+    renderMarkdown,
+    stripFrontMatter,
+    ccNewsNewsletterHtml,
+  );
+  return c.json({ ok: true, html });
+});
+
+// Publikace vydání na web /novinky-cc: promote draft → published v KV, status.
+// Nezávislé na schvalovacím tokenu (admin akce z UI). Newsletter NErozesílá.
+admin.post("/admin/api/cc-news/publish", async (c) => {
+  const body = await c.req
+    .json<{ itemId?: string }>()
+    .catch(() => ({}) as { itemId?: string });
+  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+
+  const db = drizzle(c.env.DB);
+  const { ccNewsItem } = await import("../db/schema");
+  const { draftKvKey, publishedKvKey } = await import("../lib/cc-news/draft");
+
+  const [row] = await db
+    .select()
+    .from(ccNewsItem)
+    .where(eq(ccNewsItem.id, body.itemId))
+    .limit(1);
+  if (!row) return c.json({ error: "unknown item" }, 404);
+  if (!row.articlePath) {
+    return c.json({ error: "vydání nemá připravený článek (articlePath)" }, 400);
+  }
+
+  // Promote: draft markdown se stává živou publikovanou verzí. Když draft chybí
+  // (už dřív publikováno), ponecháme stávající published blob beze změny.
+  const draftMd = await c.env.KV.get(draftKvKey(body.itemId));
+  if (draftMd !== null) {
+    await c.env.KV.put(publishedKvKey(body.itemId), draftMd);
+  } else if ((await c.env.KV.get(publishedKvKey(body.itemId))) === null) {
+    return c.json({ error: "není co publikovat (chybí obsah v úložišti)" }, 400);
+  }
+
+  await db
+    .update(ccNewsItem)
+    .set({
+      status: "published",
+      publishedAt: row.publishedAt ?? new Date(),
+      approveNonce: null,
+      ...(row.pendingContentHash ? { contentHash: row.pendingContentHash } : {}),
+      pendingContentHash: null,
+    })
+    .where(eq(ccNewsItem.id, body.itemId));
+
+  return c.json({ ok: true, status: "published" });
+});
+
 // ─── Transcribe AI ────────────────────────────────────────────────
 
 admin.post("/admin/api/lessons/:id/transcribe", async (c) => {
@@ -2204,6 +2422,8 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
     benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
     activeBank: (cfg.active_bank === "creditas" ? "creditas" : "fio") as "fio" | "creditas",
     ccNewsLiveSend: cfg.cc_news_live_send === "true",
+    // Prázdné = fallback na ADMIN_EMAILS (řeší getCcNewsApprovalEmails za běhu).
+    ccNewsApprovalEmails: cfg.cc_news_approval_emails ?? "",
     discount: {
       active: cfg.discount_active === "true",
       percent: parseInt(cfg.discount_percent ?? "0", 10),
@@ -2248,10 +2468,17 @@ admin.post("/admin/settings", async (c) => {
 
   const activeBank = body.active_bank === "creditas" ? "creditas" : "fio";
   const ccNewsLiveSend = body.cc_news_live_send === "on";
+  // Příjemci schvalovacího e-mailu — normalizuj na čistý seznam (po řádcích),
+  // zahoď neplatné tvary. Prázdné = fallback na ADMIN_EMAILS za běhu.
+  const { parseApprovalEmails } = await import("../lib/cc-news/settings");
+  const ccNewsApprovalEmails = parseApprovalEmails(
+    String(body.cc_news_approval_emails ?? ""),
+  ).join("\n");
 
   const updates: Array<[string, string]> = [
     ["active_bank", activeBank],
     ["cc_news_live_send", ccNewsLiveSend ? "true" : "false"],
+    ["cc_news_approval_emails", ccNewsApprovalEmails],
     ["price_individual", String(priceIndividual)],
     ["price_organization", String(priceOrganization)],
     ["benefits_individual", benefitsIndividual],

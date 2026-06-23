@@ -14,6 +14,7 @@ import {
   unsubscribeUserAll,
   resubscribeUserAll,
   parseCcArticleLinks,
+  buildNewsletterHtml,
 } from "../../src/lib/cc-news/newsletter";
 import { signUnsubToken, verifyUnsubToken } from "../../src/lib/cc-news/approval";
 
@@ -272,5 +273,54 @@ describe("parseCcArticleLinks (R7 — odkazy na CC články z vibecoding.cz)", (
         <category>Nástroje</category></item>
     </channel></rss>`;
     expect(parseCcArticleLinks(feed2)).toHaveLength(0);
+  });
+});
+
+describe("buildNewsletterHtml", () => {
+  // Stub renderery: jednoznačně označí vstup, ať jde ověřit skládání bez
+  // závislosti na reálném renderMarkdown.
+  const render = (md: string) => `<r>${md}</r>`;
+  const strip = (md: string) => md.replace(/^FM\n/, ""); // „odebere front matter"
+  const template = (o: {
+    introHtml: string | null;
+    articleHtml: string;
+    unsubscribeUrl: string;
+  }) => `[intro:${o.introHtml ?? "—"}][article:${o.articleHtml}][unsub:${o.unsubscribeUrl}]`;
+
+  it("vloží úvodník nad článek a předá odhlašovací odkaz", () => {
+    const html = buildNewsletterHtml(
+      {
+        articleMarkdown: "FM\nTělo článku",
+        editorialMarkdown: "Můj úvodník",
+        unsubscribeUrl: "https://x/unsub",
+      },
+      render,
+      strip,
+      template,
+    );
+    // článek prošel stripem front matteru i renderem; úvodník renderem
+    expect(html).toBe(
+      "[intro:<r>Můj úvodník</r>][article:<r>Tělo článku</r>][unsub:https://x/unsub]",
+    );
+  });
+
+  it("prázdný úvodník → introHtml je null (žádná intro sekce)", () => {
+    const html = buildNewsletterHtml(
+      { articleMarkdown: "Tělo", editorialMarkdown: "   ", unsubscribeUrl: "#" },
+      render,
+      strip,
+      template,
+    );
+    expect(html).toBe("[intro:—][article:<r>Tělo</r>][unsub:#]");
+  });
+
+  it("chybějící úvodník (null) → bez intro sekce", () => {
+    const html = buildNewsletterHtml(
+      { articleMarkdown: "Tělo", editorialMarkdown: null, unsubscribeUrl: "#" },
+      render,
+      strip,
+      template,
+    );
+    expect(html).toContain("[intro:—]");
   });
 });
