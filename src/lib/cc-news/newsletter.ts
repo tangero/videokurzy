@@ -12,9 +12,9 @@
 //   - mínus comp/staff granty, mínus suppression (anti-join přes emailHash)
 //   deduplikováno podle normalizovaného e-mailu.
 
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
-import { purchase, organization, user, newsletterSuppression } from "../../db/schema";
+import { purchase, organization, user, newsletterSuppression, ccNewsItem } from "../../db/schema";
 import { maskEmail } from "../errors";
 
 type Db = ReturnType<typeof drizzle>;
@@ -250,6 +250,99 @@ export function buildNewsletterHtml(
     ? renderMd(input.editorialMarkdown)
     : null;
   return template({ introHtml, articleHtml, unsubscribeUrl: input.unsubscribeUrl });
+}
+
+// ---------------------------------------------------------------------------
+// Rozeslání newsletteru pro KONKRÉTNÍ vydání s per-vydání zámkem proti
+// opakovanému rozeslání. Tohle je vstupní bod z adminu — propojuje vydání
+// (cc_news_item) s rozesílkou (sendNewsletter), kterou jinak nikdo nevolá.
+// ---------------------------------------------------------------------------
+
+export type SendItemResult =
+  | { skipped: true; reason: "already-sent" | "no-content"; newsletterSentAt?: Date }
+  | (SendReport & { skipped?: false });
+
+interface SendItemEnv extends NewsletterEnv {
+  KV: KVNamespace;
+  BETTER_AUTH_URL?: string;
+}
+
+/**
+ * Rozešle newsletter pro dané vydání předplatitelům — JEDNOU. Idempotence stojí
+ * na ATOMICKÉM zámku: `UPDATE … SET newsletterSentAt WHERE id=? AND newsletterSentAt
+ * IS NULL`. D1 update je atomický, takže ze dvou souběžných požadavků (dvojklik)
+ * uspěje právě jeden; druhý dostane 0 změněných řádků → `skipped: already-sent`.
+ * Zámek se bere PŘED odesláním. `force` zámek obejde (vědomé znovurozeslání).
+ *
+ * Obsah se skládá z PUBLIKOVANÉ verze článku (KV) + úvodníku vydání přes sdílený
+ * buildNewsletterHtml — shoda s náhledem v adminu. Bez publikovaného obsahu se
+ * nic neposílá (`skipped: no-content`). Dry-run brány (isCcNewsLiveSend) řeší až
+ * sendNewsletter uvnitř; v dry-run se zámek NEdrží (rozeslání reálně neproběhlo).
+ */
+export async function sendCcNewsNewsletterForItem(
+  db: Db,
+  env: SendItemEnv,
+  itemId: string,
+  now: Date,
+  renderMd: (md: string) => string,
+  stripFrontMatter: (md: string) => string,
+  template: (opts: { introHtml: string | null; articleHtml: string; unsubscribeUrl: string }) => string,
+  opts: { force?: boolean } = {}
+): Promise<SendItemResult> {
+  const [row] = await db
+    .select({
+      weekLabel: ccNewsItem.weekLabel,
+      editorialMarkdown: ccNewsItem.editorialMarkdown,
+      newsletterSentAt: ccNewsItem.newsletterSentAt,
+    })
+    .from(ccNewsItem)
+    .where(eq(ccNewsItem.id, itemId))
+    .limit(1);
+  if (!row) return { skipped: true, reason: "no-content" };
+
+  // Obsah z publikované verze (rozesíláme jen to, co je živé na webu).
+  const { publishedKvKey } = await import("./draft");
+  const articleMarkdown = await env.KV.get(publishedKvKey(itemId));
+  if (!articleMarkdown) return { skipped: true, reason: "no-content" };
+
+  // Atomický zámek (přeskoč při force). 0 změněných řádků = už rozesláno/běží.
+  if (!opts.force) {
+    const locked = await db
+      .update(ccNewsItem)
+      .set({ newsletterSentAt: now })
+      .where(and(eq(ccNewsItem.id, itemId), isNull(ccNewsItem.newsletterSentAt)))
+      .returning({ id: ccNewsItem.id });
+    if (locked.length === 0) {
+      return { skipped: true, reason: "already-sent", newsletterSentAt: row.newsletterSentAt ?? undefined };
+    }
+  }
+
+  const baseUrl = (env.BETTER_AUTH_URL ?? "https://kurzy.vibecoding.cz").replace(/\/+$/, "");
+  const subject = `Novinky v Claude Code${row.weekLabel ? ` — ${row.weekLabel}` : ""}`;
+  const content: NewsletterContent = {
+    subject,
+    baseUrl,
+    renderHtml: (unsubscribeUrl) =>
+      buildNewsletterHtml(
+        { articleMarkdown, editorialMarkdown: row.editorialMarkdown, unsubscribeUrl },
+        renderMd,
+        stripFrontMatter,
+        template,
+      ),
+  };
+
+  const report = await sendNewsletter(db, env, now, { content });
+
+  // Dry-run reálně neodeslal → zámek nedrž, ať jde poslat naostro později.
+  // (force zámek nebral, takže ho ani nepouštíme.)
+  if (report.mode === "dry-run" && !opts.force) {
+    await db
+      .update(ccNewsItem)
+      .set({ newsletterSentAt: null })
+      .where(eq(ccNewsItem.id, itemId));
+  }
+
+  return report;
 }
 
 // ---------------------------------------------------------------------------

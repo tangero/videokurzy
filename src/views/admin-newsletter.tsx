@@ -11,6 +11,7 @@ export interface NewsletterItem {
   slug: string | null;
   publishedAt: number | null; // epoch ms
   approvalEmailSentAt: number | null; // epoch ms — kdy odešel schvalovací e-mail
+  newsletterSentAt: number | null; // epoch ms — kdy byl rozeslán newsletter
   hasEditorial: boolean;
 }
 
@@ -26,6 +27,7 @@ export interface AdminNewsletterProps {
     editorialMarkdown: string;
     /** Má vydání uložený markdown těla (draft/published v KV)? */
     hasBody: boolean;
+    newsletterSentAt: number | null; // epoch ms — kdy byl rozeslán newsletter
   } | null;
 }
 
@@ -83,13 +85,14 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
               <th class="px-4 py-2 text-left">Úvodník</th>
               <th class="px-4 py-2 text-left">Schvalovací e-mail</th>
               <th class="px-4 py-2 text-left">Publikováno</th>
+              <th class="px-4 py-2 text-left">Rozesláno</th>
               <th class="px-4 py-2 text-right">Akce</th>
             </tr>
           </thead>
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colspan={7} class="px-4 py-6 text-center text-gray-500">
+                <td colspan={8} class="px-4 py-6 text-center text-gray-500">
                   Zatím žádné vydání. Vydání přibyde po detekci nového digestu
                   (cron, nebo tlačítko „Poslat ke schválení" na Přehledu).
                 </td>
@@ -122,6 +125,13 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                       )}
                     </td>
                     <td class="px-4 py-2 text-gray-500">{fmtDate(it.publishedAt)}</td>
+                    <td class="px-4 py-2 text-xs text-gray-500">
+                      {it.newsletterSentAt ? (
+                        <span class="text-green-700">✓ {fmtDateTime(it.newsletterSentAt)}</span>
+                      ) : (
+                        <span class="text-gray-400">nerozesláno</span>
+                      )}
+                    </td>
                     <td class="px-4 py-2 text-right">
                       <a
                         href={`/admin/newsletter?item=${encodeURIComponent(it.id)}`}
@@ -197,11 +207,28 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                     Zobrazit publikované →
                   </a>
                 ) : null}
+
+                {/* Rozeslání jen pro publikované vydání (rozesíláme jen živý obsah). */}
+                {selected.status === "published" && (
+                  <button
+                    id="btn-send"
+                    type="button"
+                    data-sent={selected.newsletterSentAt ? "1" : "0"}
+                    class="text-sm bg-indigo-700 text-white px-4 py-2 rounded hover:bg-indigo-800"
+                    title="Rozešle newsletter předplatitelům. Idempotentní — podruhé se nepošle bez vynucení."
+                  >
+                    Rozeslat newsletter
+                  </button>
+                )}
               </div>
-              <p class="text-xs text-gray-500 mt-3">
-                Rozeslání newsletteru předplatitelům je zatím samostatný krok mimo
-                tuto stránku (běží v dry-run režimu za branami).
-              </p>
+
+              {selected.status === "published" && (
+                <p class="text-xs text-gray-500 mt-3">
+                  {selected.newsletterSentAt
+                    ? `Newsletter byl rozeslán ${fmtDateTime(selected.newsletterSentAt)}. Opakované rozeslání pošle e-mail VŠEM znovu — potvrď v dialogu.`
+                    : "Newsletter zatím nebyl rozeslán. Rozeslání proběhne jen jednou; reálné odeslání vyžaduje zapnuté brány (jinak dry-run)."}
+                </p>
+              )}
               <div id="action-result" class="mt-3 text-sm" aria-live="polite"></div>
             </div>
           </div>
@@ -326,6 +353,44 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                 .catch(function () {
                   setText(res, '#b91c1c', 'Chyba sítě.');
                   pubBtn.disabled = false;
+                });
+            });
+          }
+
+          var sendBtn = $('btn-send');
+          if (sendBtn) {
+            sendBtn.addEventListener('click', function () {
+              var alreadySent = sendBtn.dataset.sent === '1';
+              var msg = alreadySent
+                ? 'Newsletter už BYL rozeslán. Opakované rozeslání pošle e-mail VŠEM předplatitelům ZNOVU. Pokračovat?'
+                : 'Rozeslat newsletter všem předplatitelům?';
+              if (!window.confirm(msg)) return;
+              var res = $('action-result');
+              sendBtn.disabled = true;
+              setText(res, '#6b7280', 'Rozesílám…');
+              fetch('/admin/api/cc-news/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ itemId: itemId, force: alreadySent })
+              })
+                .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+                .then(function (out) {
+                  if (out.ok && out.body && out.body.ok) {
+                    var b = out.body;
+                    var label = b.mode === 'dry-run'
+                      ? 'Dry-run: reálně NEodesláno (' + b.recipientCount + ' příjemců). Zapni brány pro ostré odeslání.'
+                      : 'Rozesláno: ' + b.delivered + '/' + b.recipientCount + ' doručeno' + (b.failed ? (', ' + b.failed + ' selhalo') : '') + '. Načítám stránku…';
+                    setText(res, b.mode === 'dry-run' ? '#92400e' : '#15803d', label);
+                    if (b.mode !== 'dry-run') setTimeout(function () { window.location.reload(); }, 1200);
+                    else sendBtn.disabled = false;
+                  } else {
+                    setText(res, '#b91c1c', (out.body && out.body.message) || 'Rozeslání selhalo.');
+                    sendBtn.disabled = false;
+                  }
+                })
+                .catch(function () {
+                  setText(res, '#b91c1c', 'Chyba sítě.');
+                  sendBtn.disabled = false;
                 });
             });
           }

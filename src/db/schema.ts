@@ -270,6 +270,10 @@ export const ccNewsItem = sqliteTable("cc_news_item", {
   // (neposlat omylem 2×) + zobrazení v adminu. Re-edit digestu (changed) ho
   // vynuluje, ať jde poslat e-mail k nové verzi.
   approvalEmailSentAt: integer("approvalEmailSentAt", { mode: "timestamp" }),
+  // Kdy byl ROZESLÁN newsletter předplatitelům. Per-vydání zámek proti opakovanému
+  // rozeslání (atomický UPDATE … WHERE newsletterSentAt IS NULL). Vědomé znovurozeslání
+  // jen přes force.
+  newsletterSentAt: integer("newsletterSentAt", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   publishedAt: integer("publishedAt", { mode: "timestamp" }),
 });

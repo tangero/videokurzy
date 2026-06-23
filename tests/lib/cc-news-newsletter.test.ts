@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
-import { beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { purchase, organization, user, newsletterSuppression } from "../../src/db/schema";
 import {
   emailHash,
@@ -15,7 +16,11 @@ import {
   resubscribeUserAll,
   parseCcArticleLinks,
   buildNewsletterHtml,
+  sendCcNewsNewsletterForItem,
 } from "../../src/lib/cc-news/newsletter";
+import { ccNewsItem, siteConfig } from "../../src/db/schema";
+import { CC_NEWS_LIVE_SEND_KEY } from "../../src/lib/cc-news/settings";
+import { publishedKvKey } from "../../src/lib/cc-news/draft";
 import { signUnsubToken, verifyUnsubToken } from "../../src/lib/cc-news/approval";
 
 const SECRET = "test-internal-secret"; // shoda s env.test.vars
@@ -322,5 +327,137 @@ describe("buildNewsletterHtml", () => {
       template,
     );
     expect(html).toContain("[intro:—]");
+  });
+});
+
+describe("sendCcNewsNewsletterForItem — per-vydání zámek proti opakovanému rozeslání", () => {
+  // Stub renderery + šablona (nezávislé na renderMarkdown).
+  const renderMd = (md: string) => `<r>${md}</r>`;
+  const strip = (md: string) => md;
+  const template = (o: { introHtml: string | null; articleHtml: string; unsubscribeUrl: string }) =>
+    `${o.articleHtml}|${o.unsubscribeUrl}`;
+
+  let fetchSpy: typeof globalThis.fetch;
+  let resendCalls: number;
+
+  async function liveEnvSetup() {
+    const db = drizzle(env.DB);
+    // jeden platící příjemce, ať má rozesílka komu poslat
+    await db.insert(purchase).values({
+      id: 1, email: "paid@example.cz", type: "individual", paymentMethod: "stripe",
+      status: "active", kind: "paid", expiresAt: FUTURE, createdAt: NOW, amountPaid: 2000,
+    });
+    // vydání + publikovaný obsah v KV
+    await db.insert(ccNewsItem).values({
+      id: "item-1", sourceId: "/docs/en/whats-new/2026-w24", contentHash: "h",
+      weekLabel: "Week 24", status: "published", articlePath: "src/content/novinky-cc/2026-w24-novinky.md",
+      createdAt: NOW, publishedAt: NOW,
+    });
+    await env.KV.put(publishedKvKey("item-1"), "Tělo článku");
+    // zapni obě brány
+    await db.insert(siteConfig).values({ key: CC_NEWS_LIVE_SEND_KEY, value: "true" });
+  }
+
+  const liveEnv = () =>
+    ({ ...(env as unknown as Record<string, unknown>), CC_NEWS_DRY_RUN: "0", RESEND_API_KEY: "re_test" }) as never;
+
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM purchase");
+    await env.DB.exec("DELETE FROM organization");
+    await env.DB.exec("DELETE FROM user");
+    await env.DB.exec("DELETE FROM newsletter_suppression");
+    await env.DB.exec("DELETE FROM site_config");
+    await env.DB.exec("DELETE FROM cc_news_item");
+    await env.KV.delete(publishedKvKey("item-1"));
+    resendCalls = 0;
+    fetchSpy = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("api.resend.com")) {
+        resendCalls++;
+        return new Response(JSON.stringify({ id: "mock" }), { status: 200 });
+      }
+      return fetchSpy(input as never, init);
+    }) as typeof globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = fetchSpy;
+  });
+
+  it("první rozeslání odešle a nastaví newsletterSentAt; druhé je skipped", async () => {
+    const db = drizzle(env.DB);
+    await liveEnvSetup();
+
+    const first = await sendCcNewsNewsletterForItem(
+      db, liveEnv(), "item-1", NOW, renderMd, strip, template,
+    );
+    expect("skipped" in first && first.skipped).toBeFalsy();
+    expect(resendCalls).toBe(1);
+
+    const rows = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "item-1"));
+    expect(rows[0].newsletterSentAt).toBeTruthy();
+
+    // druhé volání — zámek drží, nic se neodešle
+    const second = await sendCcNewsNewsletterForItem(
+      db, liveEnv(), "item-1", new Date("2026-06-22T12:00:00Z"), renderMd, strip, template,
+    );
+    expect("skipped" in second && second.skipped).toBe(true);
+    expect("skipped" in second && second.skipped && second.reason).toBe("already-sent");
+    expect(resendCalls).toBe(1); // stále jen jedno odeslání
+  });
+
+  it("force=true rozešle znovu i přes nastavený zámek", async () => {
+    const db = drizzle(env.DB);
+    await liveEnvSetup();
+
+    await sendCcNewsNewsletterForItem(db, liveEnv(), "item-1", NOW, renderMd, strip, template);
+    expect(resendCalls).toBe(1);
+
+    const forced = await sendCcNewsNewsletterForItem(
+      db, liveEnv(), "item-1", NOW, renderMd, strip, template, { force: true },
+    );
+    expect("skipped" in forced && forced.skipped).toBeFalsy();
+    expect(resendCalls).toBe(2);
+  });
+
+  it("bez publikovaného obsahu → skipped:no-content, žádné odeslání ani zámek", async () => {
+    const db = drizzle(env.DB);
+    await db.insert(ccNewsItem).values({
+      id: "item-1", sourceId: "/docs/en/whats-new/2026-w24", contentHash: "h",
+      weekLabel: "Week 24", status: "published", createdAt: NOW,
+    });
+    // žádný publishedKvKey obsah
+    const result = await sendCcNewsNewsletterForItem(
+      db, liveEnv(), "item-1", NOW, renderMd, strip, template,
+    );
+    expect("skipped" in result && result.skipped && result.reason).toBe("no-content");
+    expect(resendCalls).toBe(0);
+    const rows = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "item-1"));
+    expect(rows[0].newsletterSentAt).toBeNull();
+  });
+
+  it("dry-run (brány vypnuté) NEdrží zámek — lze poslat naostro později", async () => {
+    const db = drizzle(env.DB);
+    await db.insert(purchase).values({
+      id: 1, email: "paid@example.cz", type: "individual", paymentMethod: "stripe",
+      status: "active", kind: "paid", expiresAt: FUTURE, createdAt: NOW, amountPaid: 2000,
+    });
+    await db.insert(ccNewsItem).values({
+      id: "item-1", sourceId: "/docs/en/whats-new/2026-w24", contentHash: "h",
+      weekLabel: "Week 24", status: "published", createdAt: NOW,
+    });
+    await env.KV.put(publishedKvKey("item-1"), "Tělo článku");
+    // brány VYPNUTÉ (žádný CC_NEWS_DRY_RUN=0) → dry-run
+
+    const dry = await sendCcNewsNewsletterForItem(
+      db, env as never, "item-1", NOW, renderMd, strip, template,
+    );
+    expect("skipped" in dry && dry.skipped).toBeFalsy();
+    expect("mode" in dry && dry.mode).toBe("dry-run");
+    expect(resendCalls).toBe(0);
+    // zámek se uvolnil zpět na null
+    const rows = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "item-1"));
+    expect(rows[0].newsletterSentAt).toBeNull();
   });
 });
