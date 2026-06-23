@@ -263,6 +263,9 @@ export const ccNewsItem = sqliteTable("cc_news_item", {
   // čtenáři nezmizel obsah, a nový obsah čeká na lidské schválení. pendingContentHash
   // drží hash této čekající verze; po schválení se promotuje a vynuluje.
   pendingContentHash: text("pendingContentHash"),
+  // Úvodník — markdown osobní komentář redaktora vkládaný POUZE do rozesílaného
+  // newsletteru (ne na web /novinky-cc). Edituje se v adminu /admin/newsletter.
+  editorialMarkdown: text("editorialMarkdown"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   publishedAt: integer("publishedAt", { mode: "timestamp" }),
 });

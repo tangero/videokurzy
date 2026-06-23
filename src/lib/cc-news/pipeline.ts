@@ -11,6 +11,7 @@ import type { drizzle } from "drizzle-orm/d1";
 import { parseDigest, renderArticle, type EditorEnv } from "./editor";
 import { prepareDraftAndApproval, type PreparedDraft } from "./draft";
 import { defaultFetchers, type Fetchers } from "./detect";
+import { sendEmail } from "../email";
 
 type Db = ReturnType<typeof drizzle>;
 
@@ -63,4 +64,35 @@ export async function processCcNewsItem(
   );
 
   return { ...prepared, usedLlm };
+}
+
+/**
+ * Ruční admin trigger (mimo cron): zpracuje detekovaný záznam STEJNĚ jako
+ * `processCcNewsItem`, ale schvalovací e-mail VŽDY reálně odešle na ADMIN_EMAILS
+ * — nezávisle na dry-run branách (CC_NEWS_DRY_RUN / cc_news_live_send).
+ *
+ * Rozdíl proti pipeline z fronty: tu volá admin EXPLICITNĚ z UI a očekává, že
+ * mu e-mail reálně přijde teď. Dry-run brány gateují AUTOMATICKÉ rozesílání
+ * (cron → newsletter předplatitelům), ne tento vědomý lidský úkon. Draft, nonce
+ * i approve link připraví sdílená `prepareDraftAndApproval`; tady jen pošleme
+ * její už sestavený `email` napřímo přes Resend. Vrací `sent` z výsledku odeslání.
+ */
+export async function triggerCcNewsApproval(
+  db: Db,
+  env: PipelineEnv,
+  ref: CcNewsRef,
+  now: Date,
+  fetchers: Fetchers = defaultFetchers()
+): Promise<PreparedDraft & { usedLlm: boolean }> {
+  const prepared = await processCcNewsItem(db, env, ref, now, fetchers);
+
+  // prepareDraftAndApproval už e-mail sestavila; v dry-run ho jen nezaslala.
+  // Tady odeslání vynutíme (ruční admin akce). Idempotentní vůči opakování:
+  // draft/nonce/approve link jsou uložené, znovuodeslání jen duplikuje e-mail.
+  const sent = await sendEmail(
+    { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
+    { to: prepared.email.to, subject: prepared.email.subject, html: prepared.email.html }
+  );
+
+  return { ...prepared, mode: "live", sent };
 }

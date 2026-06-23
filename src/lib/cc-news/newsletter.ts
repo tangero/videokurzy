@@ -214,6 +214,45 @@ export async function sendNewsletter(
 }
 
 // ---------------------------------------------------------------------------
+// Render HTML newsletteru pro NÁHLED i rozesílku. Skládá úvodník (jen e-mail)
+// nad článek a obojí vloží do brandové e-mailové šablony. Markdown → HTML přes
+// sdílený renderMarkdown (stejný jako web), aby náhled odpovídal realitě.
+// ---------------------------------------------------------------------------
+
+export interface NewsletterPreviewInput {
+  /** Markdown těla článku (publikovaná nebo draft verze vydání). */
+  articleMarkdown: string;
+  /** Volitelný markdown úvodníku (osobní komentář, jen do e-mailu). */
+  editorialMarkdown: string | null;
+  /** Odhlašovací odkaz — v náhledu placeholder, v rozesílce per-příjemce. */
+  unsubscribeUrl: string;
+}
+
+/**
+ * Sestaví HTML newsletteru (úvodník + článek) v brandové e-mailové šabloně.
+ * Úvodník i článek prochází stripem YAML front matteru a renderMarkdown, takže
+ * náhled v adminu je 1:1 s tím, co dostane příjemce. `renderMd` je injektovaný
+ * (lib/markdown a lib/cc-news/cc-news routy ho už mají) — drží tuhle vrstvu bez
+ * tvrdé závislosti na konkrétním rendereru a usnadní test.
+ */
+export function buildNewsletterHtml(
+  input: NewsletterPreviewInput,
+  renderMd: (md: string) => string,
+  stripFrontMatter: (md: string) => string,
+  template: (opts: {
+    introHtml: string | null;
+    articleHtml: string;
+    unsubscribeUrl: string;
+  }) => string
+): string {
+  const articleHtml = renderMd(stripFrontMatter(input.articleMarkdown));
+  const introHtml = input.editorialMarkdown?.trim()
+    ? renderMd(input.editorialMarkdown)
+    : null;
+  return template({ introHtml, articleHtml, unsubscribeUrl: input.unsubscribeUrl });
+}
+
+// ---------------------------------------------------------------------------
 // R7 — odkazy na nové CC články z vibecoding.cz
 // ---------------------------------------------------------------------------
 
