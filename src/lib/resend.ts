@@ -30,3 +30,77 @@ export async function sendResendEvent(
     return false;
   }
 }
+
+/** Přehled běhů jedné automation pro admin/Statistiky. */
+export interface ResendAutomationStat {
+  id: string;
+  name: string;
+  status: string;
+  running: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  total: number;
+}
+
+interface ResendListItem {
+  id: string;
+  name: string;
+  status: string;
+}
+interface ResendRun {
+  status: string;
+}
+
+/**
+ * Načte z Resend API přehled automations a počty jejich běhů per status.
+ * Volá GET /automations + paralelně GET /automations/{id}/runs.
+ * @see https://resend.com/docs/api-reference/automations/list-automations
+ * @see https://resend.com/docs/api-reference/automations/list-automation-runs
+ *
+ * Vrací null při jakékoli chybě (chybějící klíč, výpadek Resendu, restricted
+ * klíč) — volající (admin/stats) tím jen vynechá sekci, zbytek statistik jede.
+ */
+export async function fetchResendAutomationStats(
+  apiKey: string,
+): Promise<ResendAutomationStat[] | null> {
+  if (!apiKey) return null;
+  const auth = { Authorization: `Bearer ${apiKey}` };
+  try {
+    const listRes = await fetch("https://api.resend.com/automations", {
+      headers: auth,
+    });
+    if (!listRes.ok) {
+      console.error(`Resend automations list failed: ${listRes.status}`);
+      return null;
+    }
+    const list = (await listRes.json()) as { data?: ResendListItem[] };
+    const automations = list.data ?? [];
+
+    return await Promise.all(
+      automations.map(async (a): Promise<ResendAutomationStat> => {
+        const counts = { running: 0, completed: 0, failed: 0, cancelled: 0 };
+        try {
+          const runsRes = await fetch(
+            `https://api.resend.com/automations/${a.id}/runs`,
+            { headers: auth },
+          );
+          if (runsRes.ok) {
+            const runs = (await runsRes.json()) as { data?: ResendRun[] };
+            for (const r of runs.data ?? []) {
+              if (r.status in counts) counts[r.status as keyof typeof counts]++;
+            }
+          }
+        } catch (err) {
+          console.error(`Resend runs for ${a.id} failed:`, err);
+        }
+        const total =
+          counts.running + counts.completed + counts.failed + counts.cancelled;
+        return { id: a.id, name: a.name, status: a.status, ...counts, total };
+      }),
+    );
+  } catch (err) {
+    console.error("Resend automations stats error:", err);
+    return null;
+  }
+}

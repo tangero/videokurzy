@@ -26,6 +26,7 @@ import {
 import { invalidateAccessCache } from "../lib/access";
 import { AdminUsersList, AdminUserDetailView } from "../views/admin-users";
 import { AdminStatsPage } from "../views/admin-stats";
+import { fetchResendAutomationStats } from "../lib/resend";
 import { getRetentionCurve } from "../lib/watch-stats";
 import { syncVideoStats } from "../lib/bunny-stats";
 import {
@@ -960,6 +961,10 @@ admin.get("/admin/stats", async (c) => {
   const videoStatsErrors = c.req.query("videoStatsErrors") ? Number(c.req.query("videoStatsErrors")) : undefined;
   const videoStatsError = c.req.query("videoStatsError") || undefined;
 
+  // Přehled běhů Resend automatizací — vlastní try/catch uvnitř, při chybě/výpadku
+  // vrací null a sekce se v UI jen vynechá (zbytek statistik jede dál).
+  const resendStats = await fetchResendAutomationStats(c.env.RESEND_API_KEY);
+
   return c.html(
     <AdminStatsPage
       user={currentUser}
@@ -967,6 +972,7 @@ admin.get("/admin/stats", async (c) => {
       videoStatsSynced={videoStatsSynced}
       videoStatsErrors={videoStatsErrors}
       videoStatsError={videoStatsError}
+      resend={resendStats}
       data={{
         buyers: {
           paidCount: Number(buyerRow?.paidCount ?? 0),
