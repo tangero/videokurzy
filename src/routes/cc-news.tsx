@@ -25,6 +25,28 @@ export function stripFrontMatter(md: string): string {
 }
 
 /**
+ * Vytáhne `title` a `post_excerpt` z YAML front matteru (pokud je). Hodnota může
+ * být v uvozovkách (`title: "…"`) i bez. Bez front matteru / klíče → null.
+ * Lehký parser jen na tyhle dva skalární klíče — ne plný YAML (Workers runtime,
+ * žádná závislost). Title je skutečný český nadpis článku, post_excerpt perex.
+ */
+export function parseFrontMatter(md: string): { title: string | null; excerpt: string | null } {
+  const fm = md.match(/^﻿?\s*---\n([\s\S]*?)\n---/)?.[1];
+  if (!fm) return { title: null, excerpt: null };
+
+  const pick = (key: string): string | null => {
+    // Klíč na začátku řádku, hodnota do konce řádku; odstraň obalující uvozovky.
+    const m = fm.match(new RegExp(`^${key}:\\s*(.+?)\\s*$`, "m"));
+    if (!m) return null;
+    const raw = m[1].trim();
+    const unquoted = raw.replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1");
+    return unquoted.trim() || null;
+  };
+
+  return { title: pick("title"), excerpt: pick("post_excerpt") };
+}
+
+/**
  * Veřejné routy služby „Novinky v Claude Code", na které klikne ČLOVĚK z
  * e-mailu. NEjsou za `X-Internal-Secret` (to je service-to-service) — bezpečnost
  * nese podepsaný jednorázový HMAC token v query (viz lib/cc-news/approval.ts).
@@ -64,19 +86,26 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
     .where(eq(ccNewsItem.status, "published"))
     .orderBy(desc(ccNewsItem.publishedAt));
 
-  const items = rows
-    .map((r) => {
-      const slug = slugFromPath(r.articlePath);
-      return slug
-        ? {
-            slug,
-            weekLabel: r.weekLabel ?? "Novinky",
-            versionRange: r.versionRange,
-            publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
-          }
-        : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+  // Skutečný nadpis/perex jsou ve front matteru markdownu (KV), ne v DB. Načteme
+  // je per vydání PARALELNĚ (Promise.all, ne sériově). Fallback na weekLabel,
+  // kdyby title chyběl. Při desítkách vydání je extra KV čtení v pořádku.
+  const items = (
+    await Promise.all(
+      rows.map(async (r) => {
+        const slug = slugFromPath(r.articlePath);
+        if (!slug) return null;
+        const md = await c.env.KV.get(publishedKvKey(r.id));
+        const fm = md ? parseFrontMatter(md) : { title: null, excerpt: null };
+        return {
+          slug,
+          title: fm.title ?? r.weekLabel ?? "Novinky",
+          excerpt: fm.excerpt,
+          versionRange: r.versionRange,
+          publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
+        };
+      }),
+    )
+  ).filter((x): x is NonNullable<typeof x> => x !== null);
 
   const user = c.get("user")!;
   return c.html(
@@ -134,11 +163,14 @@ ccNewsRoutes.get("/novinky-cc/:slug", async (c) => {
   const markdown = await c.env.KV.get(publishedKvKey(row.id));
   if (!markdown) return c.html(pageShell("Nenalezeno", "<p>Obsah článku není dostupný.</p>"), 404);
 
+  // Skutečný český nadpis je v front matteru (title), ne weekLabel. Tělo už
+  // začíná perexem, takže perex zvlášť nevykreslujeme (byl by duplicitní).
+  const { title } = parseFrontMatter(markdown);
   const user = c.get("user")!;
   return c.html(
     <CcNewsArticlePage
       user={{ name: user.name ?? null, email: user.email }}
-      title={row.weekLabel ?? "Novinky v Claude Code"}
+      title={title ?? row.weekLabel ?? "Novinky v Claude Code"}
       articleHtml={renderMarkdown(stripFrontMatter(markdown))}
     />,
   );

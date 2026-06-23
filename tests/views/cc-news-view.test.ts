@@ -14,7 +14,13 @@ describe("CcNewsListPage — design serveru", () => {
       CcNewsListPage({
         user: USER,
         items: [
-          { slug: "2026-w24", weekLabel: "Week 24", versionRange: "v2.1.166 → v2.1.176", publishedAt: Date.parse("2026-06-21") },
+          {
+            slug: "2026-w24",
+            title: "Safe mode, zanořené subagenty a přesun sezení",
+            excerpt: "Týden 24 byl věcný a cílený.",
+            versionRange: "v2.1.166 → v2.1.176",
+            publishedAt: Date.parse("2026-06-21"),
+          },
         ],
       }),
     );
@@ -25,8 +31,9 @@ describe("CcNewsListPage — design serveru", () => {
     // přihlášený uživatel → odkazy „můj kurz" / „odhlásit"
     expect(html).toContain("/dashboard");
     expect(html).toContain("/logout");
-    // obsah seznamu
-    expect(html).toContain("Week 24");
+    // obsah seznamu — skutečný nadpis + perex z front matteru, ne „Week 24"
+    expect(html).toContain("Safe mode, zanořené subagenty a přesun sezení");
+    expect(html).toContain("Týden 24 byl věcný a cílený.");
     expect(html).toContain("/novinky-cc/2026-w24");
     expect(html).toContain("v2.1.166");
     // gated obsah → noindex (audit P3)

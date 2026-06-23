@@ -7,7 +7,10 @@ type LayoutUser = { name: string | null; email: string } | null;
 /** Jedno vydání v seznamu (odlehčený model — bez markdownu těla). */
 export interface CcNewsListItem {
   slug: string;
-  weekLabel: string;
+  /** Skutečný český nadpis z front matteru (fallback weekLabel). */
+  title: string;
+  /** Perex z front matteru (post_excerpt), může chybět. */
+  excerpt: string | null;
   versionRange: string | null;
   publishedAt: number | null; // epoch ms
 }
@@ -62,15 +65,20 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[] }> =
                 style="display: block; text-decoration: none; color: inherit"
               >
                 <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-                  <span style="font-weight: 600; font-size: 1.05rem">{it.weekLabel}</span>
+                  <span style="font-weight: 600; font-size: 1.05rem">{it.title}</span>
                   {it.publishedAt && (
-                    <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted)">
+                    <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); white-space: nowrap">
                       {fmtDate(it.publishedAt, { month: "long", fallback: "" })}
                     </span>
                   )}
                 </div>
+                {it.excerpt && (
+                  <p style="color: var(--muted); font-size: 0.92rem; line-height: 1.55; margin: 8px 0 0">
+                    {it.excerpt}
+                  </p>
+                )}
                 {it.versionRange && (
-                  <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); margin-top: 4px">
+                  <div style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); margin-top: 8px">
                     {it.versionRange}
                   </div>
                 )}
@@ -127,9 +135,10 @@ export const CcNewsArticlePage: FC<{
       >
         ← všechna vydání
       </a>
+      {/* Skutečný nadpis z front matteru — vždy jeden h1 (nezávisí na markdownu). */}
+      <h1 style="margin: 16px 0 8px">{title}</h1>
       <div
         class="lesson-body"
-        style="margin-top: 16px"
         dangerouslySetInnerHTML={{ __html: articleHtml }}
       />
     </article>
