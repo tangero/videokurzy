@@ -1,6 +1,7 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { AdminNav } from "./admin-courses";
+import type { ResendAutomationStat } from "../lib/resend";
 
 export interface AdminStatsData {
   buyers: {
@@ -79,7 +80,8 @@ export const AdminStatsPage: FC<{
   videoStatsSynced?: number;
   videoStatsErrors?: number;
   videoStatsError?: string;
-}> = ({ user, data, lastSync, videoStatsSynced, videoStatsErrors, videoStatsError }) => {
+  resend?: ResendAutomationStat[] | null;
+}> = ({ user, data, lastSync, videoStatsSynced, videoStatsErrors, videoStatsError, resend }) => {
   const { buyers, funnel, videos } = data;
   return (
     <Layout title="Statistiky" user={user}>
@@ -231,6 +233,62 @@ export const AdminStatsPage: FC<{
                 );
               })}
             </div>
+          </section>
+
+          {/* E-mailové automatizace (Resend) — počty běhů per automation */}
+          <section>
+            <div class="mb-3 flex items-baseline justify-between">
+              <h2 class="text-lg font-semibold text-gray-900">E-mailové automatizace</h2>
+              <a
+                href="https://resend.com/automations"
+                target="_blank"
+                rel="noreferrer"
+                class="text-xs text-indigo-600 hover:underline"
+              >
+                Resend dashboard ↗
+              </a>
+            </div>
+            {resend === undefined || resend === null ? (
+              <p class="text-sm text-gray-500">
+                Statistiky z Resendu se nepodařilo načíst (chybí klíč nebo výpadek API).
+              </p>
+            ) : resend.length === 0 ? (
+              <p class="text-sm text-gray-500">V Resendu zatím nejsou žádné automatizace.</p>
+            ) : (
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500">
+                      <th class="py-2 pr-4 font-medium">Automatizace</th>
+                      <th class="py-2 px-2 text-right font-medium">Běhů</th>
+                      <th class="py-2 px-2 text-right font-medium">Dokončeno</th>
+                      <th class="py-2 px-2 text-right font-medium">Probíhá</th>
+                      <th class="py-2 px-2 text-right font-medium">Selhalo</th>
+                      <th class="py-2 pl-2 text-right font-medium">Zrušeno</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resend.map((a) => (
+                      <tr class="border-b border-gray-100">
+                        <td class="py-2 pr-4">
+                          <span class="text-gray-800">{a.name}</span>
+                          {a.status !== "enabled" ? (
+                            <span class="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">
+                              {a.status}
+                            </span>
+                          ) : null}
+                        </td>
+                        <td class="py-2 px-2 text-right font-semibold tabular-nums text-gray-900">{a.total}</td>
+                        <td class="py-2 px-2 text-right tabular-nums text-gray-600">{a.completed}</td>
+                        <td class="py-2 px-2 text-right tabular-nums text-gray-600">{a.running}</td>
+                        <td class={`py-2 px-2 text-right tabular-nums ${a.failed > 0 ? "text-amber-600" : "text-gray-600"}`}>{a.failed}</td>
+                        <td class="py-2 pl-2 text-right tabular-nums text-gray-600">{a.cancelled}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </div>
       </section>
