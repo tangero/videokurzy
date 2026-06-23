@@ -3,6 +3,16 @@ main = "src/index.tsx"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Non-secret runtime vars. POZOR: plain-text vars nastavené jen v CF dashboardu
+# `wrangler deploy` PŘEPÍŠE podle tohoto souboru (smaže je). Proto patří sem,
+# ne do dashboardu. Secrets (OPENROUTER_API_KEY, RESEND_API_KEY, …) deploy nemaže
+# — ty zůstávají v dashboardu.
+[vars]
+# Zapíná LLM redakční vrstvu „Novinky v Claude Code": digest se přepíše do plné
+# češtiny přes OpenRouter (vyžaduje secret OPENROUTER_API_KEY). Bez "1" se vrací
+# jen anglická deterministická kostra (viz lib/cc-news/editor.ts).
+CC_NEWS_LLM = "1"
+
 [assets]
 directory = "./public"
 
