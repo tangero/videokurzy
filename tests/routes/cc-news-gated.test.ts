@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ccNewsItem } from "../../src/db/schema";
 import { slugFromPath } from "../../src/routes/cc-news";
 import { publishedKvKey } from "../../src/lib/cc-news/draft";
-import { stripFrontMatter } from "../../src/routes/cc-news";
+import { stripFrontMatter, parseFrontMatter } from "../../src/routes/cc-news";
 
 const NOW = new Date("2026-06-21T12:00:00.000Z");
 
@@ -27,6 +27,37 @@ describe("stripFrontMatter", () => {
 
   it("leaves markdown without front matter untouched", () => {
     expect(stripFrontMatter("# Nadpis\ntělo")).toBe("# Nadpis\ntělo");
+  });
+});
+
+describe("parseFrontMatter", () => {
+  it("vytáhne title a post_excerpt (v uvozovkách i bez)", () => {
+    const md =
+      '---\nauthor: X\ntitle: "Safe mode a subagenty: novinky z týdne 24"\n' +
+      'post_excerpt: "Týden 24 byl věcný a cílený."\n---\n\nTělo článku.';
+    const { title, excerpt } = parseFrontMatter(md);
+    expect(title).toBe("Safe mode a subagenty: novinky z týdne 24");
+    expect(excerpt).toBe("Týden 24 byl věcný a cílený.");
+  });
+
+  it("zvládne hodnoty bez uvozovek", () => {
+    const md = "---\ntitle: Holý nadpis\npost_excerpt: Holý perex\n---\nTělo";
+    const { title, excerpt } = parseFrontMatter(md);
+    expect(title).toBe("Holý nadpis");
+    expect(excerpt).toBe("Holý perex");
+  });
+
+  it("nezmrší vnitřní uvozovky (YAML escape \\\")", () => {
+    // YAML escapuje vnitřní dvojité uvozovky jako \" — po strhnutí obalu unescapuj.
+    const md = '---\ntitle: "\\"Claude Code\\" vs \\"Cursor\\""\n---\nTělo';
+    expect(parseFrontMatter(md).title).toBe('"Claude Code" vs "Cursor"');
+  });
+
+  it("bez front matteru / klíče → null", () => {
+    expect(parseFrontMatter("# Nadpis\ntělo")).toEqual({ title: null, excerpt: null });
+    const { title, excerpt } = parseFrontMatter("---\nauthor: X\n---\ntělo");
+    expect(title).toBeNull();
+    expect(excerpt).toBeNull();
   });
 });
 

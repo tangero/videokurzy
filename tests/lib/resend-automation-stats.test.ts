@@ -45,6 +45,25 @@ describe("fetchResendAutomationStats", () => {
     });
   });
 
+  it("total počítá VŠECHNY běhy včetně neznámého statusu (ne jen 4 známé)", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.endsWith("/automations")) {
+        return Response.json({ data: [{ id: "a1", name: "X", status: "enabled" }] });
+      }
+      return Response.json({
+        data: [
+          { status: "completed" },
+          { status: "queued" }, // neznámý status — nesmí vypadnout z total
+          { status: "scheduled" }, // taky neznámý
+        ],
+      });
+    });
+    const stats = await fetchResendAutomationStats("re_test");
+    expect(stats![0].completed).toBe(1);
+    // total = 3 (všechny běhy), i když známé počty sečtou jen 1
+    expect(stats![0].total).toBe(3);
+  });
+
   it("vrací null při chybě list endpointu", async () => {
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 401 }));
     expect(await fetchResendAutomationStats("re_test")).toBeNull();

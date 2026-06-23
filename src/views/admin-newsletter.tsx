@@ -1,6 +1,7 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { AdminNav } from "./admin-courses";
+import { fmtDate, fmtDateTime } from "../lib/dates";
 
 /** Jedno vydání v seznamu (odlehčený model, bez markdownu těla). */
 export interface NewsletterItem {
@@ -42,25 +43,6 @@ const statusBadge = (status: string): { label: string; cls: string } => {
   }
 };
 
-const fmtDate = (ms: number | null): string =>
-  ms
-    ? new Date(ms).toLocaleDateString("cs-CZ", {
-        day: "numeric",
-        month: "numeric",
-        year: "numeric",
-      })
-    : "—";
-
-const fmtDateTime = (ms: number | null): string =>
-  ms
-    ? new Date(ms).toLocaleString("cs-CZ", {
-        day: "numeric",
-        month: "numeric",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "—";
 
 export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, selected }) => (
   <Layout title="Newsletter" user={user}>

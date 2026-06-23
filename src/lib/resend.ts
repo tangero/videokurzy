@@ -80,22 +80,26 @@ export async function fetchResendAutomationStats(
     return await Promise.all(
       automations.map(async (a): Promise<ResendAutomationStat> => {
         const counts = { running: 0, completed: 0, failed: 0, cancelled: 0 };
+        // total = VŠECHNY běhy, ne jen čtyři známé statusy — kdyby Resend přidal
+        // nový status (queued/scheduled…), nesmí vypadnout z celkového počtu.
+        let total = 0;
         try {
+          // Limit nahoru, ať jedna stránka pokryje i automation s mnoha běhy
+          // (Resend default page je malý → bez toho by se počty podhodnotily).
           const runsRes = await fetch(
-            `https://api.resend.com/automations/${a.id}/runs`,
+            `https://api.resend.com/automations/${a.id}/runs?limit=100`,
             { headers: auth },
           );
           if (runsRes.ok) {
             const runs = (await runsRes.json()) as { data?: ResendRun[] };
             for (const r of runs.data ?? []) {
+              total++;
               if (r.status in counts) counts[r.status as keyof typeof counts]++;
             }
           }
         } catch (err) {
           console.error(`Resend runs for ${a.id} failed:`, err);
         }
-        const total =
-          counts.running + counts.completed + counts.failed + counts.cancelled;
         return { id: a.id, name: a.name, status: a.status, ...counts, total };
       }),
     );

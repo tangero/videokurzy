@@ -6,6 +6,7 @@ import { approveItem, articleRepoPath, draftKvKey, publishedKvKey } from "../lib
 import { ccNewsItem } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { renderMarkdown, escapeHtml } from "../lib/markdown";
+import { CcNewsListPage, CcNewsArticlePage } from "../views/cc-news";
 import type { Env, Variables } from "../types";
 
 /** Slug z articlePath `src/content/novinky-cc/<slug>.md`. */
@@ -21,6 +22,37 @@ export function slugFromPath(articlePath: string | null): string | null {
  */
 export function stripFrontMatter(md: string): string {
   return md.replace(/^﻿?\s*---\n[\s\S]*?\n---\s*\n?/, "").trimStart();
+}
+
+/**
+ * Vytáhne `title` a `post_excerpt` z YAML front matteru (pokud je). Hodnota může
+ * být v uvozovkách (`title: "…"`) i bez. Bez front matteru / klíče → null.
+ * Lehký parser jen na tyhle dva skalární klíče — ne plný YAML (Workers runtime,
+ * žádná závislost). Title je skutečný český nadpis článku, post_excerpt perex.
+ */
+export function parseFrontMatter(md: string): { title: string | null; excerpt: string | null } {
+  const fm = md.match(/^﻿?\s*---\n([\s\S]*?)\n---/)?.[1];
+  if (!fm) return { title: null, excerpt: null };
+
+  // Klíče jsou fixní (žádná interpolace uživatelského vstupu do regexu).
+  const pick = (key: string): string | null => {
+    // Klíč na začátku řádku, hodnota do konce řádku.
+    const m = fm.match(new RegExp(`^${key}:[ \\t]*(.+?)[ \\t]*$`, "m"));
+    if (!m) return null;
+    const raw = m[1].trim();
+    // Dvojité uvozovky: strhni obal a unescapuj YAML `\"` a `\\` (jinak by se
+    // hodnota s vnitřními uvozovkami zmršila). Jednoduché uvozovky: jen obal.
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+      const inner = raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+      return inner.trim() || null;
+    }
+    if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
+      return raw.slice(1, -1).trim() || null;
+    }
+    return raw || null;
+  };
+
+  return { title: pick("title"), excerpt: pick("post_excerpt") };
 }
 
 /**
@@ -51,7 +83,7 @@ const pageShell = (title: string, body: string): string =>
   `<meta name="robots" content="noindex"><title>${escapeHtml(title)}</title></head>` +
   `<body><main>${body}</main></body></html>`;
 
-// Seznam publikovaných článků „Novinky v CC" — gated.
+// Seznam publikovaných článků „Novinky v CC" — gated, v designu serveru.
 ccNewsRoutes.get("/novinky-cc", async (c) => {
   const redirect = await gateOrRedirect(c);
   if (redirect) return redirect;
@@ -63,18 +95,42 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
     .where(eq(ccNewsItem.status, "published"))
     .orderBy(desc(ccNewsItem.publishedAt));
 
-  const items = rows
-    .map((r) => {
-      const slug = slugFromPath(r.articlePath);
-      const label = `${escapeHtml(r.weekLabel ?? "Novinky")}${r.versionRange ? ` (${escapeHtml(r.versionRange)})` : ""}`;
-      return slug ? `<li><a href="/novinky-cc/${encodeURIComponent(slug)}">${label}</a></li>` : "";
-    })
-    .filter(Boolean)
-    .join("");
+  // Skutečný nadpis/perex jsou ve front matteru markdownu (KV), ne v DB. Načteme
+  // je per vydání PARALELNĚ (Promise.all, ne sériově). Selhání JEDNOHO KV čtení
+  // (transientní chyba) NESMÍ shodit celou stránku — odchytíme ho per-item a
+  // degradujeme na weekLabel; ostatní vydání se zobrazí normálně.
+  // (TODO: při růstu počtu vydání denormalizovat title/excerpt do cc_news_item
+  // při publikaci a vyhnout se KV čtení na seznamu úplně.)
+  const items = (
+    await Promise.all(
+      rows.map(async (r) => {
+        const slug = slugFromPath(r.articlePath);
+        if (!slug) return null;
+        let fm: { title: string | null; excerpt: string | null } = { title: null, excerpt: null };
+        try {
+          const md = await c.env.KV.get(publishedKvKey(r.id));
+          if (md) fm = parseFrontMatter(md);
+        } catch (err) {
+          console.error(`[cc-news] KV čtení selhalo pro ${r.id}, fallback na weekLabel:`, (err as Error)?.message);
+        }
+        return {
+          slug,
+          title: fm.title ?? r.weekLabel ?? "Novinky",
+          excerpt: fm.excerpt,
+          versionRange: r.versionRange,
+          publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
+        };
+      }),
+    )
+  ).filter((x): x is NonNullable<typeof x> => x !== null);
 
-  const body = `<h1>Novinky v Claude Code</h1>` +
-    (items ? `<ul>${items}</ul>` : `<p>Zatím žádný publikovaný článek.</p>`);
-  return c.html(pageShell("Novinky v Claude Code", body));
+  const user = c.get("user")!;
+  return c.html(
+    <CcNewsListPage
+      user={{ name: user.name ?? null, email: user.email }}
+      items={items}
+    />,
+  );
 });
 
 // Odhlášení z newsletteru (GDPR, W-007). Veřejné — chráněné jen podepsaným
@@ -124,8 +180,16 @@ ccNewsRoutes.get("/novinky-cc/:slug", async (c) => {
   const markdown = await c.env.KV.get(publishedKvKey(row.id));
   if (!markdown) return c.html(pageShell("Nenalezeno", "<p>Obsah článku není dostupný.</p>"), 404);
 
+  // Skutečný český nadpis je v front matteru (title), ne weekLabel. Tělo už
+  // začíná perexem, takže perex zvlášť nevykreslujeme (byl by duplicitní).
+  const { title } = parseFrontMatter(markdown);
+  const user = c.get("user")!;
   return c.html(
-    pageShell(row.weekLabel ?? "Novinky v Claude Code", renderMarkdown(stripFrontMatter(markdown)))
+    <CcNewsArticlePage
+      user={{ name: user.name ?? null, email: user.email }}
+      title={title ?? row.weekLabel ?? "Novinky v Claude Code"}
+      articleHtml={renderMarkdown(stripFrontMatter(markdown))}
+    />,
   );
 });
 
