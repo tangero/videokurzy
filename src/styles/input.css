@@ -186,15 +186,12 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 /* Karta-odkaz: signalizuj klikatelnost hoverem (jinak vypadá staticky). */
 .cc-news-card { transition: border-color .15s, box-shadow .15s, transform .15s; }
 .cc-news-card:hover { border-color: var(--accent); box-shadow: 0 10px 24px rgba(20,20,19,0.10); transform: translateY(-1px); }
+/* Seznam vydání: zachovej list sémantiku (ul/li) pro čtečky, bez vizuálních odrážek. */
+.cc-news-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 /* Zpětný odkaz: zajisti touch target ≥ 44px (≥ pravidlo .impeccable.md). */
 .cc-news-back { display: inline-flex; align-items: center; min-height: 44px; }
-/* Mezery v článku z renderMarkdown — globální h*/p/ul styly stačí, jen odsazení. */
-.cc-news-article h1 { margin: 0 0 16px; }
-.cc-news-article h2 { margin: 28px 0 12px; }
-.cc-news-article h3 { margin: 22px 0 10px; }
-.cc-news-article p { margin: 0 0 14px; line-height: 1.7; }
-.cc-news-article ul { margin: 0 0 14px; padding-left: 22px; }
-.cc-news-article li { margin: 4px 0; }
+/* Typografie článku reusuje sdílený .lesson-body (viz níže) — žádný duplicitní
+   prose blok. Článek novinek má navíc h1 (lekce ho nemá), proto je v .lesson-body. */
 
 /* INPUT */
 .input, textarea.input {
@@ -389,6 +386,7 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 .lesson-body > *:first-child { margin-top: 0; }
 .lesson-body > *:last-child { margin-bottom: 0; }
 .lesson-body p { margin: 0 0 12px; }
+.lesson-body h1,
 .lesson-body h2,
 .lesson-body h3 {
   font-family: var(--font-head);
@@ -396,7 +394,8 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
   line-height: 1.25;
   margin: 18px 0 8px;
 }
-.lesson-body h2 { font-size: 1.18rem; }
+.lesson-body h1 { font-size: 1.5rem; margin: 0 0 16px; }
+.lesson-body h2 { font-size: 1.18rem; margin-top: 28px; }
 .lesson-body h3 { font-size: 1.06rem; }
 .lesson-body ul {
   margin: 10px 0 14px;

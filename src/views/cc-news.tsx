@@ -1,5 +1,6 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
+import { fmtDate } from "../lib/dates";
 
 type LayoutUser = { name: string | null; email: string } | null;
 
@@ -10,15 +11,6 @@ export interface CcNewsListItem {
   versionRange: string | null;
   publishedAt: number | null; // epoch ms
 }
-
-const fmtDate = (ms: number | null): string =>
-  ms
-    ? new Date(ms).toLocaleDateString("cs-CZ", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      })
-    : "";
 
 /**
  * Seznam publikovaných vydání „Novinky v Claude Code" v designu serveru.
@@ -38,29 +30,31 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[] }> =
       {items.length === 0 ? (
         <p style="color: var(--muted)">Zatím žádný publikovaný článek.</p>
       ) : (
-        <div style="display: grid; gap: 14px">
+        <ul class="cc-news-list">
           {items.map((it) => (
-            <a
-              href={`/novinky-cc/${encodeURIComponent(it.slug)}`}
-              class="card cc-news-card"
-              style="display: block; text-decoration: none; color: inherit"
-            >
-              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-                <span style="font-weight: 600; font-size: 1.05rem">{it.weekLabel}</span>
-                {it.publishedAt && (
-                  <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted)">
-                    {fmtDate(it.publishedAt)}
-                  </span>
-                )}
-              </div>
-              {it.versionRange && (
-                <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); margin-top: 4px">
-                  {it.versionRange}
+            <li>
+              <a
+                href={`/novinky-cc/${encodeURIComponent(it.slug)}`}
+                class="card cc-news-card"
+                style="display: block; text-decoration: none; color: inherit"
+              >
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                  <span style="font-weight: 600; font-size: 1.05rem">{it.weekLabel}</span>
+                  {it.publishedAt && (
+                    <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted)">
+                      {fmtDate(it.publishedAt, { month: "long", fallback: "" })}
+                    </span>
+                  )}
                 </div>
-              )}
-            </a>
+                {it.versionRange && (
+                  <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); margin-top: 4px">
+                    {it.versionRange}
+                  </div>
+                )}
+              </a>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </section>
   </Layout>
@@ -86,7 +80,7 @@ export const CcNewsArticlePage: FC<{
         ← všechna vydání
       </a>
       <div
-        class="cc-news-article"
+        class="lesson-body"
         style="margin-top: 16px"
         dangerouslySetInnerHTML={{ __html: articleHtml }}
       />

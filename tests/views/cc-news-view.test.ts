@@ -34,6 +34,10 @@ describe("CcNewsListPage — design serveru", () => {
     expect(html).toContain("noindex");
     // karta-odkaz má hover třídu (audit P2)
     expect(html).toContain("cc-news-card");
+    // seznam zachovává list sémantiku ul/li (code-review #2)
+    expect(html).toContain("cc-news-list");
+    expect(html).toContain("<ul");
+    expect(html).toContain("<li>");
   });
 
   it("prázdný seznam ukáže hlášku, ne kartu", () => {
@@ -60,7 +64,8 @@ describe("CcNewsArticlePage — design serveru", () => {
     expect(html).toContain("cc-news-back");
     // gated → noindex (audit P3)
     expect(html).toContain("noindex");
-    // vykreslený obsah článku
+    // vykreslený obsah článku v sdílené prose třídě (.lesson-body, code-review #4)
+    expect(html).toContain("lesson-body");
     expect(html).toContain("<h1>Co je nového</h1>");
     expect(html).toContain("tělo");
   });
