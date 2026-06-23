@@ -68,14 +68,15 @@ export async function processCcNewsItem(
 
 /**
  * Ruční admin trigger (mimo cron): zpracuje detekovaný záznam STEJNĚ jako
- * `processCcNewsItem`, ale schvalovací e-mail VŽDY reálně odešle na ADMIN_EMAILS
- * — nezávisle na dry-run branách (CC_NEWS_DRY_RUN / cc_news_live_send).
+ * `processCcNewsItem` a ZARUČÍ, že schvalovací e-mail reálně odejde na příjemce
+ * — i bez zapnutých dry-run bran (CC_NEWS_DRY_RUN / cc_news_live_send).
  *
  * Rozdíl proti pipeline z fronty: tu volá admin EXPLICITNĚ z UI a očekává, že
  * mu e-mail reálně přijde teď. Dry-run brány gateují AUTOMATICKÉ rozesílání
  * (cron → newsletter předplatitelům), ne tento vědomý lidský úkon. Draft, nonce
- * i approve link připraví sdílená `prepareDraftAndApproval`; tady jen pošleme
- * její už sestavený `email` napřímo přes Resend. Vrací `sent` z výsledku odeslání.
+ * i approve link připraví sdílená `prepareDraftAndApproval`. Když už ta e-mail
+ * odeslala (live brány zapnuté), NEposíláme znovu — jinak ho doplníme napřímo
+ * přes Resend. Vrací `sent` z výsledku odeslání.
  */
 export async function triggerCcNewsApproval(
   db: Db,
@@ -86,9 +87,12 @@ export async function triggerCcNewsApproval(
 ): Promise<PreparedDraft & { usedLlm: boolean }> {
   const prepared = await processCcNewsItem(db, env, ref, now, fetchers);
 
-  // prepareDraftAndApproval už e-mail sestavila; v dry-run ho jen nezaslala.
-  // Tady odeslání vynutíme (ruční admin akce). Idempotentní vůči opakování:
-  // draft/nonce/approve link jsou uložené, znovuodeslání jen duplikuje e-mail.
+  // Pokud byly splněny obě live brány, prepareDraftAndApproval e-mail UŽ odeslala
+  // (prepared.sent === true) — druhé odeslání by ho jen zduplikovalo. Tady
+  // odeslání DOplníme jen v případě, že první průchod skončil dry-run (sent=false);
+  // to je smysl ručního triggeru: vynutit e-mail i bez zapnutých bran.
+  if (prepared.sent) return prepared;
+
   const sent = await sendEmail(
     { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
     { to: prepared.email.to, subject: prepared.email.subject, html: prepared.email.html }
