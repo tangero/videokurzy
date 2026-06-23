@@ -7,7 +7,9 @@
 // (env CC_NEWS_DRY_RUN=0 + admin přepínač cc_news_live_send) — viz settings.ts.
 // Publikace článku nastává vždy až po lidském kliknutí na schvalovací link.
 
+import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
+import { ccNewsItem } from "../../db/schema";
 import { parseDigest, renderArticle, type EditorEnv } from "./editor";
 import { prepareDraftAndApproval, type PreparedDraft } from "./draft";
 import { defaultFetchers, type Fetchers } from "./detect";
@@ -66,37 +68,69 @@ export async function processCcNewsItem(
   return { ...prepared, usedLlm };
 }
 
+/** Výsledek ručního triggeru. `skipped` = e-mail už byl odeslán dřív (idempotence). */
+export type TriggerResult =
+  | (PreparedDraft & { usedLlm: boolean; skipped?: false })
+  | { skipped: true; approvalEmailSentAt: Date };
+
 /**
  * Ruční admin trigger (mimo cron): zpracuje detekovaný záznam STEJNĚ jako
  * `processCcNewsItem` a ZARUČÍ, že schvalovací e-mail reálně odejde na příjemce
  * — i bez zapnutých dry-run bran (CC_NEWS_DRY_RUN / cc_news_live_send).
  *
+ * IDEMPOTENCE: pokud už schvalovací e-mail pro toto vydání odešel
+ * (`approvalEmailSentAt` je nastaveno) a volající nevynutí `force`, NEposíláme
+ * znovu ani nepřegenerujeme draft — vrátíme `skipped`. Brání to opakovanému
+ * odeslání téhož e-mailu při dvojkliku / refreshe. Re-edit digestu (detekce
+ * `changed`) `approvalEmailSentAt` vynuluje, takže e-mail k NOVÉ verzi projde.
+ *
  * Rozdíl proti pipeline z fronty: tu volá admin EXPLICITNĚ z UI a očekává, že
  * mu e-mail reálně přijde teď. Dry-run brány gateují AUTOMATICKÉ rozesílání
  * (cron → newsletter předplatitelům), ne tento vědomý lidský úkon. Draft, nonce
  * i approve link připraví sdílená `prepareDraftAndApproval`. Když už ta e-mail
- * odeslala (live brány zapnuté), NEposíláme znovu — jinak ho doplníme napřímo
- * přes Resend. Vrací `sent` z výsledku odeslání.
+ * odeslala (live brány zapnuté), NEposíláme znovu — jinak ho doplníme napřímo.
  */
 export async function triggerCcNewsApproval(
   db: Db,
   env: PipelineEnv,
   ref: CcNewsRef,
   now: Date,
-  fetchers: Fetchers = defaultFetchers()
-): Promise<PreparedDraft & { usedLlm: boolean }> {
+  fetchers: Fetchers = defaultFetchers(),
+  opts: { force?: boolean } = {}
+): Promise<TriggerResult> {
+  // Idempotence se MUSÍ vyhodnotit PŘED processCcNewsItem: v live režimu by
+  // prepareDraftAndApproval e-mail odeslala uvnitř, než bychom stihli zabránit.
+  if (!opts.force) {
+    const [existing] = await db
+      .select({ sentAt: ccNewsItem.approvalEmailSentAt })
+      .from(ccNewsItem)
+      .where(eq(ccNewsItem.id, ref.itemId))
+      .limit(1);
+    if (existing?.sentAt) {
+      return { skipped: true, approvalEmailSentAt: existing.sentAt };
+    }
+  }
+
   const prepared = await processCcNewsItem(db, env, ref, now, fetchers);
 
   // Pokud byly splněny obě live brány, prepareDraftAndApproval e-mail UŽ odeslala
   // (prepared.sent === true) — druhé odeslání by ho jen zduplikovalo. Tady
   // odeslání DOplníme jen v případě, že první průchod skončil dry-run (sent=false);
   // to je smysl ručního triggeru: vynutit e-mail i bez zapnutých bran.
-  if (prepared.sent) return prepared;
+  const sent =
+    prepared.sent ||
+    (await sendEmail(
+      { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
+      { to: prepared.email.to, subject: prepared.email.subject, html: prepared.email.html }
+    ));
 
-  const sent = await sendEmail(
-    { RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
-    { to: prepared.email.to, subject: prepared.email.subject, html: prepared.email.html }
-  );
+  // Zaznamenej úspěšné odeslání pro idempotenci a zobrazení v adminu.
+  if (sent) {
+    await db
+      .update(ccNewsItem)
+      .set({ approvalEmailSentAt: now })
+      .where(eq(ccNewsItem.id, ref.itemId));
+  }
 
-  return { ...prepared, mode: "live", sent };
+  return { ...prepared, mode: sent ? "live" : prepared.mode, sent };
 }

@@ -1753,15 +1753,18 @@ admin.post("/admin/api/fio/scan", async (c) => {
 
 // ─── Novinky v Claude Code — ruční trigger ────────────────────────
 //
-// Spustí detekci nejnovějšího whats-new digestu + redakční pipeline a REÁLNĚ
-// odešle schvalovací e-mail na ADMIN_EMAILS (mimo dry-run brány, viz
-// triggerCcNewsApproval). Slouží k ručnímu vyvolání schválení bez čekání na cron.
+// Spustí detekci nejnovějšího whats-new digestu + redakční pipeline a zajistí
+// odeslání schvalovacího e-mailu příjemcům (viz triggerCcNewsApproval). Slouží
+// k ručnímu vyvolání schválení bez čekání na cron. IDEMPOTENTNÍ: pokud už
+// e-mail pro dané vydání odešel, podruhé se NEpošle (force=true ho vynutí).
 admin.post("/admin/api/cc-news/trigger", async (c) => {
   const db = drizzle(c.env.DB);
   try {
     const { detectLatest, defaultFetchers } = await import("../lib/cc-news/detect");
     const { triggerCcNewsApproval } = await import("../lib/cc-news/pipeline");
     const now = new Date();
+    // ?force=1 vynutí znovuodeslání i pro vydání, kterému už e-mail odešel.
+    const force = c.req.query("force") === "1";
 
     const outcome = await detectLatest(db, defaultFetchers(), now);
     if (outcome.kind === "empty") {
@@ -1772,12 +1775,21 @@ admin.post("/admin/api/cc-news/trigger", async (c) => {
       db,
       c.env,
       { itemId: outcome.itemId, sourceId: outcome.sourceId },
-      now
+      now,
+      undefined,
+      { force }
     );
 
-    const summary = result.sent
-      ? `Schvalovací e-mail odeslán (${outcome.kind}, ${outcome.sourceId}). Příjemci: ${result.email.to.join(", ")}.`
-      : `Detekce OK (${outcome.kind}, ${outcome.sourceId}), ale odeslání e-mailu SELHALO — zkontroluj RESEND_API_KEY.`;
+    let summary: string;
+    if ("skipped" in result && result.skipped) {
+      summary =
+        `Schvalovací e-mail už byl odeslán ${result.approvalEmailSentAt.toLocaleString("cs-CZ")} ` +
+        `(${outcome.sourceId}). Nic se neposlalo. Pro vynucení použij force.`;
+    } else if (result.sent) {
+      summary = `Schvalovací e-mail odeslán (${outcome.kind}, ${outcome.sourceId}). Příjemci: ${result.email.to.join(", ")}.`;
+    } else {
+      summary = `Detekce OK (${outcome.kind}, ${outcome.sourceId}), ale odeslání e-mailu SELHALO — zkontroluj RESEND_API_KEY.`;
+    }
     return c.redirect(`/admin?ccNews=${encodeURIComponent(summary)}`);
   } catch (err) {
     return c.redirect(`/admin?ccNews=${encodeURIComponent("chyba: " + (err as Error).message)}`);
@@ -1809,6 +1821,8 @@ admin.get("/admin/newsletter", async (c) => {
     status: r.status,
     slug: slugFromPath(r.articlePath),
     publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
+    approvalEmailSentAt: r.approvalEmailSentAt ? r.approvalEmailSentAt.getTime() : null,
+    newsletterSentAt: r.newsletterSentAt ? r.newsletterSentAt.getTime() : null,
     hasEditorial: Boolean(r.editorialMarkdown && r.editorialMarkdown.trim()),
   }));
 
@@ -1828,6 +1842,7 @@ admin.get("/admin/newsletter", async (c) => {
         slug: slugFromPath(row.articlePath),
         editorialMarkdown: row.editorialMarkdown ?? "",
         hasBody: body !== null,
+        newsletterSentAt: row.newsletterSentAt ? row.newsletterSentAt.getTime() : null,
       };
     }
   }
@@ -1910,8 +1925,25 @@ admin.post("/admin/api/cc-news/publish", async (c) => {
     return c.json({ error: "vydání nemá připravený článek (articlePath)" }, 400);
   }
 
-  // Promote: draft markdown se stává živou publikovanou verzí. Když draft chybí
-  // (už dřív publikováno), ponecháme stávající published blob beze změny.
+  // Idempotence: už publikované vydání BEZ čekající re-editované verze je no-op
+  // (opakovaný klik nic nemění). S pendingContentHash by tiché promote obešlo
+  // schvalovací nonce tok (re-edit publikovaného článku se schvaluje výhradně
+  // přes approve link) — proto to odmítneme a nasměrujeme na schválení.
+  if (row.status === "published") {
+    if (row.pendingContentHash) {
+      return c.json(
+        {
+          error:
+            "Vydání je publikované a má čekající re-editovanou verzi. Tu schval přes odkaz ve schvalovacím e-mailu, ne tímto tlačítkem.",
+        },
+        409,
+      );
+    }
+    return c.json({ ok: true, status: "published", alreadyPublished: true });
+  }
+
+  // Promote: draft markdown se stává živou publikovanou verzí. Když draft chybí,
+  // a published blob taky ne, není co publikovat.
   const draftMd = await c.env.KV.get(draftKvKey(body.itemId));
   if (draftMd !== null) {
     await c.env.KV.put(publishedKvKey(body.itemId), draftMd);
@@ -1923,14 +1955,62 @@ admin.post("/admin/api/cc-news/publish", async (c) => {
     .update(ccNewsItem)
     .set({
       status: "published",
-      publishedAt: row.publishedAt ?? new Date(),
+      publishedAt: new Date(),
       approveNonce: null,
-      ...(row.pendingContentHash ? { contentHash: row.pendingContentHash } : {}),
-      pendingContentHash: null,
     })
     .where(eq(ccNewsItem.id, body.itemId));
 
   return c.json({ ok: true, status: "published" });
+});
+
+// Rozeslání newsletteru předplatitelům pro dané vydání. IDEMPOTENTNÍ přes
+// per-vydání zámek (newsletterSentAt) — opakované volání nic nepošle podruhé.
+// ?force=1 vynutí znovurozeslání (pošle VŠEM znovu, vč. těch, co už dostali).
+admin.post("/admin/api/cc-news/send", async (c) => {
+  const body = await c.req
+    .json<{ itemId?: string; force?: boolean }>()
+    .catch(() => ({}) as { itemId?: string; force?: boolean });
+  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+
+  const { sendCcNewsNewsletterForItem } = await import("../lib/cc-news/newsletter");
+  const { renderMarkdown } = await import("../lib/markdown");
+  const { stripFrontMatter } = await import("./cc-news");
+  const db = drizzle(c.env.DB);
+
+  const result = await sendCcNewsNewsletterForItem(
+    db,
+    c.env,
+    body.itemId,
+    new Date(),
+    renderMarkdown,
+    stripFrontMatter,
+    ccNewsNewsletterHtml,
+    { force: body.force === true },
+  );
+
+  if ("skipped" in result && result.skipped) {
+    if (result.reason === "already-sent") {
+      return c.json(
+        {
+          error: "already_sent",
+          message: `Newsletter už byl rozeslán${result.newsletterSentAt ? ` ${result.newsletterSentAt.toLocaleString("cs-CZ")}` : ""}. Pro opakování použij force.`,
+        },
+        409,
+      );
+    }
+    return c.json(
+      { error: "no_content", message: "Vydání nemá publikovaný obsah — nejdřív publikuj na web." },
+      400,
+    );
+  }
+
+  return c.json({
+    ok: true,
+    mode: result.mode,
+    recipientCount: result.recipientCount,
+    delivered: result.delivered,
+    failed: result.failed,
+  });
 });
 
 // ─── Transcribe AI ────────────────────────────────────────────────
