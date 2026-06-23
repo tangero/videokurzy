@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { FC } from "hono/jsx";
 import { and, desc, eq, asc, inArray, or, sql, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
@@ -664,7 +665,7 @@ admin.get("/admin", async (c) => {
             <a href="/admin/users" class="text-sm text-indigo-600 hover:underline">
               všichni uživatelé →
             </a>
-            <a href="/admin/users/new" class="text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
+            <a href="/admin/users/new" class="btn-on-dark no-underline text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
               Přidat uživatele
             </a>
           </div>
@@ -1751,50 +1752,85 @@ admin.post("/admin/api/fio/scan", async (c) => {
   }
 });
 
-// ─── Novinky v Claude Code — ruční trigger ────────────────────────
+// ─── Novinky v Claude Code — diagnostika + ruční trigger ──────────
 //
-// Spustí detekci nejnovějšího whats-new digestu + redakční pipeline a zajistí
-// odeslání schvalovacího e-mailu příjemcům (viz triggerCcNewsApproval). Slouží
-// k ručnímu vyvolání schválení bez čekání na cron. IDEMPOTENTNÍ: pokud už
-// e-mail pro dané vydání odešel, podruhé se NEpošle (force=true ho vynutí).
-admin.post("/admin/api/cc-news/trigger", async (c) => {
+// Diagnostika LLM brány — co worker REÁLNĚ vidí v env (bez hodnot secretů, jen
+// jejich přítomnost). Pomáhá odhalit, že CC_NEWS_LLM nedorazil (deploy plain var
+// přepíše podle wrangler.toml). `?llm=1` navíc reálně zavolá OpenRouter z workeru
+// (platí se za 1 LLM volání ~$0.0001) a vrátí výsledek/chybu — izoluje, zda LLM
+// volání z WORKERU funguje (Workers fetch se chová jinak než Node.js, viz FIO 525).
+// GET = jen env stav (bezpečné, idempotentní — žádný side-effect ani náklad).
+admin.get("/admin/api/cc-news/diag", async (c) => {
+  return c.json({
+    CC_NEWS_LLM: c.env.CC_NEWS_LLM ?? null,
+    llmEnabled: c.env.CC_NEWS_LLM === "1",
+    hasOpenRouterKey: Boolean(c.env.OPENROUTER_API_KEY),
+    openRouterKeyLen: c.env.OPENROUTER_API_KEY?.length ?? 0,
+    model: c.env.CC_NEWS_LLM_MODEL ?? "anthropic/claude-sonnet-4.6 (default)",
+    hasResendKey: Boolean(c.env.RESEND_API_KEY),
+  });
+});
+
+// POST = reálně zavolá OpenRouter z workeru (krátký prompt) a vrátí výsledek/chybu.
+// Izoluje, zda LLM volání z WORKERU funguje (curl z Node.js může projít, kdežto
+// Workers fetch padá — viz FIO 525). ZÁMĚRNĚ POST: volání je PLACENÉ (~$0.0001),
+// nesmí ho spustit refresh/prefetch/bot na GET (GET má být bezpečný/idempotentní).
+admin.post("/admin/api/cc-news/diag/llm", async (c) => {
+  const started = Date.now();
+  try {
+    const { renderArticle } = await import("../lib/cc-news/editor");
+    const sample =
+      "# Week 1 · Jan 1, 2026\n\n> Test perex.\n\n" +
+      '<div className="digest-feature"><div className="digest-feature-header">' +
+      '<span className="digest-feature-title">Add safe mode</span>' +
+      '<span className="digest-feature-pill">v1.0.0</span></div>' +
+      '<p className="digest-feature-lede">Start Claude Code with safe mode to disable all customizations.</p></div>';
+    const { markdown, usedLlm } = await renderArticle(sample, c.env);
+    return c.json({ ok: true, usedLlm, ms: Date.now() - started, sample: markdown.slice(0, 400) });
+  } catch (err) {
+    return c.json({ ok: false, ms: Date.now() - started, error: (err as Error)?.message ?? String(err) });
+  }
+});
+
+// GET varianta triggeru — spustitelná přímo z adresního řádku prohlížeče (kde
+// session cookie funguje). Stejná logika jako POST; sdílí runCcNewsTrigger.
+admin.get("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
+admin.post("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
+
+async function runCcNewsTrigger(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const db = drizzle(c.env.DB);
   try {
     const { detectLatest, defaultFetchers } = await import("../lib/cc-news/detect");
-    const { triggerCcNewsApproval } = await import("../lib/cc-news/pipeline");
+    const { enqueueCcNewsItem } = await import("../queue");
     const now = new Date();
     // ?force=1 vynutí znovuodeslání i pro vydání, kterému už e-mail odešel.
     const force = c.req.query("force") === "1";
 
+    // Detekce je rychlá (RSS + hash). Samotné zpracování (LLM přepis ~40–80 s
+    // + odeslání) NESMÍ běžet v HTTP requestu — prohlížeč/CF by ho utnul. Proto
+    // jen zařadíme do fronty s manualTrigger a okamžitě odpovíme; konzument
+    // (delší časový limit) zpracuje LLM i odeslání na pozadí.
     const outcome = await detectLatest(db, defaultFetchers(), now);
     if (outcome.kind === "empty") {
       return c.redirect(`/admin?ccNews=${encodeURIComponent("Feed neobsahuje žádný týdenní digest — nic k odeslání.")}`);
     }
 
-    const result = await triggerCcNewsApproval(
-      db,
-      c.env,
-      { itemId: outcome.itemId, sourceId: outcome.sourceId },
-      now,
-      undefined,
-      { force }
-    );
+    await enqueueCcNewsItem(c.env, outcome.itemId, outcome.sourceId, {
+      manualTrigger: true,
+      force,
+    });
 
-    let summary: string;
-    if ("skipped" in result && result.skipped) {
-      summary =
-        `Schvalovací e-mail už byl odeslán ${result.approvalEmailSentAt.toLocaleString("cs-CZ")} ` +
-        `(${outcome.sourceId}). Nic se neposlalo. Pro vynucení použij force.`;
-    } else if (result.sent) {
-      summary = `Schvalovací e-mail odeslán (${outcome.kind}, ${outcome.sourceId}). Příjemci: ${result.email.to.join(", ")}.`;
-    } else {
-      summary = `Detekce OK (${outcome.kind}, ${outcome.sourceId}), ale odeslání e-mailu SELHALO — zkontroluj RESEND_API_KEY.`;
-    }
+    const summary =
+      `Zpracování spuštěno na pozadí (${outcome.kind}, ${outcome.sourceId}). ` +
+      `Překlad přes LLM trvá ~1 minutu; schvalovací e-mail dorazí poté. ` +
+      `Stav uvidíš v sekci Newsletter (sloupec „Schvalovací e-mail").`;
     return c.redirect(`/admin?ccNews=${encodeURIComponent(summary)}`);
   } catch (err) {
-    return c.redirect(`/admin?ccNews=${encodeURIComponent("chyba: " + (err as Error).message)}`);
+    const msg = (err as Error)?.message ?? String(err);
+    console.error("[cc-news] trigger selhal:", msg, (err as Error)?.stack);
+    return c.redirect(`/admin?ccNews=${encodeURIComponent("chyba: " + msg)}`);
   }
-});
+}
 
 // ─── Newsletter „Novinky v Claude Code" — admin stránka ───────────
 //

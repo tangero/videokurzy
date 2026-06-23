@@ -502,7 +502,7 @@ export const VerifySuccess: FC<{ email: string }> = ({ email }) => (
   <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-4" role="status" aria-live="polite">
     <h3 class="font-semibold text-emerald-900 mb-1">Platba přijata!</h3>
     <p class="text-sm text-emerald-900 mb-3">Roční přístup byl aktivován. Přihlaste se magic linkem.</p>
-    <a href={`/login?email=${encodeURIComponent(email)}`} class="inline-block bg-emerald-700 text-white font-semibold px-6 py-2 rounded-lg hover:bg-emerald-800 text-sm min-h-[44px]">
+    <a href={`/login?email=${encodeURIComponent(email)}`} class="btn-on-dark no-underline inline-block bg-emerald-700 text-white font-semibold px-6 py-2 rounded-lg hover:bg-emerald-800 text-sm min-h-[44px]">
       Přihlásit se
     </a>
   </div>

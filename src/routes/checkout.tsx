@@ -699,7 +699,7 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
         <section class="max-w-md mx-auto px-4 py-16 text-center">
           <h1 class="text-2xl font-bold mb-4">Objednávka již není aktivní</h1>
           <p class="text-gray-600 mb-6">Stav: {p.status === "expired" ? "propadla" : "refundována"}. Vytvořte novou objednávku.</p>
-          <a href={p.type === "organization" ? "/checkout/organization" : "/checkout/individual"} class="inline-block bg-indigo-600 text-white px-6 py-3 rounded-lg">Nová objednávka</a>
+          <a href={p.type === "organization" ? "/checkout/organization" : "/checkout/individual"} class="btn-on-dark no-underline inline-block bg-indigo-600 text-white px-6 py-3 rounded-lg">Nová objednávka</a>
         </section>
       </Layout>,
       410

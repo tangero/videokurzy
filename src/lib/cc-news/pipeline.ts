@@ -124,12 +124,26 @@ export async function triggerCcNewsApproval(
       { to: prepared.email.to, subject: prepared.email.subject, html: prepared.email.html }
     ));
 
-  // Zaznamenej úspěšné odeslání pro idempotenci a zobrazení v adminu.
+  // Zaznamenej úspěšné odeslání pro idempotenci a zobrazení v adminu. Stamp se
+  // dělá AŽ po odeslání (před ním ještě nevíme, zda e-mail prošel), takže je tu
+  // okno: e-mail odešel, ale stamp selže. KRITICKÉ: tuhle chybu NEpropagujeme —
+  // kdyby konzument fronty zprávu retryoval, triggerCcNewsApproval by (s prázdným
+  // sentAt nebo force) poslal DRUHÝ e-mail. Ztráta evidence o odeslání je menší
+  // zlo než duplicitní e-mail; nekonzistenci pozná admin (e-mail přišel, sloupec
+  // prázdný) a může dořešit ručně. Chybu hlasitě zalogujeme.
   if (sent) {
-    await db
-      .update(ccNewsItem)
-      .set({ approvalEmailSentAt: now })
-      .where(eq(ccNewsItem.id, ref.itemId));
+    try {
+      await db
+        .update(ccNewsItem)
+        .set({ approvalEmailSentAt: now })
+        .where(eq(ccNewsItem.id, ref.itemId));
+    } catch (err) {
+      console.error(
+        `[cc-news] e-mail ODESLÁN, ale zápis approvalEmailSentAt selhal pro ${ref.itemId} ` +
+          `— NEretryuji (bráním duplicitě):`,
+        (err as Error)?.message,
+      );
+    }
   }
 
   return { ...prepared, mode: sent ? "live" : prepared.mode, sent };

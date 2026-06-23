@@ -76,6 +76,11 @@ h1, h2, h3, h4 {
 h1 { font-weight: 700; letter-spacing: -0.02em; }
 a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 a:hover { color: var(--accent-2); }
+/* Odkaz stylovaný jako tlačítko na tmavém pozadí. Globální `a { color: var(--accent) }`
+   (nevrstvené pravidlo) by jinak přebilo Tailwind `text-white` → zelený nečitelný
+   text. Tahle třída specificitou přebije `a` zpět na bílou. Použij místo inline
+   style="color:#fff" na <a> tlačítkách (viz admin). */
+a.btn-on-dark, a.btn-on-dark:hover { color: #fff; }
 button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
 input, textarea, select { font-family: inherit; font-size: inherit; color: inherit; }
 

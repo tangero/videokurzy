@@ -29,19 +29,27 @@ interface WebhookMessage {
 export interface CcNewsDetectedData {
   itemId: string;
   sourceId: string;
+  /** Ruční admin trigger: vynutit odeslání schvalovacího e-mailu (ne jen dry-run). */
+  manualTrigger?: boolean;
+  /** Obejít idempotenci (přegenerovat i když approvalEmailSentAt už je). */
+  force?: boolean;
 }
 
 /**
  * Zařadí nově detekovaný / změněný whats-new digest do fronty pro navazující
  * redakční zpracování (W-004). Používá stávající WEBHOOK_QUEUE (vzor dle B-003);
  * žádný nový binding ani poskytovatel. Volá se jen pro outcome new/changed.
+ * Volitelný `opts` přidá příznaky ručního triggeru (vynucené odeslání e-mailu),
+ * který kvůli LLM překladu (desítky sekund) MUSÍ běžet na pozadí, ne v HTTP
+ * requestu — jinak ho prohlížeč/CF utne timeoutem.
  */
 export async function enqueueCcNewsItem(
   env: Env,
   itemId: string,
-  sourceId: string
+  sourceId: string,
+  opts: { manualTrigger?: boolean; force?: boolean } = {}
 ): Promise<void> {
-  const data: CcNewsDetectedData = { itemId, sourceId };
+  const data: CcNewsDetectedData = { itemId, sourceId, ...opts };
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.detected", data });
 }
 
@@ -455,13 +463,46 @@ async function handleCcNewsDetected(
     return;
   }
 
+  const ref = { itemId: data.itemId, sourceId: data.sourceId };
+  const now = new Date();
+
+  // Ruční admin trigger: vynutit odeslání schvalovacího e-mailu (i mimo live
+  // brány). Běží TADY na pozadí, protože LLM přepis trvá desítky sekund a v HTTP
+  // requestu by ho prohlížeč/CF utnul timeoutem. Konzument fronty má delší limit.
+  //
+  // ZÁMĚRNĚ NEretryujeme (chybu spolkneme → ack): odeslání schvalovacího e-mailu
+  // NENÍ idempotentní napříč pokusy (triggerCcNewsApproval pošle a teprve pak
+  // stampne approvalEmailSentAt; force navíc guard obchází). Auto-retry fronty by
+  // posílal DUPLICITNÍ e-maily. Selhání se zaloguje; admin pozná z prázdného
+  // sloupce „Schvalovací e-mail" v /admin/newsletter, že job neproběhl, a může
+  // ho spustit znovu. (Cron cesta níže naopak retry CHCE — je idempotentní.)
+  if (data.manualTrigger) {
+    try {
+      const { triggerCcNewsApproval } = await import("./lib/cc-news/pipeline");
+      const result = await triggerCcNewsApproval(db, env, ref, now, undefined, {
+        force: data.force === true,
+      });
+      if ("skipped" in result && result.skipped) {
+        console.log(`[queue] cc-news manuální trigger: item=${data.itemId} SKIPPED (už odesláno)`);
+      } else {
+        console.log(
+          `[queue] cc-news manuální trigger: item=${data.itemId} llm=${result.usedLlm} ` +
+            `mode=${result.mode} sent=${result.sent}`
+        );
+      }
+    } catch (err) {
+      // NEpropagujeme → handleQueue zprávu ack-ne (žádný retry, žádná duplicita).
+      console.error(
+        `[queue] cc-news manuální trigger SELHAL pro item=${data.itemId} ` +
+          `(NEretryuji kvůli riziku duplicitního e-mailu):`,
+        (err as Error)?.message,
+      );
+    }
+    return;
+  }
+
   const { processCcNewsItem } = await import("./lib/cc-news/pipeline");
-  const result = await processCcNewsItem(
-    db,
-    env,
-    { itemId: data.itemId, sourceId: data.sourceId },
-    new Date()
-  );
+  const result = await processCcNewsItem(db, env, ref, now);
   // mode=live znamená, že schvalovací e-mail reálně odešel (za oběma branami);
   // mode=dry-run = jen připraven a zalogován. Přechodné chyby (fetch/LLM výpadek)
   // nechytáme — ať se zpráva retryuje konzumentem fronty.

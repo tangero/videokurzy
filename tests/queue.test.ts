@@ -7,6 +7,7 @@ import {
   handleQueue,
   handleDlq,
   issueFakturoidInvoiceForTest,
+  enqueueCcNewsItem,
 } from "../src/queue";
 
 describe("queue Fakturoid idempotence", () => {
@@ -236,6 +237,62 @@ describe("handleDlq — dead-letter queue", () => {
     expect(sentBody.html).toContain("&lt;script&gt;");
 
     fetchSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+});
+
+describe("enqueueCcNewsItem — payload pro frontu", () => {
+  it("bez opts: jen itemId + sourceId (cron cesta)", async () => {
+    const sent: unknown[] = [];
+    const fakeEnv = { WEBHOOK_QUEUE: { send: async (m: unknown) => { sent.push(m); } } } as never;
+    await enqueueCcNewsItem(fakeEnv, "item-1", "/docs/en/whats-new/2026-w24");
+    expect(sent).toEqual([
+      { type: "cc-news.detected", data: { itemId: "item-1", sourceId: "/docs/en/whats-new/2026-w24" } },
+    ]);
+  });
+
+  it("s manualTrigger+force: příznaky se propíšou do payloadu (ruční trigger na pozadí)", async () => {
+    const sent: any[] = [];
+    const fakeEnv = { WEBHOOK_QUEUE: { send: async (m: unknown) => { sent.push(m); } } } as never;
+    await enqueueCcNewsItem(fakeEnv, "item-1", "/docs/en/whats-new/2026-w24", {
+      manualTrigger: true,
+      force: true,
+    });
+    expect(sent[0].data).toEqual({
+      itemId: "item-1",
+      sourceId: "/docs/en/whats-new/2026-w24",
+      manualTrigger: true,
+      force: true,
+    });
+  });
+
+  it("manuální trigger při SELHÁNÍ ack-uje (NEretryuje) — brání duplicitě e-mailu", async () => {
+    // Zpracování manuálního triggeru reálně volá síť (fetch detailu digestu),
+    // což v test env selže → triggerCcNewsApproval hodí. Konzument to MUSÍ
+    // spolknout a ack-nout, ne retry (retry by poslal duplicitní e-mail).
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    await handleQueue(
+      {
+        messages: [
+          {
+            body: {
+              type: "cc-news.detected",
+              data: { itemId: "item-x", sourceId: "/docs/en/whats-new/2099-w99", manualTrigger: true, force: true },
+            },
+            ack,
+            retry,
+          },
+        ],
+      } as never,
+      env as never,
+    );
+
+    // Klíčové: ack ano, retry NE — i když zpracování selhalo.
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 });
