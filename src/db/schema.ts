@@ -266,6 +266,10 @@ export const ccNewsItem = sqliteTable("cc_news_item", {
   // Úvodník — markdown osobní komentář redaktora vkládaný POUZE do rozesílaného
   // newsletteru (ne na web /novinky-cc). Edituje se v adminu /admin/newsletter.
   editorialMarkdown: text("editorialMarkdown"),
+  // Kdy byl naposledy odeslán schvalovací e-mail. Idempotence ručního triggeru
+  // (neposlat omylem 2×) + zobrazení v adminu. Re-edit digestu (changed) ho
+  // vynuluje, ať jde poslat e-mail k nové verzi.
+  approvalEmailSentAt: integer("approvalEmailSentAt", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   publishedAt: integer("publishedAt", { mode: "timestamp" }),
 });

@@ -230,9 +230,10 @@ export async function detectLatest(
       if (row.pendingContentHash === contentHash || row.contentHash === contentHash) {
         return { kind: "unchanged", sourceId: item.sourceId, itemId: row.id };
       }
+      // Nový obsah → starý schvalovací e-mail neplatí; povol nové odeslání.
       await db
         .update(ccNewsItem)
-        .set({ pendingContentHash: contentHash })
+        .set({ pendingContentHash: contentHash, approvalEmailSentAt: null })
         .where(eq(ccNewsItem.id, row.id));
       return { kind: "changed", sourceId: item.sourceId, itemId: row.id };
     }
@@ -248,6 +249,8 @@ export async function detectLatest(
         weekLabel: item.weekLabel,
         versionRange: item.versionRange,
         status: "draft",
+        // Nový obsah → starý schvalovací e-mail neplatí; povol nové odeslání.
+        approvalEmailSentAt: null,
       })
       .where(eq(ccNewsItem.id, row.id));
     return { kind: "changed", sourceId: item.sourceId, itemId: row.id };

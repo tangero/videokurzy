@@ -130,17 +130,23 @@ describe("triggerCcNewsApproval — ruční trigger neduplikuje e-mail", () => {
     globalThis.fetch = fetchSpy;
   });
 
-  it("dry-run brány: trigger odešle PRÁVĚ jednou (vynucené odeslání)", async () => {
+  const envWith = (extra: Record<string, unknown>) =>
+    ({ ...(env as unknown as Record<string, unknown>), ...extra }) as never;
+
+  it("dry-run brány: trigger odešle PRÁVĚ jednou a zapíše approvalEmailSentAt", async () => {
     const db = drizzle(env.DB);
     const result = await triggerCcNewsApproval(
       db,
-      { ...(env as unknown as Record<string, unknown>), RESEND_API_KEY: "re_test" } as never,
+      envWith({ RESEND_API_KEY: "re_test" }),
       { itemId: "item-1", sourceId: "/docs/en/whats-new/2026-w24" },
       NOW,
       fetchers(DIGEST)
     );
-    expect(result.sent).toBe(true);
+    expect("sent" in result && result.sent).toBe(true);
     expect(resendCalls).toBe(1);
+
+    const rows = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "item-1"));
+    expect(rows[0].approvalEmailSentAt).toBeTruthy();
   });
 
   it("live brány zapnuté: trigger NEodešle podruhé (prepareDraftAndApproval už poslala)", async () => {
@@ -149,13 +155,36 @@ describe("triggerCcNewsApproval — ruční trigger neduplikuje e-mail", () => {
     await db.insert(siteConfig).values({ key: CC_NEWS_LIVE_SEND_KEY, value: "true" });
     const result = await triggerCcNewsApproval(
       db,
-      { ...(env as unknown as Record<string, unknown>), CC_NEWS_DRY_RUN: "0", RESEND_API_KEY: "re_test" } as never,
+      envWith({ CC_NEWS_DRY_RUN: "0", RESEND_API_KEY: "re_test" }),
       { itemId: "item-1", sourceId: "/docs/en/whats-new/2026-w24" },
       NOW,
       fetchers(DIGEST)
     );
-    expect(result.sent).toBe(true);
+    expect("sent" in result && result.sent).toBe(true);
     // Klíčové: jen JEDNO odeslání, ne dvě (regrese, kterou našel Greptile).
     expect(resendCalls).toBe(1);
+  });
+
+  it("idempotence: druhý trigger NEodešle (skipped), force=true ho vynutí", async () => {
+    const db = drizzle(env.DB);
+    const ref = { itemId: "item-1", sourceId: "/docs/en/whats-new/2026-w24" };
+
+    // 1. trigger → odešle
+    await triggerCcNewsApproval(db, envWith({ RESEND_API_KEY: "re_test" }), ref, NOW, fetchers(DIGEST));
+    expect(resendCalls).toBe(1);
+
+    // 2. trigger (bez force) → skipped, žádné další odeslání
+    const second = await triggerCcNewsApproval(
+      db, envWith({ RESEND_API_KEY: "re_test" }), ref, NOW, fetchers(DIGEST),
+    );
+    expect("skipped" in second && second.skipped).toBe(true);
+    expect(resendCalls).toBe(1);
+
+    // 3. trigger s force → znovu odešle
+    const third = await triggerCcNewsApproval(
+      db, envWith({ RESEND_API_KEY: "re_test" }), ref, NOW, fetchers(DIGEST), { force: true },
+    );
+    expect("sent" in third && third.sent).toBe(true);
+    expect(resendCalls).toBe(2);
   });
 });

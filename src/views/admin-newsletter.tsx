@@ -10,6 +10,7 @@ export interface NewsletterItem {
   status: string; // draft | approved | published
   slug: string | null;
   publishedAt: number | null; // epoch ms
+  approvalEmailSentAt: number | null; // epoch ms — kdy odešel schvalovací e-mail
   hasEditorial: boolean;
 }
 
@@ -48,6 +49,17 @@ const fmtDate = (ms: number | null): string =>
       })
     : "—";
 
+const fmtDateTime = (ms: number | null): string =>
+  ms
+    ? new Date(ms).toLocaleString("cs-CZ", {
+        day: "numeric",
+        month: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "—";
+
 export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, selected }) => (
   <Layout title="Newsletter" user={user}>
     <section class="max-w-5xl mx-auto px-4 py-8">
@@ -69,6 +81,7 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
               <th class="px-4 py-2 text-left">Verze</th>
               <th class="px-4 py-2 text-left">Stav</th>
               <th class="px-4 py-2 text-left">Úvodník</th>
+              <th class="px-4 py-2 text-left">Schvalovací e-mail</th>
               <th class="px-4 py-2 text-left">Publikováno</th>
               <th class="px-4 py-2 text-right">Akce</th>
             </tr>
@@ -76,7 +89,7 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colspan={6} class="px-4 py-6 text-center text-gray-500">
+                <td colspan={7} class="px-4 py-6 text-center text-gray-500">
                   Zatím žádné vydání. Vydání přibyde po detekci nového digestu
                   (cron, nebo tlačítko „Poslat ke schválení" na Přehledu).
                 </td>
@@ -99,6 +112,13 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                         <span class="text-green-700 text-xs">✓ má</span>
                       ) : (
                         <span class="text-gray-400 text-xs">—</span>
+                      )}
+                    </td>
+                    <td class="px-4 py-2 text-xs text-gray-500">
+                      {it.approvalEmailSentAt ? (
+                        <span class="text-green-700">✓ {fmtDateTime(it.approvalEmailSentAt)}</span>
+                      ) : (
+                        <span class="text-gray-400">neodesláno</span>
                       )}
                     </td>
                     <td class="px-4 py-2 text-gray-500">{fmtDate(it.publishedAt)}</td>
@@ -195,9 +215,13 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                 ukáže jen úvodník. Tělo vznikne při zpracování konceptu.
               </p>
             )}
+            {/* sandbox="" = žádné skripty/formuláře/navigace. Náhled je statický
+                HTML newsletteru (markdown z externího digestu) — hloubková obrana
+                proti případnému aktivnímu obsahu i v admin-only kontextu. */}
             <iframe
               id="preview-frame"
               title="Náhled newsletteru"
+              sandbox=""
               class="w-full rounded border border-gray-200 bg-white"
               style="min-height: 520px;"
             ></iframe>
