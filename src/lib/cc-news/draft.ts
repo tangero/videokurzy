@@ -15,7 +15,6 @@ import type { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { ccNewsItem } from "../../db/schema";
 import { ccNewsApprovalHtml, sendEmail } from "../email";
-import { ADMIN_EMAILS } from "../../config/admin";
 import { isCcNewsLiveSend } from "./settings";
 import {
   APPROVAL_TOKEN_TTL_MS,
@@ -102,8 +101,11 @@ export async function prepareDraftAndApproval(
     approveUrl,
     editUrl,
   });
+  // Příjemci se berou z /admin/settings (cc_news_approval_emails), s fallbackem
+  // na ADMIN_EMAILS uvnitř getCcNewsApprovalEmails.
+  const { getCcNewsApprovalEmails } = await import("./settings");
   const email = {
-    to: ADMIN_EMAILS.slice(),
+    to: await getCcNewsApprovalEmails(db),
     subject: `Ke schválení: Novinky v Claude Code — ${meta.weekLabel}`,
     html,
   };

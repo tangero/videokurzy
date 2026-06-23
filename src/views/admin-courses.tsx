@@ -1,3 +1,5 @@
+import { ADMIN_EMAILS } from "../config/admin";
+
 // ─── Types ────────────────────────────────────────────────────────
 
 type Course = {
@@ -962,6 +964,7 @@ export function AdminSettingsForm({
   benefitsOrganization,
   activeBank,
   ccNewsLiveSend,
+  ccNewsApprovalEmails,
   discount,
   slotsUsed,
   saved,
@@ -972,6 +975,7 @@ export function AdminSettingsForm({
   benefitsOrganization: string[];
   activeBank: "fio" | "creditas";
   ccNewsLiveSend: boolean;
+  ccNewsApprovalEmails: string;
   discount: DiscountSettingsView;
   slotsUsed: number;
   saved?: boolean;
@@ -1042,6 +1046,24 @@ export function AdminSettingsForm({
             />
             <span class="text-sm text-gray-800">Povolit reálné odesílání Novinek v Claude Code</span>
           </label>
+
+          <div class="mt-4">
+            <label class="block text-sm font-medium text-gray-800 mb-1">
+              Příjemci schvalovacího e-mailu
+            </label>
+            <p class="text-xs text-gray-600 mb-2">
+              Jeden e-mail na řádek (nebo oddělené čárkou). Sem chodí e-mail
+              „Ke schválení: Novinky v Claude Code". Když necháte prázdné, použijí
+              se výchozí admin adresy:{" "}
+              <span class="font-mono">{ADMIN_EMAILS.join(", ")}</span>.
+            </p>
+            <textarea
+              name="cc_news_approval_emails"
+              rows={3}
+              placeholder={ADMIN_EMAILS.join("\n")}
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500"
+            >{ccNewsApprovalEmails}</textarea>
+          </div>
         </div>
 
         {/* Ceny */}

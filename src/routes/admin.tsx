@@ -2422,6 +2422,8 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
     benefitsOrganization: JSON.parse(cfg.benefits_organization ?? "[]") as string[],
     activeBank: (cfg.active_bank === "creditas" ? "creditas" : "fio") as "fio" | "creditas",
     ccNewsLiveSend: cfg.cc_news_live_send === "true",
+    // Prázdné = fallback na ADMIN_EMAILS (řeší getCcNewsApprovalEmails za běhu).
+    ccNewsApprovalEmails: cfg.cc_news_approval_emails ?? "",
     discount: {
       active: cfg.discount_active === "true",
       percent: parseInt(cfg.discount_percent ?? "0", 10),
@@ -2466,10 +2468,17 @@ admin.post("/admin/settings", async (c) => {
 
   const activeBank = body.active_bank === "creditas" ? "creditas" : "fio";
   const ccNewsLiveSend = body.cc_news_live_send === "on";
+  // Příjemci schvalovacího e-mailu — normalizuj na čistý seznam (po řádcích),
+  // zahoď neplatné tvary. Prázdné = fallback na ADMIN_EMAILS za běhu.
+  const { parseApprovalEmails } = await import("../lib/cc-news/settings");
+  const ccNewsApprovalEmails = parseApprovalEmails(
+    String(body.cc_news_approval_emails ?? ""),
+  ).join("\n");
 
   const updates: Array<[string, string]> = [
     ["active_bank", activeBank],
     ["cc_news_live_send", ccNewsLiveSend ? "true" : "false"],
+    ["cc_news_approval_emails", ccNewsApprovalEmails],
     ["price_individual", String(priceIndividual)],
     ["price_organization", String(priceOrganization)],
     ["benefits_individual", benefitsIndividual],
