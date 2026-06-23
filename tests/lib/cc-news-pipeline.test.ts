@@ -163,6 +163,9 @@ describe("triggerCcNewsApproval — ruční trigger neduplikuje e-mail", () => {
     expect("sent" in result && result.sent).toBe(true);
     // Klíčové: jen JEDNO odeslání, ne dvě (regrese, kterou našel Greptile).
     expect(resendCalls).toBe(1);
+    // I v live režimu se zapíše approvalEmailSentAt (idempotence dalšího triggeru).
+    const rows = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "item-1"));
+    expect(rows[0].approvalEmailSentAt).toBeTruthy();
   });
 
   it("idempotence: druhý trigger NEodešle (skipped), force=true ho vynutí", async () => {
