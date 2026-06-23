@@ -34,13 +34,22 @@ export function parseFrontMatter(md: string): { title: string | null; excerpt: s
   const fm = md.match(/^﻿?\s*---\n([\s\S]*?)\n---/)?.[1];
   if (!fm) return { title: null, excerpt: null };
 
+  // Klíče jsou fixní (žádná interpolace uživatelského vstupu do regexu).
   const pick = (key: string): string | null => {
-    // Klíč na začátku řádku, hodnota do konce řádku; odstraň obalující uvozovky.
-    const m = fm.match(new RegExp(`^${key}:\\s*(.+?)\\s*$`, "m"));
+    // Klíč na začátku řádku, hodnota do konce řádku.
+    const m = fm.match(new RegExp(`^${key}:[ \\t]*(.+?)[ \\t]*$`, "m"));
     if (!m) return null;
     const raw = m[1].trim();
-    const unquoted = raw.replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1");
-    return unquoted.trim() || null;
+    // Dvojité uvozovky: strhni obal a unescapuj YAML `\"` a `\\` (jinak by se
+    // hodnota s vnitřními uvozovkami zmršila). Jednoduché uvozovky: jen obal.
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+      const inner = raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+      return inner.trim() || null;
+    }
+    if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
+      return raw.slice(1, -1).trim() || null;
+    }
+    return raw || null;
   };
 
   return { title: pick("title"), excerpt: pick("post_excerpt") };
@@ -87,15 +96,23 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
     .orderBy(desc(ccNewsItem.publishedAt));
 
   // Skutečný nadpis/perex jsou ve front matteru markdownu (KV), ne v DB. Načteme
-  // je per vydání PARALELNĚ (Promise.all, ne sériově). Fallback na weekLabel,
-  // kdyby title chyběl. Při desítkách vydání je extra KV čtení v pořádku.
+  // je per vydání PARALELNĚ (Promise.all, ne sériově). Selhání JEDNOHO KV čtení
+  // (transientní chyba) NESMÍ shodit celou stránku — odchytíme ho per-item a
+  // degradujeme na weekLabel; ostatní vydání se zobrazí normálně.
+  // (TODO: při růstu počtu vydání denormalizovat title/excerpt do cc_news_item
+  // při publikaci a vyhnout se KV čtení na seznamu úplně.)
   const items = (
     await Promise.all(
       rows.map(async (r) => {
         const slug = slugFromPath(r.articlePath);
         if (!slug) return null;
-        const md = await c.env.KV.get(publishedKvKey(r.id));
-        const fm = md ? parseFrontMatter(md) : { title: null, excerpt: null };
+        let fm: { title: string | null; excerpt: string | null } = { title: null, excerpt: null };
+        try {
+          const md = await c.env.KV.get(publishedKvKey(r.id));
+          if (md) fm = parseFrontMatter(md);
+        } catch (err) {
+          console.error(`[cc-news] KV čtení selhalo pro ${r.id}, fallback na weekLabel:`, (err as Error)?.message);
+        }
         return {
           slug,
           title: fm.title ?? r.weekLabel ?? "Novinky",

@@ -104,7 +104,7 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[] }> =
             >
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
                 <span style="font-weight: 600; font-size: 1rem">{r.title}</span>
-                <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted)">
+                <span style="font-size: 0.75rem; color: var(--muted); white-space: nowrap">
                   {r.kind} ↗
                 </span>
               </div>

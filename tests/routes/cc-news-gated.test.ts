@@ -47,6 +47,12 @@ describe("parseFrontMatter", () => {
     expect(excerpt).toBe("Holý perex");
   });
 
+  it("nezmrší vnitřní uvozovky (YAML escape \\\")", () => {
+    // YAML escapuje vnitřní dvojité uvozovky jako \" — po strhnutí obalu unescapuj.
+    const md = '---\ntitle: "\\"Claude Code\\" vs \\"Cursor\\""\n---\nTělo';
+    expect(parseFrontMatter(md).title).toBe('"Claude Code" vs "Cursor"');
+  });
+
   it("bez front matteru / klíče → null", () => {
     expect(parseFrontMatter("# Nadpis\ntělo")).toEqual({ title: null, excerpt: null });
     const { title, excerpt } = parseFrontMatter("---\nauthor: X\n---\ntělo");

@@ -962,8 +962,21 @@ admin.get("/admin/stats", async (c) => {
   const videoStatsError = c.req.query("videoStatsError") || undefined;
 
   // Přehled běhů Resend automatizací — vlastní try/catch uvnitř, při chybě/výpadku
-  // vrací null a sekce se v UI jen vynechá (zbytek statistik jede dál).
-  const resendStats = await fetchResendAutomationStats(c.env.RESEND_API_KEY);
+  // vrací null a sekce se v UI jen vynechá (zbytek statistik jede dál). Cachujeme
+  // 5 min v KV: počty běhů jsou historické agregáty (ne real-time), takže se
+  // admin/stats nemusí při každém načtení blokovat na živém Resend API (N+1 fetch).
+  const RESEND_STATS_CACHE_KEY = "admin:resend-automation-stats";
+  let resendStats = await c.env.KV
+    .get(RESEND_STATS_CACHE_KEY, "json")
+    .catch(() => null) as Awaited<ReturnType<typeof fetchResendAutomationStats>>;
+  if (resendStats === null) {
+    resendStats = await fetchResendAutomationStats(c.env.RESEND_API_KEY);
+    if (resendStats) {
+      await c.env.KV.put(RESEND_STATS_CACHE_KEY, JSON.stringify(resendStats), {
+        expirationTtl: 300,
+      }).catch(() => {});
+    }
+  }
 
   return c.html(
     <AdminStatsPage
