@@ -13,6 +13,29 @@ export interface CcNewsListItem {
 }
 
 /**
+ * Doplňkové materiály ke Claude Code (externí, na vibecoding.cz). Statický
+ * seznam — odkazy dodal majitel webu, ne dynamický obsah. PDF/cheat-sheet se
+ * otevírají v nové záložce.
+ */
+const RESOURCES: Array<{ href: string; title: string; kind: string }> = [
+  {
+    href: "https://www.vibecoding.cz/cheat-sheet/claude-code?lang=cs",
+    title: "Cheat sheet — Claude Code",
+    kind: "Webová stránka",
+  },
+  {
+    href: "https://www.vibecoding.cz/download/claude-code-tahak.pdf",
+    title: "Tahák pro začátečníky v Claude Code",
+    kind: "PDF",
+  },
+  {
+    href: "https://www.vibecoding.cz/download/claude-code-pro-zacatecniky.pdf",
+    title: "Claude Code pro začátečníky (prezentace)",
+    kind: "PDF",
+  },
+];
+
+/**
  * Seznam publikovaných vydání „Novinky v Claude Code" v designu serveru.
  * Gated (řeší routa), takže Layout vždy dostane přihlášeného uživatele.
  */
@@ -56,6 +79,31 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[] }> =
           ))}
         </ul>
       )}
+
+      <h2 style="margin-top: 40px">Materiály ke stažení</h2>
+      <p style="color: var(--muted); margin-bottom: 16px">
+        Doplňkové materiály ke Claude Code na vibecoding.cz.
+      </p>
+      <ul class="cc-news-list">
+        {RESOURCES.map((r) => (
+          <li>
+            <a
+              href={r.href}
+              target="_blank"
+              rel="noreferrer"
+              class="card cc-news-card"
+              style="display: block; text-decoration: none; color: inherit"
+            >
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                <span style="font-weight: 600; font-size: 1rem">{r.title}</span>
+                <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted)">
+                  {r.kind} ↗
+                </span>
+              </div>
+            </a>
+          </li>
+        ))}
+      </ul>
     </section>
   </Layout>
 );

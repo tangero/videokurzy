@@ -38,6 +38,12 @@ describe("CcNewsListPage — design serveru", () => {
     expect(html).toContain("cc-news-list");
     expect(html).toContain("<ul");
     expect(html).toContain("<li>");
+    // materiály ke stažení (cheat-sheet + 2 PDF), externí, nová záložka
+    expect(html).toContain("Materiály ke stažení");
+    expect(html).toContain("https://www.vibecoding.cz/cheat-sheet/claude-code?lang=cs");
+    expect(html).toContain("https://www.vibecoding.cz/download/claude-code-tahak.pdf");
+    expect(html).toContain("https://www.vibecoding.cz/download/claude-code-pro-zacatecniky.pdf");
+    expect(html).toContain('target="_blank"');
   });
 
   it("prázdný seznam ukáže hlášku, ne kartu", () => {
