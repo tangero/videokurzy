@@ -88,7 +88,9 @@ export function AdminCoursesList({ courses }: { courses: Course[] }) {
         <h2 class="text-lg font-semibold">Kurzy</h2>
         <a
           href="/admin/courses/new"
-          class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
+          // Viz „+ Nový modul" níže: inline barva kvůli globálnímu a-pravidlu.
+          style="color: #fff"
+          class="bg-indigo-600 px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
         >
           + Nový kurz
         </a>
@@ -228,7 +230,11 @@ export function AdminCourseDetail({
         <h2 class="text-lg font-semibold">Moduly</h2>
         <a
           href={`/admin/courses/${course.id}/modules/new`}
-          class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
+          // Barva textu inline: globální `a { color: var(--accent) }` (Tailwind v4,
+          // nevrstvené pravidlo) by jinak přebilo `text-white` a text by byl zelený
+          // na fialovém pozadí (nečitelné). Stejný workaround jako v AdminNav.
+          style="color: #fff"
+          class="bg-indigo-600 px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
         >
           + Nový modul
         </a>
