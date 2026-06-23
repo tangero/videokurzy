@@ -665,7 +665,7 @@ admin.get("/admin", async (c) => {
             <a href="/admin/users" class="text-sm text-indigo-600 hover:underline">
               všichni uživatelé →
             </a>
-            <a href="/admin/users/new" class="text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
+            <a href="/admin/users/new" class="btn-on-dark no-underline text-sm bg-gray-900 text-white px-3 py-2 rounded hover:bg-gray-700">
               Přidat uživatele
             </a>
           </div>
@@ -1759,21 +1759,23 @@ admin.post("/admin/api/fio/scan", async (c) => {
 // přepíše podle wrangler.toml). `?llm=1` navíc reálně zavolá OpenRouter z workeru
 // (platí se za 1 LLM volání ~$0.0001) a vrátí výsledek/chybu — izoluje, zda LLM
 // volání z WORKERU funguje (Workers fetch se chová jinak než Node.js, viz FIO 525).
+// GET = jen env stav (bezpečné, idempotentní — žádný side-effect ani náklad).
 admin.get("/admin/api/cc-news/diag", async (c) => {
-  const base = {
+  return c.json({
     CC_NEWS_LLM: c.env.CC_NEWS_LLM ?? null,
     llmEnabled: c.env.CC_NEWS_LLM === "1",
     hasOpenRouterKey: Boolean(c.env.OPENROUTER_API_KEY),
     openRouterKeyLen: c.env.OPENROUTER_API_KEY?.length ?? 0,
     model: c.env.CC_NEWS_LLM_MODEL ?? "anthropic/claude-sonnet-4.6 (default)",
     hasResendKey: Boolean(c.env.RESEND_API_KEY),
-  };
+  });
+});
 
-  // ?llm=1 → reálně zavolá OpenRouter z workeru (krátký prompt) a vrátí výsledek
-  // nebo chybu. Izoluje, zda LLM volání z WORKERU funguje (curl z Node.js může
-  // projít, kdežto Workers fetch padá — viz FIO 525). Rychlé, bez pipeline/e-mailu.
-  if (c.req.query("llm") !== "1") return c.json(base);
-
+// POST = reálně zavolá OpenRouter z workeru (krátký prompt) a vrátí výsledek/chybu.
+// Izoluje, zda LLM volání z WORKERU funguje (curl z Node.js může projít, kdežto
+// Workers fetch padá — viz FIO 525). ZÁMĚRNĚ POST: volání je PLACENÉ (~$0.0001),
+// nesmí ho spustit refresh/prefetch/bot na GET (GET má být bezpečný/idempotentní).
+admin.post("/admin/api/cc-news/diag/llm", async (c) => {
   const started = Date.now();
   try {
     const { renderArticle } = await import("../lib/cc-news/editor");
@@ -1784,15 +1786,9 @@ admin.get("/admin/api/cc-news/diag", async (c) => {
       '<span className="digest-feature-pill">v1.0.0</span></div>' +
       '<p className="digest-feature-lede">Start Claude Code with safe mode to disable all customizations.</p></div>';
     const { markdown, usedLlm } = await renderArticle(sample, c.env);
-    return c.json({
-      ...base,
-      llmTest: { ok: true, usedLlm, ms: Date.now() - started, sample: markdown.slice(0, 400) },
-    });
+    return c.json({ ok: true, usedLlm, ms: Date.now() - started, sample: markdown.slice(0, 400) });
   } catch (err) {
-    return c.json({
-      ...base,
-      llmTest: { ok: false, ms: Date.now() - started, error: (err as Error)?.message ?? String(err) },
-    });
+    return c.json({ ok: false, ms: Date.now() - started, error: (err as Error)?.message ?? String(err) });
   }
 });
 

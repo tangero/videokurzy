@@ -265,4 +265,34 @@ describe("enqueueCcNewsItem — payload pro frontu", () => {
       force: true,
     });
   });
+
+  it("manuální trigger při SELHÁNÍ ack-uje (NEretryuje) — brání duplicitě e-mailu", async () => {
+    // Zpracování manuálního triggeru reálně volá síť (fetch detailu digestu),
+    // což v test env selže → triggerCcNewsApproval hodí. Konzument to MUSÍ
+    // spolknout a ack-nout, ne retry (retry by poslal duplicitní e-mail).
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    await handleQueue(
+      {
+        messages: [
+          {
+            body: {
+              type: "cc-news.detected",
+              data: { itemId: "item-x", sourceId: "/docs/en/whats-new/2099-w99", manualTrigger: true, force: true },
+            },
+            ack,
+            retry,
+          },
+        ],
+      } as never,
+      env as never,
+    );
+
+    // Klíčové: ack ano, retry NE — i když zpracování selhalo.
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });

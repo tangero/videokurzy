@@ -68,8 +68,7 @@ export function AdminNav({ active }: { active: string }) {
       ))}
       <a
         href="/admin/users/new"
-        style="color: #fff"
-        class="sm:ml-auto px-4 py-2 rounded-lg text-sm font-medium no-underline transition-colors bg-emerald-700 hover:bg-emerald-800"
+        class="btn-on-dark sm:ml-auto px-4 py-2 rounded-lg text-sm font-medium no-underline transition-colors bg-emerald-700 hover:bg-emerald-800"
       >
         Přidat uživatele
       </a>
@@ -88,9 +87,7 @@ export function AdminCoursesList({ courses }: { courses: Course[] }) {
         <h2 class="text-lg font-semibold">Kurzy</h2>
         <a
           href="/admin/courses/new"
-          // Viz „+ Nový modul" níže: inline barva kvůli globálnímu a-pravidlu.
-          style="color: #fff"
-          class="bg-indigo-600 px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
+          class="btn-on-dark bg-indigo-600 px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
         >
           + Nový kurz
         </a>
@@ -230,11 +227,9 @@ export function AdminCourseDetail({
         <h2 class="text-lg font-semibold">Moduly</h2>
         <a
           href={`/admin/courses/${course.id}/modules/new`}
-          // Barva textu inline: globální `a { color: var(--accent) }` (Tailwind v4,
-          // nevrstvené pravidlo) by jinak přebilo `text-white` a text by byl zelený
-          // na fialovém pozadí (nečitelné). Stejný workaround jako v AdminNav.
-          style="color: #fff"
-          class="bg-indigo-600 px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
+          // .btn-on-dark vynutí bílý text — globální `a { color: var(--accent) }`
+          // (Tailwind v4, nevrstvené pravidlo) by jinak přebilo text na zelenou.
+          class="btn-on-dark bg-indigo-600 px-4 py-2 rounded-lg text-sm font-medium no-underline hover:bg-indigo-700"
         >
           + Nový modul
         </a>

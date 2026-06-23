@@ -469,17 +469,33 @@ async function handleCcNewsDetected(
   // Ruční admin trigger: vynutit odeslání schvalovacího e-mailu (i mimo live
   // brány). Běží TADY na pozadí, protože LLM přepis trvá desítky sekund a v HTTP
   // requestu by ho prohlížeč/CF utnul timeoutem. Konzument fronty má delší limit.
+  //
+  // ZÁMĚRNĚ NEretryujeme (chybu spolkneme → ack): odeslání schvalovacího e-mailu
+  // NENÍ idempotentní napříč pokusy (triggerCcNewsApproval pošle a teprve pak
+  // stampne approvalEmailSentAt; force navíc guard obchází). Auto-retry fronty by
+  // posílal DUPLICITNÍ e-maily. Selhání se zaloguje; admin pozná z prázdného
+  // sloupce „Schvalovací e-mail" v /admin/newsletter, že job neproběhl, a může
+  // ho spustit znovu. (Cron cesta níže naopak retry CHCE — je idempotentní.)
   if (data.manualTrigger) {
-    const { triggerCcNewsApproval } = await import("./lib/cc-news/pipeline");
-    const result = await triggerCcNewsApproval(db, env, ref, now, undefined, {
-      force: data.force === true,
-    });
-    if ("skipped" in result && result.skipped) {
-      console.log(`[queue] cc-news manuální trigger: item=${data.itemId} SKIPPED (už odesláno)`);
-    } else {
-      console.log(
-        `[queue] cc-news manuální trigger: item=${data.itemId} llm=${result.usedLlm} ` +
-          `mode=${result.mode} sent=${result.sent}`
+    try {
+      const { triggerCcNewsApproval } = await import("./lib/cc-news/pipeline");
+      const result = await triggerCcNewsApproval(db, env, ref, now, undefined, {
+        force: data.force === true,
+      });
+      if ("skipped" in result && result.skipped) {
+        console.log(`[queue] cc-news manuální trigger: item=${data.itemId} SKIPPED (už odesláno)`);
+      } else {
+        console.log(
+          `[queue] cc-news manuální trigger: item=${data.itemId} llm=${result.usedLlm} ` +
+            `mode=${result.mode} sent=${result.sent}`
+        );
+      }
+    } catch (err) {
+      // NEpropagujeme → handleQueue zprávu ack-ne (žádný retry, žádná duplicita).
+      console.error(
+        `[queue] cc-news manuální trigger SELHAL pro item=${data.itemId} ` +
+          `(NEretryuji kvůli riziku duplicitního e-mailu):`,
+        (err as Error)?.message,
       );
     }
     return;
