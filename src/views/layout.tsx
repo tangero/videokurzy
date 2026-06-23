@@ -4,6 +4,8 @@ interface LayoutProps {
   title?: string;
   description?: string;
   user?: { name: string | null; email: string } | null;
+  /** Gated/privátní stránky (jen pro platící) — vyřadit z indexu vyhledávačů. */
+  noindex?: boolean;
 }
 
 // Design tokens a komponentní CSS jsou v src/styles/input.css a minifikovány
@@ -27,6 +29,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
   title = "Videokurz Claude Code s Patrickem",
   description = "Naučte se vibe coding s Claude Code. 10 epizod, od nápadu po deployment.",
   user,
+  noindex,
   children,
 }) => (
   <html lang="cs">
@@ -35,6 +38,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>{title} | kurzy.vibecoding.cz</title>
       <meta name="description" content={description} />
+      {noindex && <meta name="robots" content="noindex" />}
       <meta property="og:title" content={title} />
       <meta property="og:description" content={description} />
       <meta property="og:type" content="website" />

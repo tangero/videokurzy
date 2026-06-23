@@ -6,6 +6,7 @@ import { approveItem, articleRepoPath, draftKvKey, publishedKvKey } from "../lib
 import { ccNewsItem } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { renderMarkdown, escapeHtml } from "../lib/markdown";
+import { CcNewsListPage, CcNewsArticlePage } from "../views/cc-news";
 import type { Env, Variables } from "../types";
 
 /** Slug z articlePath `src/content/novinky-cc/<slug>.md`. */
@@ -51,7 +52,7 @@ const pageShell = (title: string, body: string): string =>
   `<meta name="robots" content="noindex"><title>${escapeHtml(title)}</title></head>` +
   `<body><main>${body}</main></body></html>`;
 
-// Seznam publikovaných článků „Novinky v CC" — gated.
+// Seznam publikovaných článků „Novinky v CC" — gated, v designu serveru.
 ccNewsRoutes.get("/novinky-cc", async (c) => {
   const redirect = await gateOrRedirect(c);
   if (redirect) return redirect;
@@ -66,15 +67,24 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
   const items = rows
     .map((r) => {
       const slug = slugFromPath(r.articlePath);
-      const label = `${escapeHtml(r.weekLabel ?? "Novinky")}${r.versionRange ? ` (${escapeHtml(r.versionRange)})` : ""}`;
-      return slug ? `<li><a href="/novinky-cc/${encodeURIComponent(slug)}">${label}</a></li>` : "";
+      return slug
+        ? {
+            slug,
+            weekLabel: r.weekLabel ?? "Novinky",
+            versionRange: r.versionRange,
+            publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
+          }
+        : null;
     })
-    .filter(Boolean)
-    .join("");
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 
-  const body = `<h1>Novinky v Claude Code</h1>` +
-    (items ? `<ul>${items}</ul>` : `<p>Zatím žádný publikovaný článek.</p>`);
-  return c.html(pageShell("Novinky v Claude Code", body));
+  const user = c.get("user")!;
+  return c.html(
+    <CcNewsListPage
+      user={{ name: user.name ?? null, email: user.email }}
+      items={items}
+    />,
+  );
 });
 
 // Odhlášení z newsletteru (GDPR, W-007). Veřejné — chráněné jen podepsaným
@@ -124,8 +134,13 @@ ccNewsRoutes.get("/novinky-cc/:slug", async (c) => {
   const markdown = await c.env.KV.get(publishedKvKey(row.id));
   if (!markdown) return c.html(pageShell("Nenalezeno", "<p>Obsah článku není dostupný.</p>"), 404);
 
+  const user = c.get("user")!;
   return c.html(
-    pageShell(row.weekLabel ?? "Novinky v Claude Code", renderMarkdown(stripFrontMatter(markdown)))
+    <CcNewsArticlePage
+      user={{ name: user.name ?? null, email: user.email }}
+      title={row.weekLabel ?? "Novinky v Claude Code"}
+      articleHtml={renderMarkdown(stripFrontMatter(markdown))}
+    />,
   );
 });
 
