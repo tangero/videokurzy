@@ -185,7 +185,8 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 /* NOVINKY V CLAUDE CODE (gated sekce) */
 /* Karta-odkaz: signalizuj klikatelnost hoverem (jinak vypadá staticky). */
 .cc-news-card { transition: border-color .15s, box-shadow .15s, transform .15s; }
-.cc-news-card:hover { border-color: var(--accent); box-shadow: 0 10px 24px rgba(20,20,19,0.10); transform: translateY(-1px); }
+/* Hover i :focus-visible — klávesnicový uživatel dostane stejnou vizuální odezvu. */
+.cc-news-card:hover, .cc-news-card:focus-visible { border-color: var(--accent); box-shadow: 0 10px 24px rgba(20,20,19,0.10); transform: translateY(-1px); }
 /* Seznam vydání: zachovej list sémantiku (ul/li) pro čtečky, bez vizuálních odrážek. */
 .cc-news-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 /* Zpětný odkaz: zajisti touch target ≥ 44px (≥ pravidlo .impeccable.md). */
