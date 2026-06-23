@@ -16,6 +16,23 @@ export function slugFromPath(articlePath: string | null): string | null {
 }
 
 /**
+ * Porovnatelný klíč pro řazení vydání podle STÁŘÍ OBSAHU (ne podle `publishedAt`,
+ * který odráží jen kdy se článek vygeneroval — backfill starších týdnů má novější
+ * publishedAt než aktuální týden a rozhodil by pořadí).
+ *
+ * Klíč se odvozuje z kanonického `sourceId` `…/whats-new/<rok>-w<týden>`:
+ * `rok * 100 + týden`. Tím je řazení odolné vůči (a) zero-paddingu — `w9` < `w24`
+ * číselně, kdežto lexikograficky by „9" > „2"; (b) přechodu roku — `2026-w01` >
+ * `2025-w52`. Vyšší klíč = novější vydání. Neparsovatelný sourceId → -1 (spadne
+ * na konec, sekundární řazení dle publishedAt to dořeší).
+ */
+export function weekSortKey(sourceId: string | null): number {
+  const m = sourceId?.match(/(\d{4})-w(\d{1,2})$/i);
+  if (!m) return -1;
+  return parseInt(m[1], 10) * 100 + parseInt(m[2], 10);
+}
+
+/**
  * Odstraní YAML front matter (`---\n…\n---`) ze začátku markdownu. Front matter
  * patří do .md souboru v repu, ne do HTML zobrazení — bez stripnutí by se
  * čtenáři na detailu zobrazil syrový YAML blok jako text.
@@ -89,11 +106,21 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
   if (redirect) return redirect;
 
   const db = drizzle(c.env.DB);
-  const rows = await db
+  const published = await db
     .select()
     .from(ccNewsItem)
     .where(eq(ccNewsItem.status, "published"))
     .orderBy(desc(ccNewsItem.publishedAt));
+
+  // Řazení podle STÁŘÍ OBSAHU (rok+týden ze sourceId), ne podle publishedAt:
+  // backfill starších týdnů má novější publishedAt, takže by je vystrčil nahoru.
+  // publishedAt zůstává sekundárním kritériem (stabilní pořadí při shodě / když
+  // sourceId nejde naparsovat — viz weekSortKey). Nejnovější týden = nahoře.
+  const rows = [...published].sort((a, b) => {
+    const byWeek = weekSortKey(b.sourceId) - weekSortKey(a.sourceId);
+    if (byWeek !== 0) return byWeek;
+    return (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0);
+  });
 
   // Skutečný nadpis/perex jsou ve front matteru markdownu (KV), ne v DB. Načteme
   // je per vydání PARALELNĚ (Promise.all, ne sériově). Selhání JEDNOHO KV čtení

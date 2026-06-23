@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ccNewsItem } from "../../src/db/schema";
-import { slugFromPath } from "../../src/routes/cc-news";
+import { slugFromPath, weekSortKey } from "../../src/routes/cc-news";
 import { publishedKvKey } from "../../src/lib/cc-news/draft";
 import { stripFrontMatter, parseFrontMatter } from "../../src/routes/cc-news";
 
@@ -13,6 +13,48 @@ describe("slugFromPath", () => {
     expect(slugFromPath("src/content/novinky-cc/2026-w24.md")).toBe("2026-w24");
     expect(slugFromPath("2026-w24.md")).toBe("2026-w24");
     expect(slugFromPath(null)).toBeNull();
+  });
+});
+
+describe("weekSortKey — řazení podle stáří obsahu (rok+týden)", () => {
+  it("novější týden má vyšší klíč", () => {
+    expect(weekSortKey("/docs/en/whats-new/2026-w24")).toBeGreaterThan(
+      weekSortKey("/docs/en/whats-new/2026-w23"),
+    );
+  });
+
+  it("řeší zero-padding: w24 > w9 (lexikograficky by bylo opačně)", () => {
+    expect(weekSortKey("/docs/en/whats-new/2026-w24")).toBeGreaterThan(
+      weekSortKey("/docs/en/whats-new/2026-w9"),
+    );
+  });
+
+  it("řeší přechod roku: 2026-w01 > 2025-w52", () => {
+    expect(weekSortKey("/docs/en/whats-new/2026-w01")).toBeGreaterThan(
+      weekSortKey("/docs/en/whats-new/2025-w52"),
+    );
+  });
+
+  it("neparsovatelný sourceId → -1 (spadne na konec)", () => {
+    expect(weekSortKey("/docs/en/whats-new/index")).toBe(-1);
+    expect(weekSortKey(null)).toBe(-1);
+  });
+
+  it("seřazení sestupně dá nejnovější týden první (i s backfillem mimo pořadí)", () => {
+    // Simuluje reálný stav: w24 publikováno dřív, w21–w23 backfillnuto později.
+    const sources = [
+      "/docs/en/whats-new/2026-w24",
+      "/docs/en/whats-new/2026-w21",
+      "/docs/en/whats-new/2026-w23",
+      "/docs/en/whats-new/2026-w22",
+    ];
+    const sorted = [...sources].sort((a, b) => weekSortKey(b) - weekSortKey(a));
+    expect(sorted).toEqual([
+      "/docs/en/whats-new/2026-w24",
+      "/docs/en/whats-new/2026-w23",
+      "/docs/en/whats-new/2026-w22",
+      "/docs/en/whats-new/2026-w21",
+    ]);
   });
 });
 
