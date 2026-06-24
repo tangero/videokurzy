@@ -18,7 +18,11 @@ type WebhookMessageType =
   | "invoice.paid"
   // Služba „Novinky v Claude Code" (W-003): nově detekovaný / změněný whats-new
   // digest k redakčnímu zpracování (W-004). Nese jen identifikátory, ne obsah.
-  | "cc-news.detected";
+  | "cc-news.detected"
+  // Rozeslání newsletteru daného vydání předplatitelům. Běží NA POZADÍ (fronta),
+  // protože odeslání stovek e-mailů přes Resend trvá déle než HTTP request —
+  // admin zařadí a hned dostane odpověď, rozeslání doběhne asynchronně.
+  | "cc-news.send-newsletter";
 
 interface WebhookMessage {
   type: WebhookMessageType;
@@ -32,6 +36,13 @@ export interface CcNewsDetectedData {
   /** Ruční admin trigger: vynutit odeslání schvalovacího e-mailu (ne jen dry-run). */
   manualTrigger?: boolean;
   /** Obejít idempotenci (přegenerovat i když approvalEmailSentAt už je). */
+  force?: boolean;
+}
+
+/** Payload zprávy cc-news.send-newsletter — jen reference vydání. */
+export interface CcNewsSendNewsletterData {
+  itemId: string;
+  /** Obejít zámek newsletterSentAt (vědomé znovurozeslání VŠEM). */
   force?: boolean;
 }
 
@@ -51,6 +62,22 @@ export async function enqueueCcNewsItem(
 ): Promise<void> {
   const data: CcNewsDetectedData = { itemId, sourceId, ...opts };
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.detected", data });
+}
+
+/**
+ * Zařadí rozeslání newsletteru daného vydání do fronty. Vlastní odeslání
+ * (sestavení příjemců + dávkové volání Resend) běží asynchronně v konzumentovi —
+ * admin HTTP request se tím neblokuje a může stránku zavřít. Idempotenci drží
+ * atomický zámek `newsletterSentAt` UVNITŘ sendCcNewsNewsletterForItem, takže i
+ * při retry fronty se newsletter nepošle dvakrát (bez `force`).
+ */
+export async function enqueueCcNewsSendNewsletter(
+  env: Env,
+  itemId: string,
+  opts: { force?: boolean } = {}
+): Promise<void> {
+  const data: CcNewsSendNewsletterData = { itemId, ...opts };
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.send-newsletter", data });
 }
 
 export async function handleQueue(
@@ -82,6 +109,12 @@ export async function handleQueue(
           // v dry-run. NIC se neodesílá/nepublikuje — publikace až po lidském
           // schválení (mantinel).
           await handleCcNewsDetected(db, env, data as unknown as CcNewsDetectedData);
+          break;
+
+        case "cc-news.send-newsletter":
+          // Asynchronní rozeslání newsletteru vydání. Idempotentní přes zámek
+          // newsletterSentAt — retry po selhání nepošle duplicitně.
+          await handleCcNewsSendNewsletter(db, env, data as unknown as CcNewsSendNewsletterData);
           break;
 
         default:
@@ -510,4 +543,50 @@ async function handleCcNewsDetected(
     `[queue] cc-news.detected zpracováno: item=${data.itemId} llm=${result.usedLlm} ` +
       `mode=${result.mode} sent=${result.sent}`
   );
+}
+
+/**
+ * Konzument cc-news.send-newsletter: rozešle newsletter daného vydání na pozadí.
+ * Na rozdíl od manuálního triggeru (kde duplicita e-mailu = riziko) TADY chyby
+ * PROPAGUJEME → handleQueue zprávu retryuje. Je to bezpečné: atomický zámek
+ * `newsletterSentAt` v sendCcNewsNewsletterForItem zaručí, že už rozeslané /
+ * běžící vydání se podruhé nepošle (retry dostane `already-sent`). Jednotlivá
+ * selhání příjemců se navíc řeší uvnitř sendNewsletter (per-příjemce izolace),
+ * takže retry se uplatní jen na chybu sestavení/zámku, ne na dílčí Resend selhání.
+ */
+async function handleCcNewsSendNewsletter(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  data: CcNewsSendNewsletterData
+): Promise<void> {
+  if (!data || typeof data.itemId !== "string") {
+    // Malformovaná zpráva je NEretryovatelná — zaloguj a zahoď (return → ack).
+    console.error(`[queue] cc-news.send-newsletter: malformovaná zpráva, zahazuji:`, data);
+    return;
+  }
+
+  const { sendCcNewsNewsletterForItem } = await import("./lib/cc-news/newsletter");
+  const { renderMarkdown } = await import("./lib/markdown");
+  const { stripFrontMatter } = await import("./routes/cc-news");
+  const { ccNewsNewsletterHtml } = await import("./lib/email");
+
+  const result = await sendCcNewsNewsletterForItem(
+    db,
+    env,
+    data.itemId,
+    new Date(),
+    renderMarkdown,
+    stripFrontMatter,
+    ccNewsNewsletterHtml,
+    { force: data.force === true },
+  );
+
+  if ("skipped" in result && result.skipped) {
+    console.log(`[queue] cc-news.send-newsletter: item=${data.itemId} SKIPPED (${result.reason})`);
+  } else {
+    console.log(
+      `[queue] cc-news.send-newsletter: item=${data.itemId} mode=${result.mode} ` +
+        `příjemců=${result.recipientCount} odesláno=${result.delivered} selhalo=${result.failed}`
+    );
+  }
 }

@@ -2027,45 +2027,56 @@ admin.post("/admin/api/cc-news/send", async (c) => {
     .catch(() => ({}) as { itemId?: string; force?: boolean });
   if (!body.itemId) return c.json({ error: "itemId required" }, 400);
 
-  const { sendCcNewsNewsletterForItem } = await import("../lib/cc-news/newsletter");
-  const { renderMarkdown } = await import("../lib/markdown");
-  const { stripFrontMatter } = await import("./cc-news");
   const db = drizzle(c.env.DB);
+  const { ccNewsItem } = await import("../db/schema");
+  const { publishedKvKey } = await import("../lib/cc-news/draft");
+  const force = body.force === true;
 
-  const result = await sendCcNewsNewsletterForItem(
-    db,
-    c.env,
-    body.itemId,
-    new Date(),
-    renderMarkdown,
-    stripFrontMatter,
-    ccNewsNewsletterHtml,
-    { force: body.force === true },
-  );
+  // Rychlá synchronní validace PŘED zařazením do fronty — ať admin dostane
+  // okamžitou zpětnou vazbu (vydání neexistuje / není publikované / už rozesláno)
+  // místo aby chyba tiše spadla do konzumenta na pozadí.
+  const [row] = await db
+    .select({ id: ccNewsItem.id, status: ccNewsItem.status, newsletterSentAt: ccNewsItem.newsletterSentAt })
+    .from(ccNewsItem)
+    .where(eq(ccNewsItem.id, body.itemId))
+    .limit(1);
+  if (!row) return c.json({ error: "unknown_item", message: "Vydání neexistuje." }, 404);
 
-  if ("skipped" in result && result.skipped) {
-    if (result.reason === "already-sent") {
-      return c.json(
-        {
-          error: "already_sent",
-          message: `Newsletter už byl rozeslán${result.newsletterSentAt ? ` ${result.newsletterSentAt.toLocaleString("cs-CZ")}` : ""}. Pro opakování použij force.`,
-        },
-        409,
-      );
-    }
+  const articleMd = await c.env.KV.get(publishedKvKey(body.itemId));
+  if (row.status !== "published" || !articleMd) {
     return c.json(
       { error: "no_content", message: "Vydání nemá publikovaný obsah — nejdřív publikuj na web." },
       400,
     );
   }
+  if (row.newsletterSentAt && !force) {
+    return c.json(
+      {
+        error: "already_sent",
+        message: `Newsletter už byl rozeslán ${row.newsletterSentAt.toLocaleString("cs-CZ")}. Pro opakování použij force.`,
+      },
+      409,
+    );
+  }
 
-  return c.json({
-    ok: true,
-    mode: result.mode,
-    recipientCount: result.recipientCount,
-    delivered: result.delivered,
-    failed: result.failed,
-  });
+  // Vlastní rozeslání (sestavení příjemců + dávkové Resend) běží NA POZADÍ přes
+  // frontu — neblokuje request a admin může stránku zavřít. Idempotenci drží
+  // atomický zámek newsletterSentAt v konzumentovi. Vrátíme i očekávaný počet
+  // příjemců, ať admin hned vidí rozsah rozeslání.
+  const { enqueueCcNewsSendNewsletter } = await import("../queue");
+  const { countRecipients } = await import("../lib/cc-news/newsletter");
+  const counts = await countRecipients(db, c.env.AUTH_INTERNAL_SECRET, new Date());
+  await enqueueCcNewsSendNewsletter(c.env, body.itemId, { force });
+
+  return c.json({ ok: true, queued: true, ...counts });
+});
+
+// Náhled počtu příjemců PŘED rozesláním (způsobilí / odhlášení / reálně odeslaní).
+admin.get("/admin/api/cc-news/recipients", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { countRecipients } = await import("../lib/cc-news/newsletter");
+  const counts = await countRecipients(db, c.env.AUTH_INTERNAL_SECRET, new Date());
+  return c.json({ ok: true, ...counts });
 });
 
 // ─── Transcribe AI ────────────────────────────────────────────────

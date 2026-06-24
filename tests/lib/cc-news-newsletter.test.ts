@@ -6,6 +6,7 @@ import { purchase, organization, user, newsletterSuppression } from "../../src/d
 import {
   emailHash,
   buildRecipientSet,
+  countRecipients,
   sendNewsletter,
   recordUnsubscribe,
   recordResubscribe,
@@ -102,6 +103,52 @@ describe("buildRecipientSet (R6 cílová množina)", () => {
     const recipients = await buildRecipientSet(db, SECRET, NOW);
     expect(recipients).not.toContain("paid@example.cz");
     expect(recipients).toContain("zamestnanec@firma.cz"); // ostatní zůstávají
+  });
+});
+
+describe("countRecipients — rozpad počtu příjemců pro admin náhled", () => {
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM purchase");
+    await env.DB.exec("DELETE FROM organization");
+    await env.DB.exec("DELETE FROM user");
+    await env.DB.exec("DELETE FROM newsletter_suppression");
+    await seedRecipients();
+  });
+
+  it("bez odhlášených: willSend = eligible, suppressed = 0", async () => {
+    const db = drizzle(env.DB);
+    const c = await countRecipients(db, SECRET, NOW);
+    // seedRecipients dá 2 způsobilé (paid@example.cz, zamestnanec@firma.cz)
+    expect(c.eligible).toBe(2);
+    expect(c.suppressed).toBe(0);
+    expect(c.willSend).toBe(2);
+  });
+
+  it("s odhlášeným: willSend = eligible − suppressed", async () => {
+    const db = drizzle(env.DB);
+    await db.insert(newsletterSuppression).values({
+      emailHash: await emailHash(SECRET, "paid@example.cz"),
+      newsletter: "claude_code_news", optedOutAt: NOW, source: "test",
+    });
+    const c = await countRecipients(db, SECRET, NOW);
+    expect(c.eligible).toBe(2);
+    expect(c.suppressed).toBe(1);
+    expect(c.willSend).toBe(1);
+  });
+
+  it("rozpad sedí s reálným seznamem z buildRecipientSet", async () => {
+    const db = drizzle(env.DB);
+    const recipients = await buildRecipientSet(db, SECRET, NOW);
+    const c = await countRecipients(db, SECRET, NOW);
+    expect(c.willSend).toBe(recipients.length);
+  });
+
+  it("prázdná množina → samé nuly", async () => {
+    await env.DB.exec("DELETE FROM purchase");
+    await env.DB.exec("DELETE FROM user");
+    const db = drizzle(env.DB);
+    const c = await countRecipients(db, SECRET, NOW);
+    expect(c).toEqual({ willSend: 0, eligible: 0, suppressed: 0 });
   });
 });
 

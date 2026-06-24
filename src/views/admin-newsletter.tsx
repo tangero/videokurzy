@@ -197,7 +197,7 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                     type="button"
                     data-sent={selected.newsletterSentAt ? "1" : "0"}
                     class="text-sm bg-indigo-700 text-white px-4 py-2 rounded hover:bg-indigo-800"
-                    title="Rozešle newsletter předplatitelům. Idempotentní — podruhé se nepošle bez vynucení."
+                    title="Zařadí rozeslání newsletteru předplatitelům do fronty (běží na pozadí). Idempotentní — podruhé se nepošle bez vynucení."
                   >
                     Rozeslat newsletter
                   </button>
@@ -205,11 +205,17 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
               </div>
 
               {selected.status === "published" && (
-                <p class="text-xs text-gray-500 mt-3">
-                  {selected.newsletterSentAt
-                    ? `Newsletter byl rozeslán ${fmtDateTime(selected.newsletterSentAt)}. Opakované rozeslání pošle e-mail VŠEM znovu — potvrď v dialogu.`
-                    : "Newsletter zatím nebyl rozeslán. Rozeslání proběhne jen jednou; reálné odeslání vyžaduje zapnuté brány (jinak dry-run)."}
-                </p>
+                <>
+                  {/* Počet příjemců se načte JS po otevření vydání (#recipient-count). */}
+                  <p id="recipient-count" class="text-sm text-gray-700 mt-3" aria-live="polite">
+                    Zjišťuji počet příjemců…
+                  </p>
+                  <p class="text-xs text-gray-500 mt-1">
+                    {selected.newsletterSentAt
+                      ? `Newsletter byl rozeslán ${fmtDateTime(selected.newsletterSentAt)}. Opakované rozeslání pošle e-mail VŠEM znovu — potvrď v dialogu.`
+                      : "Rozeslání proběhne jen jednou. Po spuštění běží na pozadí (fronta) — stránku můžeš zavřít. Reálné odeslání vyžaduje zapnuté brány (jinak dry-run)."}
+                  </p>
+                </>
               )}
               <div id="action-result" class="mt-3 text-sm" aria-live="polite"></div>
             </div>
@@ -339,17 +345,36 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
             });
           }
 
+          // Počet příjemců: načti hned po otevření vydání, ať admin před kliknutím
+          // vidí rozsah rozeslání (kolik reálně dostane e-mail + rozpad).
+          var rcEl = $('recipient-count');
+          function renderCounts(c) {
+            if (!rcEl) return;
+            rcEl.textContent =
+              'Pošle se ' + c.willSend + ' příjemcům (z ' + c.eligible +
+              ' způsobilých' + (c.suppressed ? ', ' + c.suppressed + ' odhlášeno' : '') + ').';
+          }
+          if (rcEl) {
+            fetch('/admin/api/cc-news/recipients')
+              .then(function (r) { return r.json(); })
+              .then(function (j) {
+                if (j && j.ok) renderCounts(j);
+                else setText(rcEl, '#b91c1c', 'Počet příjemců se nepodařilo zjistit.');
+              })
+              .catch(function () { setText(rcEl, '#b91c1c', 'Počet příjemců se nepodařilo zjistit.'); });
+          }
+
           var sendBtn = $('btn-send');
           if (sendBtn) {
             sendBtn.addEventListener('click', function () {
               var alreadySent = sendBtn.dataset.sent === '1';
               var msg = alreadySent
                 ? 'Newsletter už BYL rozeslán. Opakované rozeslání pošle e-mail VŠEM předplatitelům ZNOVU. Pokračovat?'
-                : 'Rozeslat newsletter všem předplatitelům?';
+                : 'Zařadit rozeslání newsletteru všem předplatitelům do fronty?';
               if (!window.confirm(msg)) return;
               var res = $('action-result');
               sendBtn.disabled = true;
-              setText(res, '#6b7280', 'Rozesílám…');
+              setText(res, '#6b7280', 'Zařazuji do fronty…');
               fetch('/admin/api/cc-news/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -359,14 +384,14 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                 .then(function (out) {
                   if (out.ok && out.body && out.body.ok) {
                     var b = out.body;
-                    var label = b.mode === 'dry-run'
-                      ? 'Dry-run: reálně NEodesláno (' + b.recipientCount + ' příjemců). Zapni brány pro ostré odeslání.'
-                      : 'Rozesláno: ' + b.delivered + '/' + b.recipientCount + ' doručeno' + (b.failed ? (', ' + b.failed + ' selhalo') : '') + '. Načítám stránku…';
-                    setText(res, b.mode === 'dry-run' ? '#92400e' : '#15803d', label);
-                    if (b.mode !== 'dry-run') setTimeout(function () { window.location.reload(); }, 1200);
-                    else sendBtn.disabled = false;
+                    setText(res, '#15803d',
+                      'Rozeslání zařazeno do fronty — běží na pozadí pro ' + b.willSend +
+                      ' příjemců (z ' + b.eligible + ' způsobilých' +
+                      (b.suppressed ? ', ' + b.suppressed + ' odhlášeno' : '') +
+                      '). Stránku můžeš zavřít; stav rozeslání se projeví po obnovení. Načítám…');
+                    setTimeout(function () { window.location.reload(); }, 2500);
                   } else {
-                    setText(res, '#b91c1c', (out.body && out.body.message) || 'Rozeslání selhalo.');
+                    setText(res, '#b91c1c', (out.body && out.body.message) || 'Zařazení do fronty selhalo.');
                     sendBtn.disabled = false;
                   }
                 })

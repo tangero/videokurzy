@@ -124,6 +124,75 @@ export interface SendReport {
   failed: number;
 }
 
+/** Rozpad cílové množiny pro zobrazení v adminu PŘED rozesláním. */
+export interface RecipientCounts {
+  /** Kolik adres reálně dostane e-mail (po odečtení odhlášených). */
+  willSend: number;
+  /** Kolik unikátních způsobilých adres je celkem (před odečtením odhlášených). */
+  eligible: number;
+  /** Kolik způsobilých adres je odhlášených (suppression) — willSend = eligible − suppressed. */
+  suppressed: number;
+}
+
+/**
+ * Spočítá rozpad cílové množiny (způsobilí / odhlášení / reálně odeslaní) BEZ
+ * odeslání — pro náhled počtu v adminu. Stejná logika jako `buildRecipientSet`,
+ * jen místo finálního seznamu vrací počty (a navíc kolik odpadlo suppression).
+ */
+export async function countRecipients(
+  db: Db,
+  secret: string,
+  now: Date
+): Promise<RecipientCounts> {
+  const purchases = await db
+    .select({ email: purchase.email })
+    .from(purchase)
+    .where(
+      and(
+        eq(purchase.status, "active"),
+        gt(purchase.expiresAt, now),
+        inArray(purchase.kind, ["paid", "manual"])
+      )
+    );
+
+  const activeOrgs = await db
+    .select({ domain: organization.domain })
+    .from(organization)
+    .where(eq(organization.status, "active"));
+  const orgDomains = new Set(activeOrgs.map((o) => o.domain.toLowerCase()));
+
+  const verifiedUsers = orgDomains.size
+    ? await db.select({ email: user.email }).from(user).where(eq(user.emailVerified, true))
+    : [];
+
+  const candidates = new Set<string>();
+  for (const p of purchases) {
+    const email = normalizeEmail(p.email);
+    if (isLikelyEmail(email)) candidates.add(email);
+  }
+  for (const u of verifiedUsers) {
+    const email = normalizeEmail(u.email);
+    const domain = email.slice(email.lastIndexOf("@") + 1);
+    if (orgDomains.has(domain)) candidates.add(email);
+  }
+
+  const eligible = candidates.size;
+  if (eligible === 0) return { willSend: 0, eligible: 0, suppressed: 0 };
+
+  const suppressed = await db
+    .select({ emailHash: newsletterSuppression.emailHash })
+    .from(newsletterSuppression)
+    .where(eq(newsletterSuppression.newsletter, SUPPRESSION_PURPOSE));
+  const suppressedHashes = new Set(suppressed.map((s) => s.emailHash));
+
+  const key = await importHmacKey(secret);
+  const emails = [...candidates];
+  const hashes = await Promise.all(emails.map((e) => hashWithKey(key, e)));
+  const suppressedCount = hashes.filter((h) => suppressedHashes.has(h)).length;
+
+  return { willSend: eligible - suppressedCount, eligible, suppressed: suppressedCount };
+}
+
 interface NewsletterEnv {
   AUTH_INTERNAL_SECRET: string;
   CC_NEWS_DRY_RUN?: string;

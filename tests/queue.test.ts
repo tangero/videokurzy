@@ -8,6 +8,7 @@ import {
   handleDlq,
   issueFakturoidInvoiceForTest,
   enqueueCcNewsItem,
+  enqueueCcNewsSendNewsletter,
 } from "../src/queue";
 
 describe("queue Fakturoid idempotence", () => {
@@ -294,5 +295,58 @@ describe("enqueueCcNewsItem — payload pro frontu", () => {
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+describe("enqueueCcNewsSendNewsletter — async rozeslání newsletteru", () => {
+  it("zařadí zprávu cc-news.send-newsletter s itemId (+ force volitelně)", async () => {
+    const sent: any[] = [];
+    const fakeEnv = { WEBHOOK_QUEUE: { send: async (m: unknown) => { sent.push(m); } } } as never;
+
+    await enqueueCcNewsSendNewsletter(fakeEnv, "item-1");
+    await enqueueCcNewsSendNewsletter(fakeEnv, "item-2", { force: true });
+
+    expect(sent[0]).toEqual({ type: "cc-news.send-newsletter", data: { itemId: "item-1" } });
+    expect(sent[1]).toEqual({ type: "cc-news.send-newsletter", data: { itemId: "item-2", force: true } });
+  });
+
+  it("malformovaná zpráva (chybí itemId) se ack-ne a NEretryuje", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    await handleQueue(
+      {
+        messages: [
+          { body: { type: "cc-news.send-newsletter", data: {} }, ack, retry },
+        ],
+      } as never,
+      env as never,
+    );
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("nepublikované vydání → handler skončí skipped (no-content), ack bez retry", async () => {
+    // Bez řádky v cc_news_item / bez KV obsahu vrátí sendCcNewsNewsletterForItem
+    // skipped:no-content. Handler to jen zaloguje a ack-ne (žádná výjimka → žádný retry).
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const ack = vi.fn();
+    const retry = vi.fn();
+
+    await handleQueue(
+      {
+        messages: [
+          { body: { type: "cc-news.send-newsletter", data: { itemId: "neexistuje" } }, ack, retry },
+        ],
+      } as never,
+      env as never,
+    );
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    logSpy.mockRestore();
   });
 });
