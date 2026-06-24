@@ -1897,6 +1897,10 @@ admin.get("/admin/newsletter", async (c) => {
         slug: slugFromPath(row.articlePath),
         editorialMarkdown: row.editorialMarkdown ?? "",
         hasBody: body !== null,
+        // Markdown těla pro editor (jen pro publikovaná vydání — opravy překlepů).
+        // U nepublikovaných je null, editor se nezobrazí.
+        bodyMarkdown: row.status === "published" ? (body ?? "") : null,
+        hasPending: row.pendingContentHash !== null,
         newsletterSentAt: row.newsletterSentAt ? row.newsletterSentAt.getTime() : null,
       };
     }
@@ -2016,6 +2020,60 @@ admin.post("/admin/api/cc-news/publish", async (c) => {
     .where(eq(ccNewsItem.id, body.itemId));
 
   return c.json({ ok: true, status: "published" });
+});
+
+// Oprava TĚLA už publikovaného článku — přímý zápis nové verze do published KV
+// bez schvalovacího e-mailu a bez newsletteru. Pro rychlé opravy chyb v našem
+// (přeloženém) textu, kde se zdroj na code.claude.com nezměnil. NEsahá na
+// contentHash/pendingContentHash (to je hash ZDROJOVÉHO digestu, ne našeho
+// markdownu — detekce zdroje proto editaci těla ignoruje a nepřepíše ji).
+admin.post("/admin/api/cc-news/article-body", async (c) => {
+  const body = await c.req
+    .json<{ itemId?: string; markdown?: string }>()
+    .catch(() => ({}) as { itemId?: string; markdown?: string });
+  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+  if (typeof body.markdown !== "string" || !body.markdown.trim()) {
+    return c.json({ error: "empty", message: "Tělo článku nesmí být prázdné." }, 400);
+  }
+
+  const db = drizzle(c.env.DB);
+  const { ccNewsItem } = await import("../db/schema");
+  const { publishedKvKey } = await import("../lib/cc-news/draft");
+
+  const [row] = await db
+    .select({ id: ccNewsItem.id, status: ccNewsItem.status })
+    .from(ccNewsItem)
+    .where(eq(ccNewsItem.id, body.itemId))
+    .limit(1);
+  if (!row) return c.json({ error: "unknown_item", message: "Vydání neexistuje." }, 404);
+  if (row.status !== "published") {
+    return c.json(
+      { error: "not_published", message: "Editovat tělo lze jen u publikovaného vydání." },
+      400,
+    );
+  }
+
+  // Přepíšeme živou verzi v KV (přepočet publishedAt = razítko poslední úpravy).
+  // Žádný e-mail, žádný newsletter, žádné schvalování — vědomá admin oprava.
+  await c.env.KV.put(publishedKvKey(body.itemId), body.markdown);
+  await db
+    .update(ccNewsItem)
+    .set({ publishedAt: new Date() })
+    .where(eq(ccNewsItem.id, body.itemId));
+
+  return c.json({ ok: true });
+});
+
+// Náhled TĚLA článku tak, jak ho uvidí čtenář na /novinky-cc/:slug (stejný
+// render jako veřejná stránka). Needitující, jen vyrenderuje dodaný markdown.
+admin.post("/admin/api/cc-news/article-preview", async (c) => {
+  const reqBody = await c.req
+    .json<{ markdown?: string }>()
+    .catch(() => ({}) as { markdown?: string });
+  const { renderMarkdown } = await import("../lib/markdown");
+  const { stripFrontMatter } = await import("./cc-news");
+  const html = renderMarkdown(stripFrontMatter(reqBody.markdown ?? ""));
+  return c.json({ ok: true, html });
 });
 
 // Rozeslání newsletteru předplatitelům pro dané vydání. IDEMPOTENTNÍ přes

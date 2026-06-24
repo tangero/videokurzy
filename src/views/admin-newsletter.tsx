@@ -28,6 +28,10 @@ export interface AdminNewsletterProps {
     editorialMarkdown: string;
     /** Má vydání uložený markdown těla (draft/published v KV)? */
     hasBody: boolean;
+    /** Markdown těla publikovaného článku pro editor oprav (null = nepublikováno). */
+    bodyMarkdown: string | null;
+    /** Má vydání čekající re-editovanou verzi ze zdroje (pendingContentHash)? */
+    hasPending: boolean;
     newsletterSentAt: number | null; // epoch ms — kdy byl rozeslán newsletter
   } | null;
 }
@@ -219,6 +223,59 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
               )}
               <div id="action-result" class="mt-3 text-sm" aria-live="polite"></div>
             </div>
+
+            {/* Editor TĚLA článku — jen pro publikovaná vydání (oprava chyb).
+                Přepíše živou verzi na /novinky-cc bez e-mailu a bez newsletteru. */}
+            {selected.status === "published" && selected.bodyMarkdown !== null && (
+              <div class="bg-white border rounded-lg p-5">
+                <h3 class="text-sm font-semibold text-gray-900 mb-1">
+                  Oprava těla článku
+                </h3>
+                <p class="text-xs text-gray-500 mb-3">
+                  Úprava <strong>publikovaného</strong> markdownu článku na webu
+                  /novinky-cc. Uložením vystavíš novou verzi <strong>okamžitě</strong>,
+                  bez e-mailu a bez rozeslání newsletteru. První řádky s <code>---</code>
+                  jsou YAML front matter (title, perex) — needituj jejich strukturu.
+                </p>
+                {selected.hasPending && (
+                  <p class="text-xs text-amber-700 mb-3">
+                    Pozor: vydání má čekající novější verzi ze zdroje (ke schválení
+                    přes e-mail). Schválení té verze tvoji ruční opravu těla přepíše.
+                  </p>
+                )}
+                <textarea
+                  id="article-md"
+                  rows={16}
+                  class="w-full border border-gray-300 rounded px-3 py-2 font-mono text-xs"
+                >{selected.bodyMarkdown}</textarea>
+                <div class="flex items-center gap-3 mt-3">
+                  <button
+                    id="btn-save-article"
+                    type="button"
+                    class="text-sm bg-emerald-700 text-white px-4 py-2 rounded hover:bg-emerald-800"
+                  >
+                    Uložit a vystavit opravu
+                  </button>
+                  <button
+                    id="btn-preview-article"
+                    type="button"
+                    class="text-sm bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-500"
+                  >
+                    Náhled článku
+                  </button>
+                  <span id="article-result" class="text-sm" aria-live="polite"></span>
+                </div>
+                {/* sandbox="" = statický náhled, žádný aktivní obsah. Skrytý,
+                    dokud admin nepožádá o náhled. */}
+                <iframe
+                  id="article-preview-frame"
+                  title="Náhled článku"
+                  sandbox=""
+                  class="w-full rounded border border-gray-200 bg-white mt-3 hidden"
+                  style="min-height: 400px;"
+                ></iframe>
+              </div>
+            )}
           </div>
 
           {/* Pravý sloupec: náhled e-mailu */}
@@ -399,6 +456,70 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
                   setText(res, '#b91c1c', 'Chyba sítě.');
                   sendBtn.disabled = false;
                 });
+            });
+          }
+
+          // Editor těla publikovaného článku: náhled + uložení nové verze.
+          var previewArticleBtn = $('btn-preview-article');
+          if (previewArticleBtn) {
+            previewArticleBtn.addEventListener('click', function () {
+              var ta = $('article-md');
+              var frame = $('article-preview-frame');
+              previewArticleBtn.disabled = true;
+              previewArticleBtn.textContent = 'Načítám…';
+              fetch('/admin/api/cc-news/article-preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ markdown: ta ? ta.value : '' })
+              })
+                .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+                .then(function (out) {
+                  if (out.ok && out.body && out.body.ok) {
+                    frame.srcdoc = '<div style="font-family:sans-serif;max-width:680px;margin:0 auto;padding:16px;line-height:1.6">' + out.body.html + '</div>';
+                    frame.classList.remove('hidden');
+                  } else {
+                    frame.srcdoc = '<p style="font-family:sans-serif;color:#b91c1c;padding:20px">Náhled selhal.</p>';
+                    frame.classList.remove('hidden');
+                  }
+                })
+                .catch(function () {
+                  frame.srcdoc = '<p style="font-family:sans-serif;color:#b91c1c;padding:20px">Chyba sítě.</p>';
+                  frame.classList.remove('hidden');
+                })
+                .finally(function () {
+                  previewArticleBtn.disabled = false;
+                  previewArticleBtn.textContent = 'Náhled článku';
+                });
+            });
+          }
+
+          var saveArticleBtn = $('btn-save-article');
+          if (saveArticleBtn) {
+            saveArticleBtn.addEventListener('click', function () {
+              var ta = $('article-md');
+              var res = $('article-result');
+              if (!ta || !ta.value.trim()) {
+                setText(res, '#b91c1c', 'Tělo nesmí být prázdné.');
+                return;
+              }
+              if (!window.confirm('Vystavit opravené tělo článku na web /novinky-cc? Nová verze bude vidět okamžitě. Newsletter se NErozesílá.')) return;
+              saveArticleBtn.disabled = true;
+              setText(res, '#6b7280', 'Ukládám…');
+              fetch('/admin/api/cc-news/article-body', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ itemId: itemId, markdown: ta.value })
+              })
+                .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+                .then(function (out) {
+                  if (out.ok && out.body && out.body.ok) {
+                    setText(res, '#15803d', 'Opravená verze vystavena na web.');
+                  } else {
+                    setText(res, '#b91c1c', (out.body && out.body.message) || 'Uložení selhalo.');
+                  }
+                })
+                .catch(function () { setText(res, '#b91c1c', 'Chyba sítě.'); })
+                .finally(function () { saveArticleBtn.disabled = false; });
             });
           }
         })();

@@ -198,6 +198,28 @@ describe("cc-news detect — idempotent detection (R1)", () => {
     expect(out.kind).toBe("empty");
     expect(await db.select().from(ccNewsItem)).toHaveLength(0);
   });
+
+  it("ruční oprava TĚLA publikovaného článku NErozhodí detekci (zdroj beze změny → unchanged)", async () => {
+    // Invariant editoru těla (/admin/api/cc-news/article-body): přepisuje jen
+    // published KV blob, NE contentHash v DB (ten je hash ZDROJOVÉHO digestu).
+    // Když se zdroj na code.claude.com nezměnil, detekce musí vrátit unchanged —
+    // jinak by cron tvoji ruční opravu označil jako „changed" a tlačil k přepisu.
+    const db = drizzle(env.DB);
+    const f = fetchers(xml, "# Week 24\nsource body"); // hash ZDROJE se nemění
+    await detectLatest(db, f, NOW);
+    await env.DB.exec("UPDATE cc_news_item SET status = 'published'");
+
+    // Simulace editoru: přepíšeme published markdown (oprava překlepu), DB hash
+    // ZÁMĚRNĚ NESAHÁME (přesně co dělá endpoint article-body).
+    const hashBefore = (await db.select().from(ccNewsItem))[0].contentHash;
+
+    // Re-detekce nad NEZMĚNĚNÝM zdrojem:
+    const out = await detectLatest(db, f, NOW);
+    expect(out.kind).toBe("unchanged");
+
+    const hashAfter = (await db.select().from(ccNewsItem))[0].contentHash;
+    expect(hashAfter).toBe(hashBefore); // detekce do hashe nesáhla
+  });
 });
 
 // Feed s `count` po sobě jdoucími týdny (nejnovější = startWeek, klesá dolů).
