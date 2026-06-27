@@ -2175,12 +2175,26 @@ admin.post("/admin/api/cc-news/send", async (c) => {
   // frontu — neblokuje request a admin může stránku zavřít. Idempotenci drží
   // atomický zámek newsletterSentAt v konzumentovi. Vrátíme i očekávaný počet
   // příjemců, ať admin hned vidí rozsah rozeslání.
-  const { enqueueCcNewsSendNewsletter } = await import("../queue");
-  const { countRecipients } = await import("../lib/cc-news/newsletter");
-  const counts = await countRecipients(db, c.env.AUTH_INTERNAL_SECRET, new Date());
-  await enqueueCcNewsSendNewsletter(c.env, body.itemId, { force });
-
-  return c.json({ ok: true, queued: true, ...counts });
+  //
+  // Zařazení do fronty (WEBHOOK_QUEUE.send) i počítání příjemců můžou selhat
+  // (chybný/nedostupný queue binding, výpadek D1). Bez try/catch by to spadlo do
+  // globálního onError → 500; klient by uviděl jen „Zařazení do fronty selhalo".
+  // Tady chybu zachytíme a vrátíme konkrétní (admin-only) hlášku, ať je hned vidět
+  // co je špatně, místo opakovaného tipování.
+  try {
+    const { enqueueCcNewsSendNewsletter } = await import("../queue");
+    const { countRecipients } = await import("../lib/cc-news/newsletter");
+    const counts = await countRecipients(db, c.env.AUTH_INTERNAL_SECRET, new Date());
+    await enqueueCcNewsSendNewsletter(c.env, body.itemId, { force });
+    return c.json({ ok: true, queued: true, ...counts });
+  } catch (err) {
+    const detail = (err as Error)?.message ?? String(err);
+    console.error("[cc-news] zařazení rozeslání do fronty selhalo:", detail, (err as Error)?.stack);
+    return c.json(
+      { error: "enqueue_failed", message: `Zařazení do fronty selhalo: ${detail}` },
+      502,
+    );
+  }
 });
 
 // Náhled počtu příjemců PŘED rozesláním (způsobilí / odhlášení / reálně odeslaní).

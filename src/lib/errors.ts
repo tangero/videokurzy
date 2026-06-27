@@ -6,10 +6,15 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 // Použití: viz app.onError / app.notFound v src/index.tsx.
 
 // Rozlišení formátu chybové odpovědi podle prefixu cesty:
-// /api/ a /internal/ → JSON; vše ostatní → HTML stránka (ErrorPage).
+// /api/, /internal/ a /admin/api/ → JSON; vše ostatní → HTML stránka (ErrorPage).
+//
+// `/admin/api/*` jsou AJAX endpointy adminu (fetch z /admin/newsletter apod.).
+// Bez tohoto prefixu vracel onError při neočekávané výjimce HTML chybovou
+// stránku, na které klientův `r.json()` spadl a zobrazil zavádějící „Chyba sítě."
+// místo reálné chyby (typicky selhání WEBHOOK_QUEUE.send při rozesílce newsletteru).
 export function wantsJson(c: Context): boolean {
   const p = new URL(c.req.url).pathname;
-  return p.startsWith("/api/") || p.startsWith("/internal/");
+  return p.startsWith("/api/") || p.startsWith("/internal/") || p.startsWith("/admin/api/");
 }
 
 // Doménové chyby jako tenké subclassy HTTPException. Hono je zachytí i bez
