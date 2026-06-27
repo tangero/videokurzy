@@ -8,7 +8,7 @@ import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas"
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
-import { detectLatest, defaultFetchers } from "./lib/cc-news/detect";
+import { detectRecent, defaultFetchers } from "./lib/cc-news/detect";
 import { enqueueCcNewsItem } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
@@ -85,21 +85,32 @@ export async function handleScheduled(
     console.error("[cron] syncVideoStats failed:", err);
   }
 
-  // Detekce nového whats-new digestu Claude Code (služba „Novinky v CC", W-003).
-  // Idempotentní detekce + zápis draftu; při new/changed zařadí zprávu do fronty
-  // pro navazující redakční zpracování (W-004). Nic se zde neodesílá ani
-  // nepublikuje — fronta jen předá řízení dál.
+  // Detekce nových whats-new digestů Claude Code (služba „Novinky v CC", W-003).
+  // Zpracováváme POSLEDNÍ N týdnů, ne jen nejnovější: feed publikuje týdny po
+  // párech (dva <item> sdílejí pubDate), takže `detectLatest` (jen první položka)
+  // tiše zahodil starší z dvojice — vznikla mezera (chyběl např. Week 25).
+  // `detectRecent` je idempotentní (nezměněné týdny = no-op), takže okno N zacelí
+  // i dohnané týdny, aniž by cokoli duplikovalo. Při new/changed zařadí každý
+  // dotčený týden do fronty pro redakční zpracování (W-004). Nic se zde neodesílá
+  // ani nepublikuje — fronta jen předá řízení dál.
   try {
-    const outcome = await detectLatest(db, defaultFetchers(), now);
-    console.log(`[cron] cc-news detect: ${outcome.kind}` +
-      (outcome.kind === "empty" ? "" : ` sourceId=${outcome.sourceId}`));
-    if (outcome.kind === "new" || outcome.kind === "changed") {
-      await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);
+    const outcomes = await detectRecent(db, defaultFetchers(), now, CC_NEWS_DETECT_WEEKS);
+    for (const outcome of outcomes) {
+      console.log(`[cron] cc-news detect: ${outcome.kind}` +
+        (outcome.kind === "empty" ? "" : ` sourceId=${outcome.sourceId}`));
+      if (outcome.kind === "new" || outcome.kind === "changed") {
+        await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);
+      }
     }
   } catch (err) {
     console.error("[cron] cc-news detect failed:", err);
   }
 }
+
+// Kolik posledních týdnů whats-new cron prověřuje na každý běh. Okno > 1 zacelí
+// mezery z dvojic týdnů sdílejících pubDate; idempotence zajistí, že už viděné
+// týdny jsou no-op. 3 je bezpečná rezerva (typicky se publikují dva najednou).
+const CC_NEWS_DETECT_WEEKS = 3;
 
 /**
  * Spáruje došlé bankovní platby s pending převodovými objednávkami — proti

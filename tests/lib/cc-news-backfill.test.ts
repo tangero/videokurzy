@@ -111,6 +111,30 @@ describe("backfillRecentWeeks — doplnění více týdnů přímo na web", () =
     expect(forced.skipped).toBe(0);
   });
 
+  it("excludeNewest ponechá nejnovější týden beze změny a publikuje jen starší", async () => {
+    const db = drizzle(env.DB);
+    // Feed: Week 26 (nejnovější), 25, 24. Simuluje stav, kdy 26 je koncept ve
+    // schvalovacím toku a chybí starší 25 — backfill má doplnit 25/24, ne 26.
+    const res = await backfillRecentWeeks(
+      db,
+      baseEnv(),
+      NOW,
+      { weeks: 3, excludeNewest: true },
+      fetchers(26, 3),
+    );
+
+    expect(res.published).toBe(2); // 25 a 24
+    expect(res.entries[0].result).toBe("skipped"); // nejnovější (26)
+    expect(res.entries[0].note).toContain("nejnovější");
+
+    // Week 26 NENÍ publikovaný (zůstal draft z detekce); 25 a 24 ano.
+    const rows = await db.select().from(ccNewsItem);
+    const w26 = rows.find((r) => r.sourceId.endsWith("-w26"));
+    const w25 = rows.find((r) => r.sourceId.endsWith("-w25"));
+    expect(w26?.status).toBe("draft");
+    expect(w25?.status).toBe("published");
+  });
+
   it("weeks se ořízne do rozumného rozsahu (1–12)", async () => {
     const db = drizzle(env.DB);
     const res = await backfillRecentWeeks(db, baseEnv(), NOW, { weeks: 999 }, fetchers(24, 2));
