@@ -60,9 +60,10 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
         (jen do e-mailu), zkontroluješ náhled a publikuješ vydání na web.
       </p>
 
-      {/* Seznam vydání */}
-      <div class="bg-white rounded-lg border overflow-hidden mb-8">
-        <table class="w-full text-sm">
+      {/* Seznam vydání — na mobilu horizontálně scrollovatelný, ať je dostupný
+          i sloupec „Akce" (jinak ho overflow-hidden ořízne mimo obrazovku). */}
+      <div class="bg-white rounded-lg border overflow-x-auto mb-8">
+        <table class="w-full text-sm whitespace-nowrap">
           <thead class="bg-gray-50">
             <tr>
               <th class="px-4 py-2 text-left">Týden</th>
@@ -78,7 +79,7 @@ export const AdminNewsletterPage: FC<AdminNewsletterProps> = ({ user, items, sel
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colspan={8} class="px-4 py-6 text-center text-gray-500">
+                <td colspan={8} class="px-4 py-6 text-center text-gray-500 whitespace-normal">
                   Zatím žádné vydání. Vydání přibyde po detekci nového digestu
                   (cron, nebo tlačítko „Poslat ke schválení" na Přehledu).
                 </td>
