@@ -647,15 +647,27 @@ admin.get("/admin", async (c) => {
                 e-mail na adminy. Publikace nastane až po kliknutí na odkaz v e-mailu.
               </p>
             </div>
-            <form method="post" action="/admin/api/cc-news/trigger" hx-boost="false">
-              <button
-                type="submit"
-                class="text-sm bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700"
-                title="Spustí detekci + redakční pipeline a reálně odešle schvalovací e-mail na ADMIN_EMAILS."
-              >
-                Poslat ke schválení
-              </button>
-            </form>
+            <div class="flex items-center gap-2 flex-wrap">
+              <form method="post" action="/admin/api/cc-news/backfill" hx-boost="false">
+                <button
+                  type="submit"
+                  class="text-sm bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-50"
+                  title="Zacelí mezery: doplní a publikuje na web chybějící STARŠÍ týdny (nejnovější koncept nechá být). Běží na pozadí."
+                  onclick="return confirm('Doplnit a publikovat chybějící starší týdny na web? Nejnovější týden (koncept) zůstane beze změny.');"
+                >
+                  Doplnit chybějící týdny
+                </button>
+              </form>
+              <form method="post" action="/admin/api/cc-news/trigger" hx-boost="false">
+                <button
+                  type="submit"
+                  class="text-sm bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700"
+                  title="Spustí detekci + redakční pipeline a reálně odešle schvalovací e-mail na ADMIN_EMAILS."
+                >
+                  Poslat ke schválení
+                </button>
+              </form>
+            </div>
           </div>
         </div>
 
@@ -1815,6 +1827,48 @@ admin.post("/admin/api/cc-news/diag/llm", async (c) => {
 // session cookie funguje). Stejná logika jako POST; sdílí runCcNewsTrigger.
 admin.get("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
 admin.post("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
+
+// Doplnění chybějících STARŠÍCH týdnů přímo na web (zacelení mezer typu Week 25,
+// které cron historicky přeskočil). Nejnovější týden se ZÁMĚRNĚ nepublikuje
+// (excludeNewest) — ten patří do schvalovacího toku. Zpracování (LLM přepis +
+// publikace) je dlouhé, takže běží na pozadí přes waitUntil a odpovídáme hned.
+admin.get("/admin/api/cc-news/backfill", async (c) => runCcNewsBackfill(c));
+admin.post("/admin/api/cc-news/backfill", async (c) => runCcNewsBackfill(c));
+
+async function runCcNewsBackfill(c: Context<{ Bindings: Env; Variables: Variables }>) {
+  const weeksParam = parseInt(c.req.query("weeks") ?? "4", 10);
+  const weeks = Number.isFinite(weeksParam) ? weeksParam : 4;
+  // ?force=1 přepublikuje i už publikované týdny (přegeneruje z aktuálního digestu).
+  const force = c.req.query("force") === "1";
+
+  // Práce běží na pozadí (LLM přepis ~1 min/týden by utnul HTTP request). Vlastní
+  // drizzle instance, ať nesdílí stav s requestem, který už dávno odpověděl.
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        const { backfillRecentWeeks } = await import("../lib/cc-news/backfill");
+        const db = drizzle(c.env.DB);
+        const res = await backfillRecentWeeks(db, c.env, new Date(), {
+          weeks,
+          force,
+          excludeNewest: true,
+        });
+        console.log(
+          `[cc-news] backfill hotov: published=${res.published}, skipped=${res.skipped}, errors=${res.errors}`,
+          JSON.stringify(res.entries),
+        );
+      } catch (err) {
+        console.error("[cc-news] backfill selhal:", (err as Error)?.message, (err as Error)?.stack);
+      }
+    })(),
+  );
+
+  const summary =
+    `Doplnění chybějících týdnů spuštěno na pozadí (posledních ${weeks} týdnů, ` +
+    `nejnovější se nepublikuje${force ? ", force" : ""}). Publikace běží ~1 min/týden; ` +
+    `výsledek uvidíš po obnovení v sekci Newsletter.`;
+  return c.redirect(`/admin?ccNews=${encodeURIComponent(summary)}`);
+}
 
 async function runCcNewsTrigger(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const db = drizzle(c.env.DB);
