@@ -469,7 +469,7 @@ admin.get("/admin", async (c) => {
           );
         })()}
         {/* Stats */}
-        <div class="grid grid-cols-3 gap-4 mb-4">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
           <div
             class="bg-white p-4 rounded-lg border"
             title="Všichni řádky v tabulce user — magic link signupy, admin granty i zaplacení uživatelé."
@@ -671,8 +671,8 @@ admin.get("/admin", async (c) => {
             </a>
           </div>
         </div>
-        <div class="bg-white rounded-lg border overflow-hidden mb-8">
-          <table class="w-full text-sm">
+        <div class="bg-white rounded-lg border overflow-x-auto mb-8">
+          <table class="w-full text-sm whitespace-nowrap">
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-2 text-left">E-mail</th>
@@ -775,7 +775,7 @@ admin.get("/admin", async (c) => {
               })}
               {recentUsers.length === 0 && (
                 <tr>
-                  <td colspan={5} class="px-4 py-4 text-gray-500 text-center">
+                  <td colspan={5} class="px-4 py-4 text-gray-500 text-center whitespace-normal">
                     Zatím žádní uživatelé
                   </td>
                 </tr>
@@ -790,8 +790,8 @@ admin.get("/admin", async (c) => {
             <h2 class="text-xl font-bold">Nejaktivnější uživatelé</h2>
             <span class="text-xs text-gray-500">podle počtu lekcí, které sledovali</span>
           </div>
-          <div class="bg-white rounded-lg border overflow-hidden">
-            <table class="w-full text-sm">
+          <div class="bg-white rounded-lg border overflow-x-auto">
+            <table class="w-full text-sm whitespace-nowrap">
               <thead class="bg-gray-50">
                 <tr>
                   <th class="px-4 py-2 text-left">E-mail</th>
@@ -818,7 +818,7 @@ admin.get("/admin", async (c) => {
                 ))}
                 {topActive.length === 0 && (
                   <tr>
-                    <td colspan={3} class="px-4 py-4 text-gray-500 text-center">
+                    <td colspan={3} class="px-4 py-4 text-gray-500 text-center whitespace-normal">
                       Zatím žádná data o sledování
                     </td>
                   </tr>
@@ -830,8 +830,8 @@ admin.get("/admin", async (c) => {
 
         {/* Organizations */}
         <h2 class="text-xl font-bold mb-4">Organizace</h2>
-        <div class="bg-white rounded-lg border overflow-hidden mb-8">
-          <table class="w-full text-sm">
+        <div class="bg-white rounded-lg border overflow-x-auto mb-8">
+          <table class="w-full text-sm whitespace-nowrap">
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-2 text-left">Doména</th>
@@ -888,7 +888,7 @@ admin.get("/admin", async (c) => {
               })}
               {orgs.length === 0 && (
                 <tr>
-                  <td colspan={4} class="px-4 py-4 text-gray-500 text-center">
+                  <td colspan={4} class="px-4 py-4 text-gray-500 text-center whitespace-normal">
                     Zatím žádné organizace
                   </td>
                 </tr>

@@ -118,8 +118,8 @@ export function AdminUsersList({
         )}
       </form>
 
-      <div class="bg-white rounded-lg border overflow-hidden">
-        <table class="w-full text-sm">
+      <div class="bg-white rounded-lg border overflow-x-auto">
+        <table class="w-full text-sm whitespace-nowrap">
           <thead class="bg-gray-50">
             <tr>
               <th class="px-4 py-2 text-left">E-mail</th>
@@ -163,7 +163,7 @@ export function AdminUsersList({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colspan={6} class="px-4 py-6 text-gray-500 text-center">
+                <td colspan={6} class="px-4 py-6 text-gray-500 text-center whitespace-normal">
                   Žádní uživatelé.
                 </td>
               </tr>
@@ -302,7 +302,8 @@ export function AdminUserDetailView({
         {user.emails.length === 0 ? (
           <p class="text-sm text-gray-500">Žádné adresy v user_emails.</p>
         ) : (
-          <table class="w-full text-sm">
+          <div class="overflow-x-auto">
+          <table class="w-full text-sm whitespace-nowrap">
             <thead class="text-left text-gray-500">
               <tr>
                 <th class="py-1 pr-2">E-mail</th>
@@ -326,6 +327,7 @@ export function AdminUserDetailView({
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -335,7 +337,8 @@ export function AdminUserDetailView({
         {user.purchases.length === 0 ? (
           <p class="text-sm text-gray-500 mb-4">Zatím žádné nákupy ani granty.</p>
         ) : (
-          <table class="w-full text-sm mb-4">
+          <div class="overflow-x-auto mb-4">
+          <table class="w-full text-sm whitespace-nowrap">
             <thead class="text-left text-gray-500">
               <tr>
                 <th class="py-1 pr-2">Typ</th>
@@ -441,13 +444,14 @@ export function AdminUserDetailView({
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         <details>
           <summary class="cursor-pointer text-sm font-medium text-indigo-600">
             + Přidat grant
           </summary>
-          <form method="post" action={`/admin/users/${user.id}/purchases/new`} class="mt-3 grid grid-cols-2 gap-3 text-sm">
+          <form method="post" action={`/admin/users/${user.id}/purchases/new`} class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
             <label class="block">
               <span class="block text-xs font-medium text-gray-700 mb-1">Typ</span>
               <select name="access" class="w-full rounded border px-3 py-2 text-sm">
