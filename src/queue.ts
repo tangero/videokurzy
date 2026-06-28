@@ -7,8 +7,8 @@ import { consumeInviteToken } from "./lib/discount";
 import { invalidateAccessCache } from "./lib/access";
 import { maskEmail } from "./lib/errors";
 import { escapeHtml } from "./lib/markdown";
-import { exportPurchaseInvoice, type FakturoidEnv } from "./lib/fakturoid";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
+import { purchaseToBillingSnapshot } from "./lib/invoicing/jobs";
 import { sendEmail } from "./lib/email";
 import { ADMIN_EMAILS } from "./config/admin";
 import type { Env } from "./types";
@@ -416,62 +416,6 @@ async function handleCheckoutCompleted(
   }
 }
 
-/**
- * Best-effort vystavení Fakturoid faktury pro Stripe nákup. Neselhává hlavní
- * webhook, když Fakturoid není dosažitelný — uloží invoice ID zpět do
- * `purchase` (lookup podle stripePaymentId) jakmile odpověď přijde.
- */
-async function issueFakturoidInvoice(
-  db: ReturnType<typeof drizzle>,
-  env: FakturoidEnv,
-  opts: {
-    sessionId: string;
-    email: string;
-    type: "individual" | "organization";
-    domain: string | null;
-    amount: number;
-    billing: BillingFromMetadata;
-  },
-): Promise<void> {
-  try {
-    const [existing] = await db
-      .select({ fakturoidInvoiceId: purchase.fakturoidInvoiceId })
-      .from(purchase)
-      .where(eq(purchase.stripePaymentId, opts.sessionId))
-      .limit(1);
-
-    if (!existing || existing.fakturoidInvoiceId) return;
-
-    const res = await exportPurchaseInvoice(
-      env,
-      {
-        email: opts.email,
-        type: opts.type,
-        domain: opts.domain,
-        amount: opts.amount,
-        variableSymbol: null,
-        ...opts.billing,
-      },
-      { sendEmail: true },
-    );
-    if (res.ok && res.invoiceId) {
-      await db
-        .update(purchase)
-        .set({
-          fakturoidInvoiceId: res.invoiceId,
-          fakturoidSubjectId: res.subjectId ?? null,
-        })
-        .where(eq(purchase.stripePaymentId, opts.sessionId));
-    } else if (!res.ok) {
-      console.error(`[stripe] Fakturoid invoice failed for ${maskEmail(opts.email)} (session ${opts.sessionId}):`, res.error);
-    }
-  } catch (err) {
-    console.error(`[stripe] Fakturoid threw for ${maskEmail(opts.email)} (session ${opts.sessionId}):`, err);
-  }
-}
-
-export const issueFakturoidInvoiceForTest = issueFakturoidInvoice;
-
 async function handleSubscriptionDeleted(
   db: ReturnType<typeof drizzle>,
   data: Record<string, unknown>,
@@ -561,17 +505,7 @@ async function handleInvoicePaid(
     paidAt,
     paidAtSource: "stripe_api",
     paidAtConfidence: hasPaidAt ? "exact" : "estimated",
-    billing: {
-      email: p.email,
-      invoiceEmail: p.invoiceEmail,
-      companyName: p.companyName,
-      companyIco: p.companyIco,
-      companyDic: p.companyDic,
-      companyAddress: p.companyAddress,
-      companyCity: p.companyCity,
-      companyZip: p.companyZip,
-      contactName: p.contactName,
-    },
+    billing: purchaseToBillingSnapshot(p),
   });
 }
 

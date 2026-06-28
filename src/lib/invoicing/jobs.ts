@@ -98,6 +98,39 @@ export function paidOnFromDate(d: Date): string {
 }
 
 /**
+ * Inverze paidOnFromDate: účetní datum (YYYY-MM-DD) → timestamp. Kotví na poledne
+ * UTC, takže po převodu zpět do TZ Praha zůstává stejný den (bez DST posunu).
+ */
+export function paidOnToTimestamp(paidOn: string): Date {
+  return new Date(`${paidOn}T12:00:00Z`);
+}
+
+/** Z purchase řádku (nebo jeho billing podmnožiny) vyrobí billing snapshot pro job. */
+export function purchaseToBillingSnapshot(p: {
+  email: string;
+  invoiceEmail?: string | null;
+  companyName?: string | null;
+  companyIco?: string | null;
+  companyDic?: string | null;
+  companyAddress?: string | null;
+  companyCity?: string | null;
+  companyZip?: string | null;
+  contactName?: string | null;
+}): BillingSnapshot {
+  return {
+    email: p.email,
+    invoiceEmail: p.invoiceEmail,
+    companyName: p.companyName,
+    companyIco: p.companyIco,
+    companyDic: p.companyDic,
+    companyAddress: p.companyAddress,
+    companyCity: p.companyCity,
+    companyZip: p.companyZip,
+    contactName: p.contactName,
+  };
+}
+
+/**
  * Deterministický Fakturoid `custom_id`. Vstupní faktura je vázaná na purchase,
  * renewal na konkrétní Stripe invoice (aby šlo mít víc faktur k jednomu subscription).
  */
