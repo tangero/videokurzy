@@ -1401,7 +1401,11 @@ admin.get("/admin/fakturace", async (c) => {
 
         {ok && (
           <div class="mb-4 rounded-lg border-2 border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-            {ok === "retry" ? "Úloha znovu zařazena ke zpracování." : "Úloha uzavřena."}
+            {ok === "retry"
+              ? "Úloha znovu zařazena ke zpracování."
+              : ok === "date"
+                ? "Datum potvrzeno, faktura zařazena k vystavení."
+                : "Úloha uzavřena."}
           </div>
         )}
         {err && (
@@ -1458,6 +1462,18 @@ admin.get("/admin/fakturace", async (c) => {
                   <td class="px-3 py-2 text-xs text-red-700">{r.lastErrorCode ?? ""}</td>
                   <td class="px-3 py-2">
                     <div class="flex flex-col gap-2">
+                      {r.state === "needs_manual_review" && (
+                        <form method="post" action={`/admin/fakturace/${r.id}/set-date`} class="flex gap-1">
+                          <input
+                            type="date"
+                            name="paidOn"
+                            required
+                            title="Skutečné datum platby (účetní datum faktury)"
+                            class="border rounded px-1 py-0.5 text-xs"
+                          />
+                          <button class="text-emerald-700 hover:underline text-xs">Potvrdit datum a vystavit</button>
+                        </form>
+                      )}
                       <form method="post" action={`/admin/fakturace/${r.id}/retry`}>
                         <button class="text-blue-600 hover:underline text-xs">Zkusit znovu</button>
                       </form>
@@ -1524,6 +1540,41 @@ admin.post("/admin/fakturace/:id/resolve", async (c) => {
     })
     .where(eq(invoiceJob.id, jobId));
   return c.redirect("/admin/fakturace?ok=resolved");
+});
+
+// Potvrzení účetního data u estimated jobů (needs_manual_review). Bez tohoto by
+// job s odhadnutým datem (chybějící datum z banky/Stripe) zůstal nefakturovatelný:
+// retry jen resetuje stav, ale paidOn dál drží fallback → znovu manual review.
+// Tady admin zadá skutečné datum, označí confidence=exact a job se vystaví.
+admin.post("/admin/fakturace/:id/set-date", async (c) => {
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const rawPaidOn = String(body.paidOn ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawPaidOn)) {
+    return c.redirect(`/admin/fakturace?err=${encodeURIComponent("Neplatné datum (formát YYYY-MM-DD).")}`);
+  }
+  // Poledne UTC → po převodu do TZ Praha stejný účetní den (bez DST posunu).
+  await db
+    .update(invoiceJob)
+    .set({
+      paidOn: rawPaidOn,
+      paidAt: new Date(`${rawPaidOn}T12:00:00Z`),
+      paidAtConfidence: "exact",
+      state: "failed_retryable",
+      nextRetryAt: new Date(),
+      attempts: 0,
+      lastErrorCode: null,
+      lastErrorStatus: null,
+      lastErrorMessage: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  try {
+    await enqueueInvoiceJob(c.env, jobId);
+  } catch (e) {
+    console.error(`[admin] enqueue set-date failed for job ${jobId}:`, e);
+  }
+  return c.redirect("/admin/fakturace?ok=date");
 });
 
 // Approve organization (htmx)
