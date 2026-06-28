@@ -1462,7 +1462,7 @@ admin.get("/admin/fakturace", async (c) => {
                   <td class="px-3 py-2 text-xs text-red-700">{r.lastErrorCode ?? ""}</td>
                   <td class="px-3 py-2">
                     <div class="flex flex-col gap-2">
-                      {r.state === "needs_manual_review" && (
+                      {r.lastErrorCode === "estimated_paid_date" && (
                         <form method="post" action={`/admin/fakturace/${r.id}/set-date`} class="flex gap-1">
                           <input
                             type="date"
@@ -1474,9 +1474,11 @@ admin.get("/admin/fakturace", async (c) => {
                           <button class="text-emerald-700 hover:underline text-xs">Potvrdit datum a vystavit</button>
                         </form>
                       )}
-                      <form method="post" action={`/admin/fakturace/${r.id}/retry`}>
-                        <button class="text-blue-600 hover:underline text-xs">Zkusit znovu</button>
-                      </form>
+                      {r.lastErrorCode !== "estimated_paid_date" && (
+                        <form method="post" action={`/admin/fakturace/${r.id}/retry`}>
+                          <button class="text-blue-600 hover:underline text-xs">Zkusit znovu</button>
+                        </form>
+                      )}
                       <form method="post" action={`/admin/fakturace/${r.id}/resolve`} class="flex gap-1">
                         <input
                           name="note"
@@ -1500,6 +1502,21 @@ admin.get("/admin/fakturace", async (c) => {
 admin.post("/admin/fakturace/:id/retry", async (c) => {
   const jobId = parseInt(c.req.param("id"), 10);
   const db = drizzle(c.env.DB);
+
+  // Estimated job (odhadnuté datum, faktura ještě nevznikla) by se prostým retry
+  // jen zacyklil zpět do manual review — paidOn dál drží fallback. Nasměruj admina
+  // na 'Potvrdit datum a vystavit', kde zadá skutečné datum.
+  const [j] = await db
+    .select({ paidAtConfidence: invoiceJob.paidAtConfidence, fakturoidInvoiceId: invoiceJob.fakturoidInvoiceId })
+    .from(invoiceJob)
+    .where(eq(invoiceJob.id, jobId))
+    .limit(1);
+  if (j && j.paidAtConfidence === "estimated" && !j.fakturoidInvoiceId) {
+    return c.redirect(
+      `/admin/fakturace?err=${encodeURIComponent("Odhadnuté datum platby — použij 'Potvrdit datum a vystavit', prostý retry by se zacyklil.")}`,
+    );
+  }
+
   // Reset na čerstvý pokus: stav, nextRetryAt=teď, vynuluj počítadlo i chybu.
   await db
     .update(invoiceJob)
