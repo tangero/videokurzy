@@ -13,7 +13,7 @@ import { enqueueCcNewsItem } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
-import { shouldInvoice } from "./lib/invoicing/jobs";
+import { shouldInvoice, purchaseToBillingSnapshot, paidOnToTimestamp } from "./lib/invoicing/jobs";
 import { reconcileInvoiceJobs } from "./lib/invoicing/reconcile";
 import {
   ACCESS_DURATION_DAYS,
@@ -357,7 +357,7 @@ async function activateMatchedPurchase(
     // je nečitelné → fallback na teď s confidence='estimated' (job pak nepošle
     // fakturu automaticky, ale jde do needs_manual_review).
     const dateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(match.paidOnIso ?? "");
-    const paidAt = dateMatch ? new Date(`${dateMatch[1]}T12:00:00Z`) : new Date();
+    const paidAt = dateMatch ? paidOnToTimestamp(dateMatch[1]) : new Date();
     await createAndEnqueueInvoiceJob(db, env, {
       purchaseId: p.id,
       jobKind: "initial_purchase",
@@ -367,17 +367,7 @@ async function activateMatchedPurchase(
       paidAt,
       paidAtSource: "bank_api",
       paidAtConfidence: dateMatch ? "exact" : "estimated",
-      billing: {
-        email: p.email,
-        invoiceEmail: p.invoiceEmail,
-        companyName: p.companyName,
-        companyIco: p.companyIco,
-        companyDic: p.companyDic,
-        companyAddress: p.companyAddress,
-        companyCity: p.companyCity,
-        companyZip: p.companyZip,
-        contactName: p.contactName,
-      },
+      billing: purchaseToBillingSnapshot(p),
     });
   }
 }

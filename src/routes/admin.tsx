@@ -49,7 +49,7 @@ import {
   markInvoicePaid,
 } from "../lib/fakturoid";
 import { createAndEnqueueInvoiceJob, enqueueInvoiceJob } from "../invoice-queue";
-import { shouldInvoice, paidOnFromDate } from "../lib/invoicing/jobs";
+import { shouldInvoice, paidOnFromDate, paidOnToTimestamp, purchaseToBillingSnapshot } from "../lib/invoicing/jobs";
 import { maskEmail } from "../lib/errors";
 import Stripe from "stripe";
 import {
@@ -1317,19 +1317,9 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
         paymentSource: "manual",
         sourceEventId: `manual-confirm-${purchaseId}`,
         amount: p.amountPaid,
-        paidAt: new Date(`${paidOn}T12:00:00Z`),
+        paidAt: paidOnToTimestamp(paidOn),
         paidAtSource: "manual_admin_input",
-        billing: {
-          email: p.email,
-          invoiceEmail: p.invoiceEmail,
-          companyName: p.companyName,
-          companyIco: p.companyIco,
-          companyDic: p.companyDic,
-          companyAddress: p.companyAddress,
-          companyCity: p.companyCity,
-          companyZip: p.companyZip,
-          contactName: p.contactName,
-        },
+        billing: purchaseToBillingSnapshot(p),
       });
     }
 
@@ -1587,7 +1577,7 @@ admin.post("/admin/fakturace/:id/set-date", async (c) => {
     .update(invoiceJob)
     .set({
       paidOn: rawPaidOn,
-      paidAt: new Date(`${rawPaidOn}T12:00:00Z`),
+      paidAt: paidOnToTimestamp(rawPaidOn),
       paidAtConfidence: "exact",
       state: "failed_retryable",
       nextRetryAt: new Date(),
