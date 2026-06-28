@@ -115,7 +115,10 @@ describe("cc-news prepareDraftAndApproval (R3 dry-run)", () => {
     const result = await prepareDraftAndApproval(db, env as never, "item-1", "x", meta, NOW);
 
     const token = decodeURIComponent(result.approveUrl.split("token=")[1]);
-    const intent = await verifyApprovalIntent(env as never, token);
+    // Ověřuj proti stejnému (zamrazenému) času jako podpis — jinak token podepsaný
+    // fixním NOW po 7denním TTL „expiruje" vůči reálnému Date.now() a test je
+    // clock-dependent (rozsvítí se červeně 7 dní po NOW).
+    const intent = await verifyApprovalIntent(env as never, token, NOW.getTime());
     expect(intent).not.toBeNull();
 
     const rows = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "item-1"));
