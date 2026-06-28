@@ -106,6 +106,31 @@ describe("processInvoiceJob", () => {
     expect(calls).toContain("POST invoices/500/message.json");
   });
 
+  it("vstupní faktura zrcadlí fakturoidInvoiceId na purchase (legacy nástroje)", async () => {
+    const pid = await seedPurchase();
+    const jid = await seedJob(pid);
+    await processInvoiceJob(db(), E, jid, fakeApi().api);
+    const [p] = await db()
+      .select({ fid: purchase.fakturoidInvoiceId })
+      .from(purchase)
+      .where(eq(purchase.id, pid))
+      .limit(1);
+    expect(p.fid).toBe(500);
+  });
+
+  it("renewal NEpřepisuje purchase.fakturoidInvoiceId (zůstává initial)", async () => {
+    const pid = await seedPurchase();
+    await db().update(purchase).set({ fakturoidInvoiceId: 111 }).where(eq(purchase.id, pid));
+    const jid = await seedJob(pid, { jobKind: "stripe_renewal", customId: `vk-stripe-invoice-r${pid}` });
+    await processInvoiceJob(db(), E, jid, fakeApi({ createdInvoiceId: 999 }).api);
+    const [p] = await db()
+      .select({ fid: purchase.fakturoidInvoiceId })
+      .from(purchase)
+      .where(eq(purchase.id, pid))
+      .limit(1);
+    expect(p.fid).toBe(111);
+  });
+
   it("resume: s předvyplněnou fakturou + platbou jen odešle", async () => {
     const pid = await seedPurchase();
     const jid = await seedJob(pid, {

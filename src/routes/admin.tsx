@@ -1507,13 +1507,24 @@ admin.post("/admin/fakturace/:id/retry", async (c) => {
   // jen zacyklil zpět do manual review — paidOn dál drží fallback. Nasměruj admina
   // na 'Potvrdit datum a vystavit', kde zadá skutečné datum.
   const [j] = await db
-    .select({ paidAtConfidence: invoiceJob.paidAtConfidence, fakturoidInvoiceId: invoiceJob.fakturoidInvoiceId })
+    .select({
+      paidAtConfidence: invoiceJob.paidAtConfidence,
+      fakturoidInvoiceId: invoiceJob.fakturoidInvoiceId,
+      lastErrorCode: invoiceJob.lastErrorCode,
+    })
     .from(invoiceJob)
     .where(eq(invoiceJob.id, jobId))
     .limit(1);
   if (j && j.paidAtConfidence === "estimated" && !j.fakturoidInvoiceId) {
     return c.redirect(
       `/admin/fakturace?err=${encodeURIComponent("Odhadnuté datum platby — použij 'Potvrdit datum a vystavit', prostý retry by se zacyklil.")}`,
+    );
+  }
+  // Nedovol tiché vystavení zaokrouhlené částky — částka není celá koruna a vyžaduje
+  // ruční korekci u zdroje, ne slepý retry (jinak by faktura šla na Math.round částku).
+  if (j && j.lastErrorCode === "non_integer_amount" && !j.fakturoidInvoiceId) {
+    return c.redirect(
+      `/admin/fakturace?err=${encodeURIComponent("Částka není celá koruna — oprav u zdroje a vyřeš ručně, retry by vystavil zaokrouhlenou částku.")}`,
     );
   }
 

@@ -143,6 +143,18 @@ export async function processInvoiceJob(
         .update(invoiceJob)
         .set({ fakturoidInvoiceId: invoiceId, fakturoidSubjectId: created.subjectId, issuedAt: new Date() })
         .where(eq(invoiceJob.id, jobId));
+
+      // Zrcadli na purchase.fakturoidInvoiceId (jen vstupní faktura). Legacy admin
+      // nástroje (backfill / link-orphans / mark-invoices-paid) gatují na tomto
+      // sloupci — bez zrcadlení by outboxem vystavený nákup viděly jako nefakturovaný
+      // a vystavily by DRUHOU fakturu + znovu poslaly e-mail. Renewals sloupec
+      // nemění (zůstává ukazatel na initial fakturu).
+      if (job.jobKind === "initial_purchase") {
+        await db
+          .update(purchase)
+          .set({ fakturoidInvoiceId: invoiceId, fakturoidSubjectId: created.subjectId })
+          .where(eq(purchase.id, job.purchaseId));
+      }
     }
 
     // Krok 2 — zaeviduj platbu (idempotentně).
@@ -173,6 +185,13 @@ export async function processInvoiceJob(
   } catch (err) {
     const e = sanitizeInvoiceError(err);
     const permanent = job.attempts >= MAX_ATTEMPTS;
+    // Strukturovaný log — failed_permanent znamená, že zákazník fakturu nedostal.
+    // Bez logu by trvalé selhání (špatný token, odmítnutý subjekt) bylo neviditelné
+    // až do ručního pohledu do admin tabulky.
+    console.error(
+      `[invoicing] job ${jobId} (purchase ${job.purchaseId}) ${permanent ? "failed_permanent" : "failed_retryable"} ` +
+        `attempt ${job.attempts}: ${e.code}${e.status ? ` (${e.status})` : ""} ${e.message}`,
+    );
     await db
       .update(invoiceJob)
       .set({
@@ -193,6 +212,7 @@ async function finalizeManualReview(
   reason: string,
   detail: string,
 ): Promise<ProcessResult> {
+  console.warn(`[invoicing] job ${jobId} → needs_manual_review: ${reason} (${detail})`);
   await db
     .update(invoiceJob)
     .set({ state: "needs_manual_review", lastErrorCode: reason, lastErrorMessage: detail, nextRetryAt: null })

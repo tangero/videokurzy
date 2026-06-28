@@ -42,7 +42,10 @@ export async function reconcileInvoiceJobs(
         and(eq(invoiceJob.state, "processing"), lt(invoiceJob.claimedAt, staleBefore)),
       ),
     )
-    .orderBy(asc(invoiceJob.nextRetryAt), asc(invoiceJob.createdAt))
+    // Řadit dle stáří (nejstarší dluh první). NE dle nextRetryAt — SQLite ASC dává
+    // NULL první, takže nával nových pending (nextRetryAt=NULL) by pod LIMITem
+    // vyhladověl starší failed_retryable s konkrétním (dřívějším) nextRetryAt.
+    .orderBy(asc(invoiceJob.createdAt))
     .limit(RECONCILE_LIMIT);
 
   let enqueued = 0;
