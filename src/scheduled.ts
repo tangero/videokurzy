@@ -12,7 +12,9 @@ import { detectRecent, defaultFetchers } from "./lib/cc-news/detect";
 import { enqueueCcNewsItem } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
-import { exportPurchaseInvoice } from "./lib/fakturoid";
+import { createAndEnqueueInvoiceJob } from "./invoice-queue";
+import { shouldInvoice } from "./lib/invoicing/jobs";
+import { reconcileInvoiceJobs } from "./lib/invoicing/reconcile";
 import {
   ACCESS_DURATION_DAYS,
   FIO_LOOKBACK_DAYS,
@@ -41,6 +43,18 @@ export async function handleScheduled(
 ): Promise<void> {
   const db = drizzle(env.DB);
   const now = new Date();
+
+  // Fakturační reconcile běží na vlastním 15min cronu — záchranná síť outboxu.
+  // Denní (0 3) maintenance se sem NEpouští, aby neběžela 96×/den.
+  if (event.cron === "*/15 * * * *") {
+    try {
+      const r = await reconcileInvoiceJobs(db, env, now);
+      console.log(`[cron] invoice reconcile: enqueued=${r.enqueued}, scanned=${r.scanned}`);
+    } catch (err) {
+      console.error("[cron] reconcileInvoiceJobs failed:", err);
+    }
+    return;
+  }
 
   try {
     // Jeden scan proti oběma bankám (FIO i Creditas) — viz scanBankPayments.
@@ -207,6 +221,9 @@ export async function scanBankPayments(
     bank: "fio" | "creditas";
     transactionId: string;
     amountPaid: number;
+    // Datum bankovní transakce (připsání) — účetní datum faktury, ne čas cronu.
+    // null = banka datum neuvedla → fakturace půjde do estimated/manual review.
+    paidOnIso: string | null;
   }> = [];
 
   for (const p of pending) {
@@ -225,6 +242,7 @@ export async function scanBankPayments(
         bank: "fio",
         transactionId: String(r.transaction.id),
         amountPaid: r.transaction.amount,
+        paidOnIso: r.transaction.date,
       });
       return true;
     };
@@ -237,6 +255,7 @@ export async function scanBankPayments(
         bank: "creditas",
         transactionId: r.transaction.id,
         amountPaid: r.transaction.amount,
+        paidOnIso: r.transaction.date,
       });
       return true;
     };
@@ -256,6 +275,7 @@ export async function scanBankPayments(
         bank: m.bank,
         transactionId: m.transactionId,
         amountPaid: m.amountPaid,
+        paidOnIso: m.paidOnIso,
       });
       matched++;
     } catch (err) {
@@ -291,7 +311,7 @@ async function activateMatchedPurchase(
   db: ReturnType<typeof drizzle>,
   env: Env,
   p: typeof purchase.$inferSelect,
-  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number },
+  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number; paidOnIso?: string | null },
 ): Promise<void> {
   const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
   const txColumn =
@@ -327,21 +347,29 @@ async function activateMatchedPurchase(
     ),
   }).catch((err) => console.error(`[cron] email send failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
 
-  // Vystavit fakturu ve Fakturoidu. Awaitujeme úmyslně — fire-and-forget by
-  // worker po skončení handleru zabil a fakturoidInvoiceId by se neuložil,
-  // i když by Fakturoid stihl fakturu vytvořit (orphan invoice).
-  const domain = p.type === "organization" ? p.email.split("@")[1] : null;
-  try {
-    const res = await exportPurchaseInvoice(
-      env,
-      {
+  // Fakturace přes outbox — založ invoice_job + zařaď. I při výpadku enqueue
+  // řádek v DB zůstane a reconcile cron ho doručí (žádná osiřelá faktura).
+  // Fakturuj skutečně přijatou bankovní částku (match.amountPaid), ne očekávání.
+  if (shouldInvoice({ kind: p.kind, amountPaid: match.amountPaid })) {
+    // Účetní datum = datum bankovní transakce (připsání), NE čas běhu cronu.
+    // FIO vrací "YYYY-MM-DD+TZ", Creditas ISO — vytáhneme jen datum a kotvíme na
+    // poledne UTC (po převodu do TZ Praha zůstává stejný den). Když datum chybí /
+    // je nečitelné → fallback na teď s confidence='estimated' (job pak nepošle
+    // fakturu automaticky, ale jde do needs_manual_review).
+    const dateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(match.paidOnIso ?? "");
+    const paidAt = dateMatch ? new Date(`${dateMatch[1]}T12:00:00Z`) : new Date();
+    await createAndEnqueueInvoiceJob(db, env, {
+      purchaseId: p.id,
+      jobKind: "initial_purchase",
+      paymentSource: match.bank, // 'fio' | 'creditas'
+      sourceEventId: match.transactionId,
+      amount: match.amountPaid,
+      paidAt,
+      paidAtSource: "bank_api",
+      paidAtConfidence: dateMatch ? "exact" : "estimated",
+      billing: {
         email: p.email,
-        type: p.type as "individual" | "organization",
-        domain,
-        // Fakturuj skutečně přijatou bankovní částku, ne nakonfigurované
-        // očekávání — banka mohla spárovat přesnou, ale jinak vyjádřenou částku.
-        amount: match.amountPaid,
-        variableSymbol: p.variableSymbol!,
+        invoiceEmail: p.invoiceEmail,
         companyName: p.companyName,
         companyIco: p.companyIco,
         companyDic: p.companyDic,
@@ -350,21 +378,7 @@ async function activateMatchedPurchase(
         companyZip: p.companyZip,
         contactName: p.contactName,
       },
-      { sendEmail: true },
-    );
-    if (res.ok && res.invoiceId) {
-      await db
-        .update(purchase)
-        .set({
-          fakturoidInvoiceId: res.invoiceId,
-          fakturoidSubjectId: res.subjectId ?? null,
-        })
-        .where(eq(purchase.id, p.id));
-    } else if (!res.ok) {
-      console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
-    }
-  } catch (err) {
-    console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err);
+    });
   }
 }
 

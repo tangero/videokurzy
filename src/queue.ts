@@ -8,6 +8,7 @@ import { invalidateAccessCache } from "./lib/access";
 import { maskEmail } from "./lib/errors";
 import { escapeHtml } from "./lib/markdown";
 import { exportPurchaseInvoice, type FakturoidEnv } from "./lib/fakturoid";
+import { createAndEnqueueInvoiceJob } from "./invoice-queue";
 import { sendEmail } from "./lib/email";
 import { ADMIN_EMAILS } from "./config/admin";
 import type { Env } from "./types";
@@ -27,6 +28,9 @@ type WebhookMessageType =
 interface WebhookMessage {
   type: WebhookMessageType;
   data: Record<string, unknown>;
+  // Stripe event meta — nese se kvůli fakturaci (paidAt z času Stripe události).
+  eventId?: string;
+  eventCreated?: number;
 }
 
 /** Payload zprávy cc-news.detected — jen reference, žádné PII ani obsah. */
@@ -92,7 +96,7 @@ export async function handleQueue(
     try {
       switch (type) {
         case "checkout.session.completed":
-          await handleCheckoutCompleted(db, data, env);
+          await handleCheckoutCompleted(db, data, env, message.body.eventCreated);
           break;
 
         case "customer.subscription.deleted":
@@ -100,7 +104,7 @@ export async function handleQueue(
           break;
 
         case "invoice.paid":
-          await handleInvoicePaid(db, data);
+          await handleInvoicePaid(db, data, env);
           break;
 
         case "cc-news.detected":
@@ -231,10 +235,51 @@ function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
   };
 }
 
+/**
+ * Založí fakturační outbox úlohu pro Stripe checkout nákup + zařadí do fronty.
+ * purchaseId dohledá podle stripePaymentId (insert výše je onConflictDoNothing
+ * bez returning). paidAt z času Stripe události; bez něj fallback na teď
+ * s confidence='estimated' (job se pak neodešle automaticky).
+ */
+async function enqueueCheckoutInvoice(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  opts: {
+    sessionId: string;
+    email: string;
+    type: "individual" | "organization";
+    paidAmountCzk: number;
+    billing: BillingFromMetadata;
+    eventCreated?: number;
+  },
+): Promise<void> {
+  if (opts.paidAmountCzk <= 0) return;
+  const [p] = await db
+    .select({ id: purchase.id })
+    .from(purchase)
+    .where(eq(purchase.stripePaymentId, opts.sessionId))
+    .limit(1);
+  if (!p) return;
+
+  const hasExact = typeof opts.eventCreated === "number";
+  await createAndEnqueueInvoiceJob(db, env, {
+    purchaseId: p.id,
+    jobKind: "initial_purchase",
+    paymentSource: "stripe_checkout",
+    sourceEventId: opts.sessionId,
+    amount: opts.paidAmountCzk,
+    paidAt: hasExact ? new Date(opts.eventCreated! * 1000) : new Date(),
+    paidAtSource: "stripe_api",
+    paidAtConfidence: hasExact ? "exact" : "estimated",
+    billing: { email: opts.email, ...opts.billing },
+  });
+}
+
 async function handleCheckoutCompleted(
   db: ReturnType<typeof drizzle>,
   data: Record<string, unknown>,
-  env: Env
+  env: Env,
+  eventCreated?: number
 ) {
   const metadata = data.metadata as Record<string, string> | undefined;
   const customerEmail = (data.customer_email as string) ?? (data.customer_details as Record<string, unknown>)?.email as string ?? "";
@@ -290,16 +335,14 @@ async function handleCheckoutCompleted(
       { type: "individual", paymentMethod: "stripe" }
     );
 
-    if (paidAmountCzk > 0) {
-      await issueFakturoidInvoice(db, env, {
-        sessionId,
-        email: customerEmail.toLowerCase(),
-        type: "individual",
-        domain: null,
-        amount: paidAmountCzk,
-        billing,
-      });
-    }
+    await enqueueCheckoutInvoice(db, env, {
+      sessionId,
+      email: customerEmail.toLowerCase(),
+      type: "individual",
+      paidAmountCzk,
+      billing,
+      eventCreated,
+    });
   } else if (metadata.type === "organization") {
     const customFields = data.custom_fields as
       | Array<{ key: string; text?: { value: string } }>
@@ -347,16 +390,14 @@ async function handleCheckoutCompleted(
       { type: "organization", domain, paymentMethod: "stripe" }
     );
 
-    if (paidAmountCzk > 0) {
-      await issueFakturoidInvoice(db, env, {
-        sessionId,
-        email: customerEmail.toLowerCase(),
-        type: "organization",
-        domain,
-        amount: paidAmountCzk,
-        billing,
-      });
-    }
+    await enqueueCheckoutInvoice(db, env, {
+      sessionId,
+      email: customerEmail.toLowerCase(),
+      type: "organization",
+      paidAmountCzk,
+      billing,
+      eventCreated,
+    });
   }
 
   // Invite token spotřebujeme až po aktivaci nákupu. purchase.id dohledáme podle
@@ -463,7 +504,8 @@ async function handleSubscriptionDeleted(
 
 async function handleInvoicePaid(
   db: ReturnType<typeof drizzle>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  env: Env
 ) {
   const subscriptionId = data.subscription as string;
   if (!subscriptionId) return;
@@ -474,6 +516,63 @@ async function handleInvoicePaid(
     .update(purchase)
     .set({ expiresAt: newExpiry, status: "active" })
     .where(eq(purchase.stripeSubscriptionId, subscriptionId));
+
+  // Fakturace JEN pro cyklické obnovení. První platba (subscription_create) se
+  // fakturuje přes checkout.session.completed → tady by vznikla duplicita.
+  if ((data.billing_reason as string | undefined) !== "subscription_cycle") return;
+
+  const stripeInvoiceId = data.id as string | undefined;
+  if (!stripeInvoiceId) return;
+  const amountCents = Number(data.amount_paid ?? 0);
+  const amount = amountCents > 0 ? Math.round(amountCents / 100) : 0;
+  if (amount <= 0) return;
+
+  const paidAtUnix = Number((data.status_transitions as Record<string, unknown> | undefined)?.paid_at);
+  const hasPaidAt = Number.isFinite(paidAtUnix) && paidAtUnix > 0;
+  // Bez skutečného času platby kotvíme na teď, ale confidence='estimated' →
+  // faktura se neodešle automaticky se špatným účetním datem (jde k revizi).
+  const paidAt = hasPaidAt ? new Date(paidAtUnix * 1000) : new Date();
+
+  const [p] = await db
+    .select({
+      id: purchase.id,
+      email: purchase.email,
+      invoiceEmail: purchase.invoiceEmail,
+      companyName: purchase.companyName,
+      companyIco: purchase.companyIco,
+      companyDic: purchase.companyDic,
+      companyAddress: purchase.companyAddress,
+      companyCity: purchase.companyCity,
+      companyZip: purchase.companyZip,
+      contactName: purchase.contactName,
+    })
+    .from(purchase)
+    .where(eq(purchase.stripeSubscriptionId, subscriptionId))
+    .limit(1);
+  if (!p) return;
+
+  await createAndEnqueueInvoiceJob(db, env, {
+    purchaseId: p.id,
+    jobKind: "stripe_renewal",
+    paymentSource: "stripe_renewal",
+    sourceEventId: stripeInvoiceId,
+    stripeInvoiceId,
+    amount,
+    paidAt,
+    paidAtSource: "stripe_api",
+    paidAtConfidence: hasPaidAt ? "exact" : "estimated",
+    billing: {
+      email: p.email,
+      invoiceEmail: p.invoiceEmail,
+      companyName: p.companyName,
+      companyIco: p.companyIco,
+      companyDic: p.companyDic,
+      companyAddress: p.companyAddress,
+      companyCity: p.companyCity,
+      companyZip: p.companyZip,
+      contactName: p.contactName,
+    },
+  });
 }
 
 /**

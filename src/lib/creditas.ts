@@ -49,7 +49,8 @@ export interface CreditasPaymentMatchResult {
   found: boolean;
   transaction?: {
     id: string;
-    date: string;
+    // null = banka datum neuvedla. NEfabrikovat — viz fio.ts (účetní datum faktury).
+    date: string | null;
     amount: number;
     senderName: string | null;
   };
@@ -104,7 +105,7 @@ export function matchCreditasPayment(
         found: true,
         transaction: {
           id: txId,
-          date: tx.effectiveDate ?? new Date().toISOString(),
+          date: tx.effectiveDate ?? null,
           amount,
           senderName: tx.partnerAccount?.partnerName ?? null,
         },

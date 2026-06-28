@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
-import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch } from "../db/schema";
+import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch, invoiceJob } from "../db/schema";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml, ccNewsNewsletterHtml } from "../lib/email";
 import {
@@ -48,6 +48,9 @@ import {
   listSubjectInvoices,
   markInvoicePaid,
 } from "../lib/fakturoid";
+import { createAndEnqueueInvoiceJob, enqueueInvoiceJob } from "../invoice-queue";
+import { shouldInvoice, paidOnFromDate } from "../lib/invoicing/jobs";
+import { maskEmail } from "../lib/errors";
 import Stripe from "stripe";
 import {
   AdminNav,
@@ -1284,12 +1287,322 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
       grantedBy: currentUser.email,
       amountPaid,
     });
+
+    // Fakturace přes outbox. Datum platby (paidOn) lze zadat ručně — default dnes.
+    // Audit potvrzení (kdo) drží grantedBy na purchase; paidOn je účetní datum.
+    const rawPaidOn = String(body.paidOn ?? "").trim();
+    const paidOn = /^\d{4}-\d{2}-\d{2}$/.test(rawPaidOn) ? rawPaidOn : paidOnFromDate(new Date());
+    const [p] = await db
+      .select({
+        kind: purchase.kind,
+        amountPaid: purchase.amountPaid,
+        email: purchase.email,
+        invoiceEmail: purchase.invoiceEmail,
+        companyName: purchase.companyName,
+        companyIco: purchase.companyIco,
+        companyDic: purchase.companyDic,
+        companyAddress: purchase.companyAddress,
+        companyCity: purchase.companyCity,
+        companyZip: purchase.companyZip,
+        contactName: purchase.contactName,
+      })
+      .from(purchase)
+      .where(eq(purchase.id, purchaseId))
+      .limit(1);
+    if (p && shouldInvoice({ kind: p.kind, amountPaid: p.amountPaid })) {
+      // Poledne UTC → po převodu do TZ Praha zůstává stejný účetní den (bez DST posunu).
+      await createAndEnqueueInvoiceJob(db, c.env, {
+        purchaseId,
+        jobKind: "initial_purchase",
+        paymentSource: "manual",
+        sourceEventId: `manual-confirm-${purchaseId}`,
+        amount: p.amountPaid,
+        paidAt: new Date(`${paidOn}T12:00:00Z`),
+        paidAtSource: "manual_admin_input",
+        billing: {
+          email: p.email,
+          invoiceEmail: p.invoiceEmail,
+          companyName: p.companyName,
+          companyIco: p.companyIco,
+          companyDic: p.companyDic,
+          companyAddress: p.companyAddress,
+          companyCity: p.companyCity,
+          companyZip: p.companyZip,
+          contactName: p.contactName,
+        },
+      });
+    }
+
     await invalidateAccessCache(c.env.KV, id);
     return c.redirect(`/admin/users/${id}?ok=confirmed`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Platbu se nepodařilo potvrdit.");
     return c.redirect(`/admin/users/${id}?err=${message}`);
   }
+});
+
+// ─── Fakturace (outbox invoice_job) ──────────────────────────────────────
+// Panel pro dohled nad fakturačními úlohami: filtr dle stavu, ruční retry a
+// uzavření (resolved_manually s povinnou poznámkou). Viz plán sekce 5.9.
+type InvoiceJobState = NonNullable<(typeof invoiceJob.$inferInsert)["state"]>;
+const ATTENTION_STATES = [
+  "pending",
+  "processing",
+  "failed_retryable",
+  "failed_permanent",
+  "needs_manual_review",
+  "needs_reconcile",
+] as const;
+
+admin.get("/admin/fakturace", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const stateParam = c.req.query("state");
+
+  const where =
+    stateParam && stateParam !== "all"
+      ? eq(invoiceJob.state, stateParam as InvoiceJobState)
+      : stateParam === "all"
+        ? undefined
+        : inArray(invoiceJob.state, [...ATTENTION_STATES]);
+
+  const base = db
+    .select({
+      id: invoiceJob.id,
+      customId: invoiceJob.customId,
+      state: invoiceJob.state,
+      amount: invoiceJob.amount,
+      paidOn: invoiceJob.paidOn,
+      attempts: invoiceJob.attempts,
+      lastErrorCode: invoiceJob.lastErrorCode,
+      email: invoiceJob.email,
+      createdAt: invoiceJob.createdAt,
+    })
+    .from(invoiceJob);
+
+  const rows = await (where ? base.where(where) : base)
+    .orderBy(desc(invoiceJob.createdAt))
+    .limit(100);
+
+  const counts = await db
+    .select({ state: invoiceJob.state, n: sql<number>`count(*)` })
+    .from(invoiceJob)
+    .groupBy(invoiceJob.state);
+  const countMap = new Map<string, number>(counts.map((r) => [r.state, r.n]));
+
+  const ok = c.req.query("ok");
+  const err = c.req.query("err");
+
+  return c.html(
+    <Layout title="Fakturace" user={currentUser}>
+      <div class="max-w-5xl mx-auto px-4 py-8">
+        <h1 class="text-2xl font-bold mb-6">Fakturace</h1>
+        <AdminNav active="/admin" />
+
+        {ok && (
+          <div class="mb-4 rounded-lg border-2 border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            {ok === "retry"
+              ? "Úloha znovu zařazena ke zpracování."
+              : ok === "date"
+                ? "Datum potvrzeno, faktura zařazena k vystavení."
+                : "Úloha uzavřena."}
+          </div>
+        )}
+        {err && (
+          <div class="mb-4 rounded-lg border-2 border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+            {decodeURIComponent(err)}
+          </div>
+        )}
+
+        <div class="flex flex-wrap gap-2 mb-5 text-sm">
+          <a href="/admin/fakturace" class="px-3 py-1 rounded-full border bg-gray-50 hover:bg-gray-100">
+            K řešení
+          </a>
+          <a href="/admin/fakturace?state=all" class="px-3 py-1 rounded-full border bg-gray-50 hover:bg-gray-100">
+            Vše
+          </a>
+          {[...ATTENTION_STATES, "done", "resolved_manually"].map((s) => (
+            <a
+              href={`/admin/fakturace?state=${s}`}
+              class="px-3 py-1 rounded-full border bg-white hover:bg-gray-100"
+            >
+              {s} <span class="text-gray-500">({countMap.get(s) ?? 0})</span>
+            </a>
+          ))}
+        </div>
+
+        <div class="bg-white rounded-lg border overflow-x-auto">
+          <table class="w-full text-sm min-w-[760px]">
+            <thead class="bg-gray-50">
+              <tr>
+                <th scope="col" class="px-3 py-2 text-left">Stav</th>
+                <th scope="col" class="px-3 py-2 text-left">custom_id</th>
+                <th scope="col" class="px-3 py-2 text-left">E-mail</th>
+                <th scope="col" class="px-3 py-2 text-right">Kč</th>
+                <th scope="col" class="px-3 py-2 text-left">paidOn</th>
+                <th scope="col" class="px-3 py-2 text-right">Pok.</th>
+                <th scope="col" class="px-3 py-2 text-left">Chyba</th>
+                <th scope="col" class="px-3 py-2 text-left">Akce</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colspan={8} class="px-3 py-6 text-center text-gray-500">Žádné úlohy.</td>
+                </tr>
+              )}
+              {rows.map((r) => (
+                <tr class="border-t align-top">
+                  <td class="px-3 py-2 font-medium">{r.state}</td>
+                  <td class="px-3 py-2 font-mono text-xs">{r.customId}</td>
+                  <td class="px-3 py-2">{maskEmail(r.email)}</td>
+                  <td class="px-3 py-2 text-right">{r.amount}</td>
+                  <td class="px-3 py-2">{r.paidOn}</td>
+                  <td class="px-3 py-2 text-right">{r.attempts}</td>
+                  <td class="px-3 py-2 text-xs text-red-700">{r.lastErrorCode ?? ""}</td>
+                  <td class="px-3 py-2">
+                    <div class="flex flex-col gap-2">
+                      {r.lastErrorCode === "estimated_paid_date" && (
+                        <form method="post" action={`/admin/fakturace/${r.id}/set-date`} class="flex gap-1">
+                          <input
+                            type="date"
+                            name="paidOn"
+                            required
+                            title="Skutečné datum platby (účetní datum faktury)"
+                            class="border rounded px-1 py-0.5 text-xs"
+                          />
+                          <button class="text-emerald-700 hover:underline text-xs">Potvrdit datum a vystavit</button>
+                        </form>
+                      )}
+                      {r.lastErrorCode !== "estimated_paid_date" && (
+                        <form method="post" action={`/admin/fakturace/${r.id}/retry`}>
+                          <button class="text-blue-600 hover:underline text-xs">Zkusit znovu</button>
+                        </form>
+                      )}
+                      <form method="post" action={`/admin/fakturace/${r.id}/resolve`} class="flex gap-1">
+                        <input
+                          name="note"
+                          placeholder="poznámka (povinná)"
+                          class="border rounded px-1 py-0.5 text-xs w-40"
+                        />
+                        <button class="text-gray-700 hover:underline text-xs">Uzavřít</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Layout>,
+  );
+});
+
+admin.post("/admin/fakturace/:id/retry", async (c) => {
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+
+  // Estimated job (odhadnuté datum, faktura ještě nevznikla) by se prostým retry
+  // jen zacyklil zpět do manual review — paidOn dál drží fallback. Nasměruj admina
+  // na 'Potvrdit datum a vystavit', kde zadá skutečné datum.
+  const [j] = await db
+    .select({
+      paidAtConfidence: invoiceJob.paidAtConfidence,
+      fakturoidInvoiceId: invoiceJob.fakturoidInvoiceId,
+      lastErrorCode: invoiceJob.lastErrorCode,
+    })
+    .from(invoiceJob)
+    .where(eq(invoiceJob.id, jobId))
+    .limit(1);
+  if (j && j.paidAtConfidence === "estimated" && !j.fakturoidInvoiceId) {
+    return c.redirect(
+      `/admin/fakturace?err=${encodeURIComponent("Odhadnuté datum platby — použij 'Potvrdit datum a vystavit', prostý retry by se zacyklil.")}`,
+    );
+  }
+  // Nedovol tiché vystavení zaokrouhlené částky — částka není celá koruna a vyžaduje
+  // ruční korekci u zdroje, ne slepý retry (jinak by faktura šla na Math.round částku).
+  if (j && j.lastErrorCode === "non_integer_amount" && !j.fakturoidInvoiceId) {
+    return c.redirect(
+      `/admin/fakturace?err=${encodeURIComponent("Částka není celá koruna — oprav u zdroje a vyřeš ručně, retry by vystavil zaokrouhlenou částku.")}`,
+    );
+  }
+
+  // Reset na čerstvý pokus: stav, nextRetryAt=teď, vynuluj počítadlo i chybu.
+  await db
+    .update(invoiceJob)
+    .set({
+      state: "failed_retryable",
+      nextRetryAt: new Date(),
+      attempts: 0,
+      lastErrorCode: null,
+      lastErrorStatus: null,
+      lastErrorMessage: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  try {
+    await enqueueInvoiceJob(c.env, jobId);
+  } catch (e) {
+    console.error(`[admin] enqueue retry failed for job ${jobId}:`, e);
+  }
+  return c.redirect("/admin/fakturace?ok=retry");
+});
+
+admin.post("/admin/fakturace/:id/resolve", async (c) => {
+  const currentUser = c.get("user")!;
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const note = String(body.note ?? "").trim();
+  if (!note) {
+    return c.redirect(`/admin/fakturace?err=${encodeURIComponent("Poznámka je povinná pro uzavření.")}`);
+  }
+  await db
+    .update(invoiceJob)
+    .set({
+      state: "resolved_manually",
+      resolvedNote: note,
+      resolvedManuallyBy: currentUser.email,
+      resolvedAt: new Date(),
+      nextRetryAt: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  return c.redirect("/admin/fakturace?ok=resolved");
+});
+
+// Potvrzení účetního data u estimated jobů (needs_manual_review). Bez tohoto by
+// job s odhadnutým datem (chybějící datum z banky/Stripe) zůstal nefakturovatelný:
+// retry jen resetuje stav, ale paidOn dál drží fallback → znovu manual review.
+// Tady admin zadá skutečné datum, označí confidence=exact a job se vystaví.
+admin.post("/admin/fakturace/:id/set-date", async (c) => {
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const rawPaidOn = String(body.paidOn ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawPaidOn)) {
+    return c.redirect(`/admin/fakturace?err=${encodeURIComponent("Neplatné datum (formát YYYY-MM-DD).")}`);
+  }
+  // Poledne UTC → po převodu do TZ Praha stejný účetní den (bez DST posunu).
+  await db
+    .update(invoiceJob)
+    .set({
+      paidOn: rawPaidOn,
+      paidAt: new Date(`${rawPaidOn}T12:00:00Z`),
+      paidAtConfidence: "exact",
+      state: "failed_retryable",
+      nextRetryAt: new Date(),
+      attempts: 0,
+      lastErrorCode: null,
+      lastErrorStatus: null,
+      lastErrorMessage: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  try {
+    await enqueueInvoiceJob(c.env, jobId);
+  } catch (e) {
+    console.error(`[admin] enqueue set-date failed for job ${jobId}:`, e);
+  }
+  return c.redirect("/admin/fakturace?ok=date");
 });
 
 // Approve organization (htmx)
