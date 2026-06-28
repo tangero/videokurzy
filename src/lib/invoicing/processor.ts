@@ -106,6 +106,19 @@ export async function processInvoiceJob(
     const domain = isOrg ? job.email.split("@")[1] ?? null : null;
     const lineName = invoiceLineName({ jobKind: job.jobKind, isOrganization: isOrg, domain });
 
+    // Estimated účetní datum se NEFAKTURUJE automaticky. Gate musí být PŘED
+    // vytvořením faktury — issued_on/taxable_fulfillment_due/paid_on se zapisují
+    // už při create, takže pozdější oprava data by se na existující faktuře
+    // (adoptovanou přes custom_id) neprojevila. Admin nejdřív potvrdí datum.
+    if (job.paidAtConfidence === "estimated" && !job.fakturoidInvoiceId) {
+      return finalizeManualReview(
+        db,
+        jobId,
+        "estimated_paid_date",
+        "paidAt confidence=estimated -> vytvoreni faktury ceka na potvrzeni data adminem",
+      );
+    }
+
     let invoiceId = job.fakturoidInvoiceId;
 
     // Krok 1 — vytvoř/adoptuj fakturu.
@@ -146,16 +159,8 @@ export async function processInvoiceJob(
       await db.update(invoiceJob).set({ paymentRecordedAt: new Date() }).where(eq(invoiceJob.id, jobId));
     }
 
-    // Krok 3 — odeslání. 'estimated' datum se neodesílá automaticky (čeká na admina).
+    // Krok 3 — odeslání. (estimated joby sem nedojdou — blokují se výše před create.)
     if (!job.sentAt) {
-      if (job.paidAtConfidence === "estimated") {
-        return finalizeManualReview(
-          db,
-          jobId,
-          "estimated_paid_date_no_autosend",
-          "paidAt confidence=estimated -> odeslani ceka na admina",
-        );
-      }
       await ensureInvoiceSent(api, invoiceId, job.invoiceEmail ?? job.email);
       await db.update(invoiceJob).set({ sentAt: new Date() }).where(eq(invoiceJob.id, jobId));
     }

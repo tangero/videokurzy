@@ -131,13 +131,16 @@ describe("processInvoiceJob", () => {
     expect(j.lastErrorCode).toBe("payment_amount_mismatch");
   });
 
-  it("estimated paidAt → needs_manual_review (neodesílá)", async () => {
+  it("estimated paidAt → needs_manual_review BEZ vytvoření faktury (špatné datum)", async () => {
     const pid = await seedPurchase();
     const jid = await seedJob(pid, { paidAtConfidence: "estimated" });
     const { api, calls } = fakeApi();
     const res = await processInvoiceJob(db(), E, jid, api);
     expect(res.status).toBe("needs_manual_review");
-    expect((await getJob(jid)).lastErrorCode).toBe("estimated_paid_date_no_autosend");
+    const j = await getJob(jid);
+    expect(j.lastErrorCode).toBe("estimated_paid_date");
+    expect(j.fakturoidInvoiceId).toBeNull(); // faktura se NEvytvořila
+    expect(calls.some((c) => c.includes("invoices.json"))).toBe(false);
     expect(calls.some((c) => c.includes("message.json"))).toBe(false);
   });
 
