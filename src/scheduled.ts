@@ -222,7 +222,8 @@ export async function scanBankPayments(
     transactionId: string;
     amountPaid: number;
     // Datum bankovní transakce (připsání) — účetní datum faktury, ne čas cronu.
-    paidOnIso: string;
+    // null = banka datum neuvedla → fakturace půjde do estimated/manual review.
+    paidOnIso: string | null;
   }> = [];
 
   for (const p of pending) {
@@ -310,7 +311,7 @@ async function activateMatchedPurchase(
   db: ReturnType<typeof drizzle>,
   env: Env,
   p: typeof purchase.$inferSelect,
-  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number; paidOnIso?: string },
+  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number; paidOnIso?: string | null },
 ): Promise<void> {
   const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
   const txColumn =
