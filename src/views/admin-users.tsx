@@ -407,6 +407,12 @@ export function AdminUserDetailView({
                             class="w-20 rounded border px-2 py-1 text-xs"
                             title="Reálně přijatá částka v Kč (předvyplněno z očekávané)."
                           />
+                          <input
+                            type="date"
+                            name="paidOn"
+                            class="rounded border px-2 py-1 text-xs"
+                            title="Datum připsání platby (účetní datum faktury). Prázdné = dnes."
+                          />
                           <button class="text-xs bg-emerald-600 text-white px-2 py-1 rounded hover:bg-emerald-700">
                             Potvrdit platbu
                           </button>

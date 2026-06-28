@@ -11,6 +11,7 @@ export interface CheckoutPrefillCompany {
   companyCity?: string;
   companyZip?: string;
   contactName?: string;
+  invoiceEmail?: string;
 }
 
 export const CheckoutSelect: FC<{
@@ -251,6 +252,19 @@ export const CheckoutSelect: FC<{
                     autocomplete="name"
                     class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
                   />
+                </div>
+                <div>
+                  <label for="of-invoice-email" class="block text-xs font-medium text-gray-700 mb-1">Fakturační e-mail (volitelné)</label>
+                  <input
+                    type="email"
+                    id="of-invoice-email"
+                    name="invoiceEmail"
+                    value={prefillCompany?.invoiceEmail ?? ""}
+                    placeholder="fakturace@firma.cz"
+                    autocomplete="email"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">Kam poslat fakturu. Když nevyplníte, použijeme e-mail objednávky.</p>
                 </div>
                 <p class="text-xs text-gray-700">
                   Pro FIO převod vystavíme zálohový doklad ihned. Daňový doklad (fakturu) pošleme po přijetí platby.
