@@ -116,6 +116,9 @@ export const purchase = sqliteTable("purchase", {
   companyCity: text("companyCity"),
   companyZip: text("companyZip"),
   contactName: text("contactName"),
+  // Volitelný oddělený fakturační e-mail (plán 5.6, O5). Když chybí, fakturace
+  // použije purchase.email. GDPR: anonymizuje se v account-deletion.ts.
+  invoiceEmail: text("invoiceEmail"),
   // ZD číslo se generuje jen pro FIO objednávky (Stripe je instant pay,
   // tam stačí finální faktura). Formát: ZD-YYYY-NNN, unikátní napříč rokem.
   proformaNumber: text("proformaNumber").unique(),
@@ -171,6 +174,93 @@ export const discountInvite = sqliteTable("discount_invite", {
   usedByPurchaseId: integer("usedByPurchaseId"),
 });
 
+// Outbox fakturačních úloh (plán docs/fakturacni-system-revize.md v1.0.0, sekce 5.2).
+// Jedna řádka = jedna Fakturoid faktura. Idempotence: UNIQUE(customId) = Fakturoid
+// custom_id; UNIQUE(purchaseId) WHERE jobKind='initial_purchase' = max 1 vstupní
+// faktura/purchase; UNIQUE(paymentSource, sourceEventId) = dedup platební události.
+// 'done' = fakturoidInvoiceId && paymentRecordedAt && sentAt. Migrace 0031.
+export const invoiceJob = sqliteTable("invoice_job", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  // FK na purchase.id BEZ DB constraintu (jako discount_invite) — outbox musí přežít
+  // anonymizaci/výmaz purchase a nesmí kaskádně mazat účetní záznam.
+  purchaseId: integer("purchaseId").notNull(),
+  jobKind: text("jobKind", { enum: ["initial_purchase", "stripe_renewal"] }).notNull(),
+  // Idempotency klíč: 'vk-purchase-<id>' | 'vk-stripe-invoice-<stripeInvoiceId>'.
+  customId: text("customId").notNull(),
+  paymentSource: text("paymentSource", {
+    enum: ["stripe_checkout", "stripe_renewal", "fio", "creditas", "manual", "backfill"],
+  }).notNull(),
+  // Dedup platební události (Stripe session/invoice id, bank tx id, manual-confirm-<id>).
+  sourceEventId: text("sourceEventId"),
+  // Skutečně přijatá částka, celé CZK (O6). Desetinná z banky → needs_manual_review.
+  amount: integer("amount").notNull(),
+  // paidAt = timestamp pro SLA/řazení; paidOn = účetní datum (YYYY-MM-DD, TZ Praha) na fakturu.
+  paidAt: integer("paidAt", { mode: "timestamp" }).notNull(),
+  paidOn: text("paidOn").notNull(),
+  paidAtSource: text("paidAtSource", {
+    enum: ["stripe_api", "bank_api", "manual_admin_input", "fakturoid_paid_on", "purchase_createdAt_fallback"],
+  }).notNull(),
+  paidAtConfidence: text("paidAtConfidence", { enum: ["exact", "estimated"] })
+    .notNull()
+    .default("exact"),
+  // Billing snapshot k času platby (PII — GDPR account-deletion). invoiceEmail fallback na email.
+  email: text("email").notNull(),
+  invoiceEmail: text("invoiceEmail"),
+  companyName: text("companyName"),
+  companyIco: text("companyIco"),
+  companyDic: text("companyDic"),
+  companyAddress: text("companyAddress"),
+  companyCity: text("companyCity"),
+  companyZip: text("companyZip"),
+  contactName: text("contactName"),
+  state: text("state", {
+    enum: ["pending", "processing", "done", "failed_retryable", "failed_permanent",
+           "needs_manual_review", "needs_reconcile", "resolved_manually"],
+  })
+    .notNull()
+    .default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  claimedAt: integer("claimedAt", { mode: "timestamp" }),
+  lastAttemptAt: integer("lastAttemptAt", { mode: "timestamp" }),
+  nextRetryAt: integer("nextRetryAt", { mode: "timestamp" }),
+  // Sanitované přes sanitizeInvoiceError() — bez PII/tokenů, ≤2 KB. reason např. 'legacy_unsent'.
+  lastErrorCode: text("lastErrorCode"),
+  lastErrorStatus: integer("lastErrorStatus"),
+  lastErrorMessage: text("lastErrorMessage"),
+  // Krokové timestampy — idempotentní ensure* kroky (create / payment / send).
+  fakturoidInvoiceId: integer("fakturoidInvoiceId"),
+  fakturoidSubjectId: integer("fakturoidSubjectId"),
+  issuedAt: integer("issuedAt", { mode: "timestamp" }),
+  // paymentRecordedAt = čas lokálního potvrzení side-effectu, NE účetní datum (to je paidOn).
+  paymentRecordedAt: integer("paymentRecordedAt", { mode: "timestamp" }),
+  sentAt: integer("sentAt", { mode: "timestamp" }),
+  aresWarning: integer("aresWarning", { mode: "boolean" }).notNull().default(false),
+  // Ruční uzavření (resolved_manually) — povinná poznámka.
+  resolvedManuallyBy: text("resolvedManuallyBy"),
+  resolvedNote: text("resolvedNote"),
+  resolvedAt: integer("resolvedAt", { mode: "timestamp" }),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+}, (table) => [
+  // Idempotency vůči Fakturoidu — jeden custom_id = jedna faktura.
+  uniqueIndex("invoice_job_custom_id_unique").on(table.customId),
+  // Max 1 vstupní faktura na purchase; renewals přes jobKind='stripe_renewal'.
+  uniqueIndex("invoice_job_initial_purchase_unique")
+    .on(table.purchaseId)
+    .where(sql`${table.jobKind} = 'initial_purchase'`),
+  // Dedup platební události napříč producery.
+  uniqueIndex("invoice_job_source_event_unique")
+    .on(table.paymentSource, table.sourceEventId)
+    .where(sql`${table.sourceEventId} IS NOT NULL`),
+  // Reconcile cron: výběr ke zpracování dle nextRetryAt.
+  index("invoice_job_retry_idx").on(table.state, table.nextRetryAt),
+  // Detekce uvízlých processing jobů (CLAIM_TIMEOUT recovery).
+  index("invoice_job_stale_idx").on(table.state, table.claimedAt),
+  // Admin panel: výpis dle stavu a stáří.
+  index("invoice_job_admin_idx").on(table.state, table.createdAt),
+  // Všechny faktury jednoho purchase (renewals).
+  index("invoice_job_purchase_idx").on(table.purchaseId),
+]);
+
 // ─── Relations ────────────────────────────────────────────────────
 
 export const courseRelations = relations(course, ({ many }) => ({
@@ -196,8 +286,13 @@ export const progressRelations = relations(progress, ({ one }) => ({
   lesson: one(lesson, { fields: [progress.lessonId], references: [lesson.id] }),
 }));
 
-export const purchaseRelations = relations(purchase, ({ one }) => ({
+export const purchaseRelations = relations(purchase, ({ one, many }) => ({
   user: one(user, { fields: [purchase.userId], references: [user.id] }),
+  invoiceJobs: many(invoiceJob),
+}));
+
+export const invoiceJobRelations = relations(invoiceJob, ({ one }) => ({
+  purchase: one(purchase, { fields: [invoiceJob.purchaseId], references: [purchase.id] }),
 }));
 
 export const siteConfig = sqliteTable("site_config", {
