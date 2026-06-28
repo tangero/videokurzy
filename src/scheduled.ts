@@ -14,6 +14,7 @@ import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
 import { shouldInvoice } from "./lib/invoicing/jobs";
+import { reconcileInvoiceJobs } from "./lib/invoicing/reconcile";
 import {
   ACCESS_DURATION_DAYS,
   FIO_LOOKBACK_DAYS,
@@ -42,6 +43,18 @@ export async function handleScheduled(
 ): Promise<void> {
   const db = drizzle(env.DB);
   const now = new Date();
+
+  // Fakturační reconcile běží na vlastním 15min cronu — záchranná síť outboxu.
+  // Denní (0 3) maintenance se sem NEpouští, aby neběžela 96×/den.
+  if (event.cron === "*/15 * * * *") {
+    try {
+      const r = await reconcileInvoiceJobs(db, env, now);
+      console.log(`[cron] invoice reconcile: enqueued=${r.enqueued}, scanned=${r.scanned}`);
+    } catch (err) {
+      console.error("[cron] reconcileInvoiceJobs failed:", err);
+    }
+    return;
+  }
 
   try {
     // Jeden scan proti oběma bankám (FIO i Creditas) — viz scanBankPayments.

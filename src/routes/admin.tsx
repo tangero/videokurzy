@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
-import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch } from "../db/schema";
+import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch, invoiceJob } from "../db/schema";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml, ccNewsNewsletterHtml } from "../lib/email";
 import {
@@ -48,8 +48,9 @@ import {
   listSubjectInvoices,
   markInvoicePaid,
 } from "../lib/fakturoid";
-import { createAndEnqueueInvoiceJob } from "../invoice-queue";
+import { createAndEnqueueInvoiceJob, enqueueInvoiceJob } from "../invoice-queue";
 import { shouldInvoice, paidOnFromDate } from "../lib/invoicing/jobs";
+import { maskEmail } from "../lib/errors";
 import Stripe from "stripe";
 import {
   AdminNav,
@@ -1338,6 +1339,191 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
     const message = encodeURIComponent((err as Error).message || "Platbu se nepodařilo potvrdit.");
     return c.redirect(`/admin/users/${id}?err=${message}`);
   }
+});
+
+// ─── Fakturace (outbox invoice_job) ──────────────────────────────────────
+// Panel pro dohled nad fakturačními úlohami: filtr dle stavu, ruční retry a
+// uzavření (resolved_manually s povinnou poznámkou). Viz plán sekce 5.9.
+type InvoiceJobState = NonNullable<(typeof invoiceJob.$inferInsert)["state"]>;
+const ATTENTION_STATES = [
+  "pending",
+  "processing",
+  "failed_retryable",
+  "failed_permanent",
+  "needs_manual_review",
+  "needs_reconcile",
+] as const;
+
+admin.get("/admin/fakturace", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const stateParam = c.req.query("state");
+
+  const where =
+    stateParam && stateParam !== "all"
+      ? eq(invoiceJob.state, stateParam as InvoiceJobState)
+      : stateParam === "all"
+        ? undefined
+        : inArray(invoiceJob.state, [...ATTENTION_STATES]);
+
+  const base = db
+    .select({
+      id: invoiceJob.id,
+      customId: invoiceJob.customId,
+      state: invoiceJob.state,
+      amount: invoiceJob.amount,
+      paidOn: invoiceJob.paidOn,
+      attempts: invoiceJob.attempts,
+      lastErrorCode: invoiceJob.lastErrorCode,
+      email: invoiceJob.email,
+      createdAt: invoiceJob.createdAt,
+    })
+    .from(invoiceJob);
+
+  const rows = await (where ? base.where(where) : base)
+    .orderBy(desc(invoiceJob.createdAt))
+    .limit(100);
+
+  const counts = await db
+    .select({ state: invoiceJob.state, n: sql<number>`count(*)` })
+    .from(invoiceJob)
+    .groupBy(invoiceJob.state);
+  const countMap = new Map<string, number>(counts.map((r) => [r.state, r.n]));
+
+  const ok = c.req.query("ok");
+  const err = c.req.query("err");
+
+  return c.html(
+    <Layout title="Fakturace" user={currentUser}>
+      <div class="max-w-5xl mx-auto px-4 py-8">
+        <h1 class="text-2xl font-bold mb-6">Fakturace</h1>
+        <AdminNav active="/admin" />
+
+        {ok && (
+          <div class="mb-4 rounded-lg border-2 border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            {ok === "retry" ? "Úloha znovu zařazena ke zpracování." : "Úloha uzavřena."}
+          </div>
+        )}
+        {err && (
+          <div class="mb-4 rounded-lg border-2 border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+            {decodeURIComponent(err)}
+          </div>
+        )}
+
+        <div class="flex flex-wrap gap-2 mb-5 text-sm">
+          <a href="/admin/fakturace" class="px-3 py-1 rounded-full border bg-gray-50 hover:bg-gray-100">
+            K řešení
+          </a>
+          <a href="/admin/fakturace?state=all" class="px-3 py-1 rounded-full border bg-gray-50 hover:bg-gray-100">
+            Vše
+          </a>
+          {[...ATTENTION_STATES, "done", "resolved_manually"].map((s) => (
+            <a
+              href={`/admin/fakturace?state=${s}`}
+              class="px-3 py-1 rounded-full border bg-white hover:bg-gray-100"
+            >
+              {s} <span class="text-gray-500">({countMap.get(s) ?? 0})</span>
+            </a>
+          ))}
+        </div>
+
+        <div class="bg-white rounded-lg border overflow-x-auto">
+          <table class="w-full text-sm min-w-[760px]">
+            <thead class="bg-gray-50">
+              <tr>
+                <th scope="col" class="px-3 py-2 text-left">Stav</th>
+                <th scope="col" class="px-3 py-2 text-left">custom_id</th>
+                <th scope="col" class="px-3 py-2 text-left">E-mail</th>
+                <th scope="col" class="px-3 py-2 text-right">Kč</th>
+                <th scope="col" class="px-3 py-2 text-left">paidOn</th>
+                <th scope="col" class="px-3 py-2 text-right">Pok.</th>
+                <th scope="col" class="px-3 py-2 text-left">Chyba</th>
+                <th scope="col" class="px-3 py-2 text-left">Akce</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colspan={8} class="px-3 py-6 text-center text-gray-500">Žádné úlohy.</td>
+                </tr>
+              )}
+              {rows.map((r) => (
+                <tr class="border-t align-top">
+                  <td class="px-3 py-2 font-medium">{r.state}</td>
+                  <td class="px-3 py-2 font-mono text-xs">{r.customId}</td>
+                  <td class="px-3 py-2">{maskEmail(r.email)}</td>
+                  <td class="px-3 py-2 text-right">{r.amount}</td>
+                  <td class="px-3 py-2">{r.paidOn}</td>
+                  <td class="px-3 py-2 text-right">{r.attempts}</td>
+                  <td class="px-3 py-2 text-xs text-red-700">{r.lastErrorCode ?? ""}</td>
+                  <td class="px-3 py-2">
+                    <div class="flex flex-col gap-2">
+                      <form method="post" action={`/admin/fakturace/${r.id}/retry`}>
+                        <button class="text-blue-600 hover:underline text-xs">Zkusit znovu</button>
+                      </form>
+                      <form method="post" action={`/admin/fakturace/${r.id}/resolve`} class="flex gap-1">
+                        <input
+                          name="note"
+                          placeholder="poznámka (povinná)"
+                          class="border rounded px-1 py-0.5 text-xs w-40"
+                        />
+                        <button class="text-gray-700 hover:underline text-xs">Uzavřít</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Layout>,
+  );
+});
+
+admin.post("/admin/fakturace/:id/retry", async (c) => {
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  // Reset na čerstvý pokus: stav, nextRetryAt=teď, vynuluj počítadlo i chybu.
+  await db
+    .update(invoiceJob)
+    .set({
+      state: "failed_retryable",
+      nextRetryAt: new Date(),
+      attempts: 0,
+      lastErrorCode: null,
+      lastErrorStatus: null,
+      lastErrorMessage: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  try {
+    await enqueueInvoiceJob(c.env, jobId);
+  } catch (e) {
+    console.error(`[admin] enqueue retry failed for job ${jobId}:`, e);
+  }
+  return c.redirect("/admin/fakturace?ok=retry");
+});
+
+admin.post("/admin/fakturace/:id/resolve", async (c) => {
+  const currentUser = c.get("user")!;
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const note = String(body.note ?? "").trim();
+  if (!note) {
+    return c.redirect(`/admin/fakturace?err=${encodeURIComponent("Poznámka je povinná pro uzavření.")}`);
+  }
+  await db
+    .update(invoiceJob)
+    .set({
+      state: "resolved_manually",
+      resolvedNote: note,
+      resolvedManuallyBy: currentUser.email,
+      resolvedAt: new Date(),
+      nextRetryAt: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  return c.redirect("/admin/fakturace?ok=resolved");
 });
 
 // Approve organization (htmx)

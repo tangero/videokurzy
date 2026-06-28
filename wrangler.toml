@@ -74,7 +74,10 @@ max_batch_size = 1
 max_retries = 0
 
 [triggers]
-crons = ["0 3 * * *"]
+# */15 = reconcile fakturačního outboxu (záchranná síť); 0 3 = denní maintenance
+# (bank scan, reminders, expirace, video stats, CC news). Větveno v handleScheduled
+# dle event.cron — denní úlohy NEsmí běžet 96×/den.
+crons = ["*/15 * * * *", "0 3 * * *"]
 
 [env.test]
 [[env.test.d1_databases]]
