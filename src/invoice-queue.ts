@@ -10,7 +10,10 @@
 
 import { drizzle } from "drizzle-orm/d1";
 import { processInvoiceJob } from "./lib/invoicing/processor";
+import { createInvoiceJob, type PaymentConfirmed } from "./lib/invoicing/jobs";
 import type { Env } from "./types";
+
+type Db = ReturnType<typeof drizzle>;
 
 export interface InvoiceQueueMessage {
   jobId: number;
@@ -20,6 +23,25 @@ export interface InvoiceQueueMessage {
  * v invoice_job zůstává a reconcile cron ho doručí (outbox). */
 export async function enqueueInvoiceJob(env: Env, jobId: number): Promise<void> {
   await env.INVOICE_QUEUE.send({ jobId } satisfies InvoiceQueueMessage);
+}
+
+/**
+ * Producer helper: idempotentně založí fakturační úlohu a (jen při novém založení)
+ * ji zařadí do fronty. Duplicitní událost job nezaloží ani nezařadí. Selhání
+ * enqueue nezhatí outbox — reconcile cron job doručí.
+ */
+export async function createAndEnqueueInvoiceJob(
+  db: Db,
+  env: Env,
+  pc: PaymentConfirmed,
+): Promise<void> {
+  const res = await createInvoiceJob(db, pc);
+  if (res.status !== "created") return;
+  try {
+    await enqueueInvoiceJob(env, res.jobId);
+  } catch (err) {
+    console.error(`[invoicing] enqueue selhal pro job ${res.jobId} (reconcile dožene):`, err);
+  }
 }
 
 export async function handleInvoiceQueue(

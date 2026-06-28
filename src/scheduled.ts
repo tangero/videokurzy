@@ -12,7 +12,8 @@ import { detectRecent, defaultFetchers } from "./lib/cc-news/detect";
 import { enqueueCcNewsItem } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
-import { exportPurchaseInvoice } from "./lib/fakturoid";
+import { createAndEnqueueInvoiceJob } from "./invoice-queue";
+import { shouldInvoice } from "./lib/invoicing/jobs";
 import {
   ACCESS_DURATION_DAYS,
   FIO_LOOKBACK_DAYS,
@@ -327,21 +328,21 @@ async function activateMatchedPurchase(
     ),
   }).catch((err) => console.error(`[cron] email send failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
 
-  // Vystavit fakturu ve Fakturoidu. Awaitujeme úmyslně — fire-and-forget by
-  // worker po skončení handleru zabil a fakturoidInvoiceId by se neuložil,
-  // i když by Fakturoid stihl fakturu vytvořit (orphan invoice).
-  const domain = p.type === "organization" ? p.email.split("@")[1] : null;
-  try {
-    const res = await exportPurchaseInvoice(
-      env,
-      {
+  // Fakturace přes outbox — založ invoice_job + zařaď. I při výpadku enqueue
+  // řádek v DB zůstane a reconcile cron ho doručí (žádná osiřelá faktura).
+  // Fakturuj skutečně přijatou bankovní částku (match.amountPaid), ne očekávání.
+  if (shouldInvoice({ kind: p.kind, amountPaid: match.amountPaid })) {
+    await createAndEnqueueInvoiceJob(db, env, {
+      purchaseId: p.id,
+      jobKind: "initial_purchase",
+      paymentSource: match.bank, // 'fio' | 'creditas'
+      sourceEventId: match.transactionId,
+      amount: match.amountPaid,
+      paidAt: new Date(),
+      paidAtSource: "bank_api",
+      billing: {
         email: p.email,
-        type: p.type as "individual" | "organization",
-        domain,
-        // Fakturuj skutečně přijatou bankovní částku, ne nakonfigurované
-        // očekávání — banka mohla spárovat přesnou, ale jinak vyjádřenou částku.
-        amount: match.amountPaid,
-        variableSymbol: p.variableSymbol!,
+        invoiceEmail: p.invoiceEmail,
         companyName: p.companyName,
         companyIco: p.companyIco,
         companyDic: p.companyDic,
@@ -350,21 +351,7 @@ async function activateMatchedPurchase(
         companyZip: p.companyZip,
         contactName: p.contactName,
       },
-      { sendEmail: true },
-    );
-    if (res.ok && res.invoiceId) {
-      await db
-        .update(purchase)
-        .set({
-          fakturoidInvoiceId: res.invoiceId,
-          fakturoidSubjectId: res.subjectId ?? null,
-        })
-        .where(eq(purchase.id, p.id));
-    } else if (!res.ok) {
-      console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
-    }
-  } catch (err) {
-    console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err);
+    });
   }
 }
 

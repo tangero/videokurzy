@@ -48,6 +48,8 @@ import {
   listSubjectInvoices,
   markInvoicePaid,
 } from "../lib/fakturoid";
+import { createAndEnqueueInvoiceJob } from "../invoice-queue";
+import { shouldInvoice, paidOnFromDate } from "../lib/invoicing/jobs";
 import Stripe from "stripe";
 import {
   AdminNav,
@@ -1284,6 +1286,52 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
       grantedBy: currentUser.email,
       amountPaid,
     });
+
+    // Fakturace přes outbox. Datum platby (paidOn) lze zadat ručně — default dnes.
+    // Audit potvrzení (kdo) drží grantedBy na purchase; paidOn je účetní datum.
+    const rawPaidOn = String(body.paidOn ?? "").trim();
+    const paidOn = /^\d{4}-\d{2}-\d{2}$/.test(rawPaidOn) ? rawPaidOn : paidOnFromDate(new Date());
+    const [p] = await db
+      .select({
+        kind: purchase.kind,
+        amountPaid: purchase.amountPaid,
+        email: purchase.email,
+        invoiceEmail: purchase.invoiceEmail,
+        companyName: purchase.companyName,
+        companyIco: purchase.companyIco,
+        companyDic: purchase.companyDic,
+        companyAddress: purchase.companyAddress,
+        companyCity: purchase.companyCity,
+        companyZip: purchase.companyZip,
+        contactName: purchase.contactName,
+      })
+      .from(purchase)
+      .where(eq(purchase.id, purchaseId))
+      .limit(1);
+    if (p && shouldInvoice({ kind: p.kind, amountPaid: p.amountPaid })) {
+      // Poledne UTC → po převodu do TZ Praha zůstává stejný účetní den (bez DST posunu).
+      await createAndEnqueueInvoiceJob(db, c.env, {
+        purchaseId,
+        jobKind: "initial_purchase",
+        paymentSource: "manual",
+        sourceEventId: `manual-confirm-${purchaseId}`,
+        amount: p.amountPaid,
+        paidAt: new Date(`${paidOn}T12:00:00Z`),
+        paidAtSource: "manual_admin_input",
+        billing: {
+          email: p.email,
+          invoiceEmail: p.invoiceEmail,
+          companyName: p.companyName,
+          companyIco: p.companyIco,
+          companyDic: p.companyDic,
+          companyAddress: p.companyAddress,
+          companyCity: p.companyCity,
+          companyZip: p.companyZip,
+          contactName: p.contactName,
+        },
+      });
+    }
+
     await invalidateAccessCache(c.env.KV, id);
     return c.redirect(`/admin/users/${id}?ok=confirmed`);
   } catch (err) {
