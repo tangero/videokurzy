@@ -528,7 +528,10 @@ async function handleInvoicePaid(
   if (amount <= 0) return;
 
   const paidAtUnix = Number((data.status_transitions as Record<string, unknown> | undefined)?.paid_at);
-  const paidAt = Number.isFinite(paidAtUnix) && paidAtUnix > 0 ? new Date(paidAtUnix * 1000) : new Date();
+  const hasPaidAt = Number.isFinite(paidAtUnix) && paidAtUnix > 0;
+  // Bez skutečného času platby kotvíme na teď, ale confidence='estimated' →
+  // faktura se neodešle automaticky se špatným účetním datem (jde k revizi).
+  const paidAt = hasPaidAt ? new Date(paidAtUnix * 1000) : new Date();
 
   const [p] = await db
     .select({
@@ -557,6 +560,7 @@ async function handleInvoicePaid(
     amount,
     paidAt,
     paidAtSource: "stripe_api",
+    paidAtConfidence: hasPaidAt ? "exact" : "estimated",
     billing: {
       email: p.email,
       invoiceEmail: p.invoiceEmail,

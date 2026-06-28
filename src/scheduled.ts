@@ -221,6 +221,8 @@ export async function scanBankPayments(
     bank: "fio" | "creditas";
     transactionId: string;
     amountPaid: number;
+    // Datum bankovní transakce (připsání) — účetní datum faktury, ne čas cronu.
+    paidOnIso: string;
   }> = [];
 
   for (const p of pending) {
@@ -239,6 +241,7 @@ export async function scanBankPayments(
         bank: "fio",
         transactionId: String(r.transaction.id),
         amountPaid: r.transaction.amount,
+        paidOnIso: r.transaction.date,
       });
       return true;
     };
@@ -251,6 +254,7 @@ export async function scanBankPayments(
         bank: "creditas",
         transactionId: r.transaction.id,
         amountPaid: r.transaction.amount,
+        paidOnIso: r.transaction.date,
       });
       return true;
     };
@@ -270,6 +274,7 @@ export async function scanBankPayments(
         bank: m.bank,
         transactionId: m.transactionId,
         amountPaid: m.amountPaid,
+        paidOnIso: m.paidOnIso,
       });
       matched++;
     } catch (err) {
@@ -305,7 +310,7 @@ async function activateMatchedPurchase(
   db: ReturnType<typeof drizzle>,
   env: Env,
   p: typeof purchase.$inferSelect,
-  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number },
+  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number; paidOnIso?: string },
 ): Promise<void> {
   const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
   const txColumn =
@@ -345,14 +350,22 @@ async function activateMatchedPurchase(
   // řádek v DB zůstane a reconcile cron ho doručí (žádná osiřelá faktura).
   // Fakturuj skutečně přijatou bankovní částku (match.amountPaid), ne očekávání.
   if (shouldInvoice({ kind: p.kind, amountPaid: match.amountPaid })) {
+    // Účetní datum = datum bankovní transakce (připsání), NE čas běhu cronu.
+    // FIO vrací "YYYY-MM-DD+TZ", Creditas ISO — vytáhneme jen datum a kotvíme na
+    // poledne UTC (po převodu do TZ Praha zůstává stejný den). Když datum chybí /
+    // je nečitelné → fallback na teď s confidence='estimated' (job pak nepošle
+    // fakturu automaticky, ale jde do needs_manual_review).
+    const dateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(match.paidOnIso ?? "");
+    const paidAt = dateMatch ? new Date(`${dateMatch[1]}T12:00:00Z`) : new Date();
     await createAndEnqueueInvoiceJob(db, env, {
       purchaseId: p.id,
       jobKind: "initial_purchase",
       paymentSource: match.bank, // 'fio' | 'creditas'
       sourceEventId: match.transactionId,
       amount: match.amountPaid,
-      paidAt: new Date(),
+      paidAt,
       paidAtSource: "bank_api",
+      paidAtConfidence: dateMatch ? "exact" : "estimated",
       billing: {
         email: p.email,
         invoiceEmail: p.invoiceEmail,

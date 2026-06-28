@@ -148,10 +148,17 @@ export default {
         return handleInvoiceQueue(batch as Parameters<typeof handleInvoiceQueue>[0], env);
       case "videokurzy-invoices-dlq":
         return handleInvoiceDlq(batch as Parameters<typeof handleInvoiceDlq>[0], env);
+      case "videokurzy-webhooks":
+        return handleQueue(batch as Parameters<typeof handleQueue>[0], env);
       case "videokurzy-webhooks-dlq":
         return handleDlq(batch as Parameters<typeof handleDlq>[0], env);
       default:
-        return handleQueue(batch as Parameters<typeof handleQueue>[0], env);
+        // Neznámá fronta — NEsměrovat do webhook handleru (invoice {jobId} zprávy
+        // by tam propadly jako neznámý typ a tiše se ACKly). Retry, ať se na chybu
+        // přijde a zpráva nezmizí.
+        console.error(`[queue] neznámá fronta '${batch.queue}' — retry všech zpráv`);
+        for (const message of batch.messages) message.retry();
+        return;
     }
   },
   scheduled: handleScheduled,
