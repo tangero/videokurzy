@@ -4,6 +4,9 @@ export interface Env {
   DB: D1Database;
   KV: KVNamespace;
   WEBHOOK_QUEUE: Queue;
+  // Fakturační fronta (outbox → vystavení faktury). Producent + konzument
+  // videokurzy-invoices, DLQ videokurzy-invoices-dlq. Viz src/invoice-queue.ts.
+  INVOICE_QUEUE: Queue;
   AUTH_INTERNAL_SECRET: string;
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL: string;
