@@ -12,6 +12,9 @@ import { drizzle } from "drizzle-orm/d1";
 import { and, eq, or, isNull, lt, lte, inArray, sql } from "drizzle-orm";
 import { invoiceJob, purchase } from "../../db/schema";
 import type { Env } from "../../types";
+import { sendEmail } from "../email";
+import { escapeHtml } from "../markdown";
+import { ADMIN_EMAILS } from "../../config/admin";
 import {
   makeFakturoidApi,
   ensureInvoiceCreated,
@@ -98,13 +101,17 @@ export async function processInvoiceJob(
 
     // Položka faktury dle typu purchase (osobní / firemní).
     const [p] = await db
-      .select({ type: purchase.type })
+      .select({ type: purchase.type, variableSymbol: purchase.variableSymbol })
       .from(purchase)
       .where(eq(purchase.id, job.purchaseId))
       .limit(1);
     const isOrg = p?.type === "organization";
     const domain = isOrg ? job.email.split("@")[1] ?? null : null;
     const lineName = invoiceLineName({ jobKind: job.jobKind, isOrganization: isOrg, domain });
+    // U bankovních plateb doplň VS do poznámky faktury — účetní párování faktury
+    // proti bankovnímu výpisu (stará inline cesta to dělala, outbox to obnovuje).
+    const isBank = job.paymentSource === "fio" || job.paymentSource === "creditas";
+    const noteSuffix = isBank && p?.variableSymbol ? `VS: ${p.variableSymbol}` : undefined;
 
     // Estimated účetní datum se NEFAKTURUJE automaticky. Gate musí být PŘED
     // vytvořením faktury — issued_on/taxable_fulfillment_due/paid_on se zapisují
@@ -137,6 +144,7 @@ export async function processInvoiceJob(
           companyCity: job.companyCity,
           companyZip: job.companyZip,
         },
+        noteSuffix,
       });
       invoiceId = created.invoiceId;
       await db
@@ -202,6 +210,20 @@ export async function processInvoiceJob(
         nextRetryAt: permanent ? null : new Date(now.getTime() + backoffMs(job.attempts)),
       })
       .where(eq(invoiceJob.id, jobId));
+
+    // Trvalé selhání = zákazník nedostal fakturu. Pošli adminovi alert (best-effort,
+    // sendEmail si chyby řeší sám) — jednou per job, ne každý pokus.
+    if (permanent) {
+      await sendEmail(env, {
+        to: [...ADMIN_EMAILS],
+        subject: `⚠️ Fakturace selhala natrvalo — job ${jobId}`,
+        html:
+          `<p>Fakturační job <strong>${jobId}</strong> (purchase ${job.purchaseId}, ${escapeHtml(job.customId)}) ` +
+          `skončil ve stavu <strong>failed_permanent</strong> po ${job.attempts} pokusech.</p>` +
+          `<p>Chyba: ${escapeHtml(e.code)}${e.status ? ` (${e.status})` : ""} — ${escapeHtml(e.message)}</p>` +
+          `<p>Vyřeš ručně v <a href="https://kurzy.vibecoding.cz/admin/fakturace?state=failed_permanent">/admin/fakturace</a>.</p>`,
+      });
+    }
     return permanent ? { status: "failed_permanent", code: e.code } : { status: "failed_retryable", code: e.code };
   }
 }

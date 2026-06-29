@@ -106,6 +106,8 @@ export interface InvoiceCreateInput {
   amount: number;
   paidOn: string; // YYYY-MM-DD
   subject: SubjectInput;
+  /** Doplněk k poznámce faktury, např. "VS: 33012345" u bankovních plateb. */
+  noteSuffix?: string;
 }
 
 export interface InvoiceCreatedResult {
@@ -141,7 +143,7 @@ export async function ensureInvoiceCreated(
     issued_on: input.paidOn,
     taxable_fulfillment_due: input.paidOn,
     lines: [{ name: input.lineName, quantity: 1, unit_price: input.amount, vat_rate: 0 }],
-    note: NOTE_PAID,
+    note: [NOTE_PAID, input.noteSuffix].filter(Boolean).join(" "),
   });
   return { invoiceId: created.id, subjectId, adopted: false };
 }

@@ -221,6 +221,7 @@ interface BillingFromMetadata {
   companyCity: string | null;
   companyZip: string | null;
   contactName: string | null;
+  invoiceEmail: string | null;
 }
 
 function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
@@ -232,6 +233,7 @@ function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
     companyCity: metadata.b_city ?? null,
     companyZip: metadata.b_zip ?? null,
     contactName: metadata.b_contact ?? null,
+    invoiceEmail: metadata.b_email ?? null,
   };
 }
 

@@ -91,6 +91,17 @@ describe("ensureInvoiceCreated", () => {
     expect((post?.body as Record<string, unknown>).custom_id).toBe("vk-purchase-1");
     expect((post?.body as Record<string, unknown>).issued_on).toBe("2026-06-27");
   });
+
+  it("noteSuffix (VS u bankovní platby) se přidá do poznámky", async () => {
+    const { api, calls } = mockApi({
+      get: () => [],
+      post: (p) => (p === "subjects.json" ? { id: 5 } : { id: 200 }),
+    });
+    await ensureInvoiceCreated(api, { ...input, noteSuffix: "VS: 33012345" });
+    const note = (calls.find((c) => c.path === "invoices.json")?.body as Record<string, unknown>).note as string;
+    expect(note).toContain("Neplaťte");
+    expect(note).toContain("VS: 33012345");
+  });
 });
 
 describe("ensurePaymentRecorded", () => {
