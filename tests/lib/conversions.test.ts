@@ -169,6 +169,8 @@ describe("reportPurchase — Meta CAPI happy path", () => {
     expect(captured.data[0].event_id).toBe(String(id));
     expect(captured.data[0].custom_data).toEqual({ value: 2990, currency: "CZK" });
     expect(captured.data[0].user_data.em).toHaveLength(1); // hashed email
+    expect(captured.data[0].action_source).toBe("website");
+    expect(typeof captured.data[0].event_source_url).toBe("string"); // event_source_url posílán
   });
 });
 

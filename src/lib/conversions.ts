@@ -311,6 +311,10 @@ async function sendMeta(env: Env, ctx: ReportContext): Promise<{ status: number;
   if (ctx.clientIp) userData.client_ip_address = ctx.clientIp;
   if (ctx.userAgent) userData.client_user_agent = ctx.userAgent;
 
+  // event_source_url: server-side report nemá request URL, vezmeme base URL webu
+  // (BETTER_AUTH_URL) s fallbackem na produkční doménu kurzů. Meta ho doporučuje.
+  const sourceUrl = (env.BETTER_AUTH_URL || "https://kurzy.vibecoding.cz").replace(/\/$/, "");
+
   const payload: Record<string, unknown> = {
     data: [
       {
@@ -318,6 +322,7 @@ async function sendMeta(env: Env, ctx: ReportContext): Promise<{ status: number;
         event_time: Math.floor(ctx.occurredAt.getTime() / 1000),
         event_id: String(ctx.purchaseId), // dedup s případným browser pixelem
         action_source: "website",
+        event_source_url: sourceUrl,
         user_data: userData,
         custom_data: { value: ctx.valueCzk, currency: "CZK" },
       },
