@@ -42,6 +42,8 @@ export interface Env {
   META_TEST_EVENT_CODE?: string;
   // Sklik konverzní/retargeting ID (veřejné, jde do HTML). Client-side conversionHit.
   SKLIK_CONVERSION_ID?: string;
+  // Google gtag ID (G-... GA4 nebo AW-... Ads). Veřejné, client-side za consentem.
+  GTAG_ID?: string;
   // Google Ads Offline / Data Manager — vše server-only. Aktivace až po ověření
   // allowlistu dev tokenu (token řeší uživatel zvlášť). Když chybí, Google se neclaimuje.
   GOOGLE_ADS_CUSTOMER_ID?: string;
