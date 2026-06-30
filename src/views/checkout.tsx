@@ -279,6 +279,16 @@ export const CheckoutSelect: FC<{
             </details>
           )}
 
+          {/* Marketingový souhlas pro server-side měření konverzí (Meta/Google/Seznam).
+              Opt-in (nezaškrtnuto), nepovinný — bez něj se konverze nereportuje. */}
+          <label class="flex items-start gap-2 text-sm text-gray-600 mb-4">
+            <input type="checkbox" name="marketingConsent" value="1" class="mt-1" />
+            <span>
+              Souhlasím s měřením konverzí a marketingem (Meta, Google, Seznam).
+              Nepovinné, lze kdykoliv odvolat. Viz <a href="/privacy" class="underline">Zásady ochrany osobních údajů</a>.
+            </span>
+          </label>
+
           <button
             type="submit"
             class={`btn btn-lg btn-block group text-lg shadow-lg transition-all duration-200 active:scale-[0.985] focus:outline-none focus:ring-2 focus:ring-offset-2 ${

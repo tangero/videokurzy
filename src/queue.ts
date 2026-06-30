@@ -232,6 +232,21 @@ function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
   };
 }
 
+// Konverzní signály ze Stripe session metadata (zapsané v checkoutu
+// signalsToStripeMetadata) → na purchase, ať je reportPurchase má pro CAPI (R5).
+function extractSignals(metadata: Record<string, string>) {
+  return {
+    marketingConsent: metadata.mkt_consent === "1",
+    fbc: metadata.fbc ?? null,
+    fbp: metadata.fbp ?? null,
+    gclid: metadata.gclid ?? null,
+    gbraid: metadata.gbraid ?? null,
+    wbraid: metadata.wbraid ?? null,
+    clientIp: metadata.cip ?? null,
+    userAgent: metadata.cua ?? null,
+  };
+}
+
 async function handleCheckoutCompleted(
   db: ReturnType<typeof drizzle>,
   data: Record<string, unknown>,
@@ -247,6 +262,7 @@ async function handleCheckoutCompleted(
   const discountPercent = Math.max(0, Math.min(100, parseInt(metadata.discountPercent ?? "0", 10) || 0));
   const discountCode = metadata.discountCode || null;
   const billing = extractBilling(metadata);
+  const signals = extractSignals(metadata);
 
   // Pokud uživatel s tímto emailem už existuje (přihlásil se přes magic link
   // dřív, než webhook dorazil), navaž purchase rovnou na jeho userId.
@@ -280,6 +296,7 @@ async function handleCheckoutCompleted(
         discountCode,
         amountPaid: paidAmountCzk,
         ...billing,
+        ...signals,
       })
       .onConflictDoNothing();
 
@@ -337,6 +354,7 @@ async function handleCheckoutCompleted(
         discountCode,
         amountPaid: paidAmountCzk,
         ...billing,
+        ...signals,
       })
       .onConflictDoNothing();
 

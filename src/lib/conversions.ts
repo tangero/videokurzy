@@ -25,6 +25,66 @@ const LEASE_MS = 120_000; // 120 s — pojistka proti uváznutí spadlého běhu
 const FETCH_TIMEOUT_MS = 3_000;
 const META_DEFAULT_VERSION = "v23.0"; // override přes env.META_API_VERSION
 
+// ─── Capture match signálů v checkoutu (fáze 3) ──────────────────────
+// Signály se zachytí v request kontextu (kde JE consent cookie, click ID v URL,
+// IP a UA) a uloží na purchase (FIO) / do Stripe metadata. reportPurchase je
+// pak přiloží do CAPI. Viz KONVERZE-PLAN.md R5.
+
+export interface ConversionSignals {
+  marketingConsent: boolean;
+  fbc: string | null;
+  fbp: string | null;
+  gclid: string | null;
+  gbraid: string | null;
+  wbraid: string | null;
+  clientIp: string | null;
+  userAgent: string | null;
+}
+
+function cookieValue(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  const m = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/**
+ * Vytáhne konverzní signály z requestu. `clickIds` se předávají zvlášť, protože
+ * je checkout zná z formuláře / hidden fieldů (capture na vstupu, ne ze static GET).
+ * marketingConsent = explicitní checkbox v checkoutu (server-side report) NEBO
+ * cookie souhlas z lišty — stačí jedno, obojí je projevený souhlas.
+ */
+export function captureSignals(
+  req: { header(name: string): string | undefined },
+  opts: {
+    consentCheckbox: boolean;
+    fbclid?: string | null;
+    gclid?: string | null;
+    gbraid?: string | null;
+    wbraid?: string | null;
+  },
+): ConversionSignals {
+  const cookieHeader = req.header("Cookie");
+  const cookieConsent = cookieValue(cookieHeader, "vk_consent") === "1";
+  const existingFbp = cookieValue(cookieHeader, "_fbp"); // jen pokud už pixel cookie vytvořil
+
+  // fbc skládáme z fbclid do serverového formátu fb.1.<ms>.<fbclid> (NE raw fbclid).
+  // Bez přesného času kliku použijeme čas zachycení — Meta to akceptuje.
+  let fbc: string | null = null;
+  if (opts.fbclid) fbc = `fb.1.${Date.now()}.${opts.fbclid}`;
+  else fbc = cookieValue(cookieHeader, "_fbc"); // nebo z existující cookie
+
+  return {
+    marketingConsent: opts.consentCheckbox || cookieConsent,
+    fbc,
+    fbp: existingFbp,
+    gclid: opts.gclid ?? null,
+    gbraid: opts.gbraid ?? null,
+    wbraid: opts.wbraid ?? null,
+    clientIp: req.header("CF-Connecting-IP") ?? null,
+    userAgent: req.header("User-Agent") ?? null,
+  };
+}
+
 /**
  * Normalizuje datum bankovní transakce (často jen den, bez času) na instant =
  * začátek toho dne v Europe/Prague. Akceptuje `YYYY-MM-DD` i ISO s časem.

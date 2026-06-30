@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and } from "drizzle-orm";
-import { reportPurchase, bankDateToConversionInstant } from "../../src/lib/conversions";
+import { reportPurchase, bankDateToConversionInstant, captureSignals } from "../../src/lib/conversions";
 import { purchase, conversionLog } from "../../src/db/schema";
 
 const db = drizzle(env.DB);
@@ -64,6 +64,43 @@ describe("bankDateToConversionInstant — normalizace data z banky (R6)", () => 
   it("akceptuje ISO s časem (vezme jen datovou část)", () => {
     const d = bankDateToConversionInstant("2026-06-28T14:33:00+02:00");
     expect(d.toISOString()).toBe("2026-06-27T22:00:00.000Z");
+  });
+});
+
+describe("captureSignals — zachycení match signálů (fáze 3)", () => {
+  function reqWith(headers: Record<string, string>) {
+    return { header: (n: string) => headers[n] };
+  }
+
+  it("marketingConsent z checkboxu i z cookie (stačí jedno)", () => {
+    const s1 = captureSignals(reqWith({}), { consentCheckbox: true });
+    expect(s1.marketingConsent).toBe(true);
+    const s2 = captureSignals(reqWith({ Cookie: "vk_consent=1" }), { consentCheckbox: false });
+    expect(s2.marketingConsent).toBe(true);
+    const s3 = captureSignals(reqWith({ Cookie: "vk_consent=0" }), { consentCheckbox: false });
+    expect(s3.marketingConsent).toBe(false);
+  });
+
+  it("fbc se skládá z fbclid do formátu fb.1.<ms>.<fbclid> (ne raw)", () => {
+    const s = captureSignals(reqWith({}), { consentCheckbox: false, fbclid: "abc123" });
+    expect(s.fbc).toMatch(/^fb\.1\.\d+\.abc123$/);
+  });
+
+  it("fbp jen z existující _fbp cookie (negeneruje se)", () => {
+    const s = captureSignals(reqWith({ Cookie: "_fbp=fb.1.999.xyz" }), { consentCheckbox: false });
+    expect(s.fbp).toBe("fb.1.999.xyz");
+    const s2 = captureSignals(reqWith({}), { consentCheckbox: false });
+    expect(s2.fbp).toBeNull();
+  });
+
+  it("IP a UA z hlaviček, gclid z parametru", () => {
+    const s = captureSignals(
+      reqWith({ "CF-Connecting-IP": "1.2.3.4", "User-Agent": "UA/1.0" }),
+      { consentCheckbox: false, gclid: "G123" },
+    );
+    expect(s.clientIp).toBe("1.2.3.4");
+    expect(s.userAgent).toBe("UA/1.0");
+    expect(s.gclid).toBe("G123");
   });
 });
 
