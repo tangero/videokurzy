@@ -33,6 +33,24 @@ export interface Env {
   CC_NEWS_LLM?: string;        // „1" zapne LLM redakční vrstvu
   CC_NEWS_LLM_MODEL?: string;  // override modelu (default anthropic/claude-sonnet-4.6)
   CC_NEWS_DRY_RUN?: string;    // „0" by povolil live odeslání (ve fázi 1 zakázáno)
+  // ─── Konverzní měření (reklamní platformy) — viz KONVERZE-PLAN.md ──
+  // Meta Conversions API. PIXEL_ID je veřejné, CAPI_TOKEN je server-only secret.
+  // Když chybí, Meta se nereportuje. TEST_EVENT_CODE jen pro testování (v produkci NESMÍ zůstat).
+  META_PIXEL_ID?: string;
+  META_CAPI_TOKEN?: string;
+  META_API_VERSION?: string;   // override verze Graph API (default v conversions.ts)
+  META_TEST_EVENT_CODE?: string;
+  // Sklik konverzní/retargeting ID (veřejné, jde do HTML). Client-side conversionHit.
+  SKLIK_CONVERSION_ID?: string;
+  // Google Ads Offline / Data Manager — vše server-only. Aktivace až po ověření
+  // allowlistu dev tokenu (token řeší uživatel zvlášť). Když chybí, Google se neclaimuje.
+  GOOGLE_ADS_CUSTOMER_ID?: string;
+  GOOGLE_ADS_DEVELOPER_TOKEN?: string;
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID?: string; // MCC bez pomlček
+  GOOGLE_ADS_OAUTH_CLIENT_ID?: string;
+  GOOGLE_ADS_OAUTH_CLIENT_SECRET?: string;
+  GOOGLE_ADS_OAUTH_REFRESH_TOKEN?: string;
+  GOOGLE_ADS_CONVERSION_ACTION_ID?: string;
 }
 
 export type Variables = {
