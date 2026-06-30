@@ -25,6 +25,35 @@ const LEASE_MS = 120_000; // 120 s — pojistka proti uváznutí spadlého běhu
 const FETCH_TIMEOUT_MS = 3_000;
 const META_DEFAULT_VERSION = "v23.0"; // override přes env.META_API_VERSION
 
+/**
+ * Normalizuje datum bankovní transakce (často jen den, bez času) na instant =
+ * začátek toho dne v Europe/Prague. Akceptuje `YYYY-MM-DD` i ISO s časem.
+ * Pro převody je tohle čas konverze (R6); Stripe/manual mají přesný čas zvlášť.
+ */
+export function bankDateToConversionInstant(dateStr: string): Date {
+  // Vezmi jen datovou část (FIO/Creditas vrací buď "2026-06-28" nebo ISO).
+  const datePart = dateStr.slice(0, 10);
+  // Europe/Prague je UTC+1 (zimní) / UTC+2 (letní). Začátek dne v Praze =
+  // 00:00 local. Zjisti offset pro daný den a odečti ho od UTC půlnoci.
+  const utcMidnight = new Date(`${datePart}T00:00:00Z`);
+  if (Number.isNaN(utcMidnight.getTime())) return new Date(dateStr); // fallback: ber jak přišlo
+  // Offset Prahy v minutách pro daný den (DST-aware) přes Intl.
+  const pragueOffsetMin = pragueOffsetMinutes(utcMidnight);
+  return new Date(utcMidnight.getTime() - pragueOffsetMin * 60_000);
+}
+
+/** Offset Europe/Prague vůči UTC v minutách (kladný = před UTC) pro daný instant. */
+function pragueOffsetMinutes(at: Date): number {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Prague",
+    hour: "2-digit",
+    hour12: false,
+  });
+  // Hodina v Praze v okamžiku UTC půlnoci = offset (0→0, 1→+60, 2→+120).
+  const hourInPrague = parseInt(fmt.format(at), 10) % 24;
+  return hourInPrague * 60;
+}
+
 interface ReportOptions {
   /** Reálně přijatá částka v Kč, když se liší od purchase.amountPaid (cron match, manual). */
   valueOverride?: number;

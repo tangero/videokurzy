@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch } from "../db/schema";
+import { reportPurchase } from "../lib/conversions";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml, ccNewsNewsletterHtml } from "../lib/email";
 import {
@@ -1273,6 +1274,15 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
       amountPaid,
     });
     await invalidateAccessCache(c.env.KV, id);
+
+    // Report konverze do reklamních platforem. manuallyConfirmPayment je čistě
+    // DB helper bez env, proto se report volá tady v route (má c.env). Čas
+    // konverze = teď (čas potvrzení; přesné datum platby admin obvykle nezná).
+    // Idempotentní + best-effort, redirect nezdržuje ani neselže kvůli reportu.
+    const conversionOccurredAt = new Date();
+    await db.update(purchase).set({ conversionOccurredAt }).where(eq(purchase.id, purchaseId));
+    await reportPurchase(db, c.env, purchaseId, { conversionOccurredAt });
+
     return c.redirect(`/admin/users/${id}?ok=confirmed`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Platbu se nepodařilo potvrdit.");

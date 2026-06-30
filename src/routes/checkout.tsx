@@ -6,6 +6,7 @@ import Stripe from "stripe";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { purchase, organization, siteConfig } from "../db/schema";
+import { reportPurchase, bankDateToConversionInstant } from "../lib/conversions";
 import { lookupByIco, lookupByName } from "../lib/ares";
 import { generateProformaHtml } from "../lib/proforma";
 import { nextProformaNumber } from "../lib/proforma-sequence";
@@ -810,7 +811,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   const expectedAmount = expectedPaymentAmount(p.amountPaid, fullExpected, p.discountPercent ?? 0);
 
   // Načti transakce z banky, na kterou byla objednávka vystavena, a spáruj.
-  let matchedTx: { id: string; amount: number } | null = null;
+  let matchedTx: { id: string; amount: number; date: string } | null = null;
   if (bank === "creditas") {
     const creRes = await fetchCreditasTransactions(
       c.env.CREDITAS_API_TOKEN ?? "dev",
@@ -821,7 +822,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
       return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
     }
     const m = matchCreditasPayment(creRes.transactions, p.variableSymbol!, expectedAmount);
-    if (m.found && m.transaction) matchedTx = { id: m.transaction.id, amount: m.transaction.amount };
+    if (m.found && m.transaction) matchedTx = { id: m.transaction.id, amount: m.transaction.amount, date: m.transaction.date };
   } else {
     const fioRes = await fetchFioTransactions(
       c.env.FIO_API_TOKEN,
@@ -835,7 +836,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
       return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
     }
     const m = matchPayment(fioRes.transactions, p.variableSymbol!, expectedAmount);
-    if (m.found && m.transaction) matchedTx = { id: String(m.transaction.id), amount: m.transaction.amount };
+    if (m.found && m.transaction) matchedTx = { id: String(m.transaction.id), amount: m.transaction.amount, date: m.transaction.date };
   }
 
   if (!matchedTx) {
@@ -855,6 +856,16 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   if (!activated) {
     return c.html(<VerifySuccess email={p.email} />);
   }
+
+  // Čas konverze = den bankovní transakce (R6). Uložíme na row a reportujeme
+  // konverzi. activated=true zajišťuje, že se to stane jen při reálné aktivaci
+  // (refresh stránky druhý report nevyvolá); reportPurchase je navíc idempotentní.
+  const conversionOccurredAt = bankDateToConversionInstant(matchedTx.date);
+  await db.update(purchase).set({ conversionOccurredAt }).where(eq(purchase.id, p.id));
+  await reportPurchase(db, c.env, p.id, {
+    valueOverride: matchedTx.amount,
+    conversionOccurredAt,
+  });
 
   // Invite token (uložený v discountCode jako "invite:<token>") se spotřebuje
   // až teď, po napárování platby a aktivaci nákupu.
