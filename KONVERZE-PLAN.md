@@ -1,9 +1,11 @@
-# Plán v2.3: Konverzní měření pro videokurzy (Meta + Google + Sklik)
+# Plán v2.4: Konverzní měření pro videokurzy (Meta + Google + Sklik)
 
 > v2 po vypořádání 3 nezávislých oponentur (technika / korektnost dat / GDPR).
 > v2.2 po 1. externí review (Meta API verze, manual platby, idempotence, rozhraní, capture, Google doc).
 > v2.3 po 2. externí review (Google API dostupnost, per-provider claim/retry, čas konverze,
-> manual env, conversion_log kontrakt, fbc/fbp). Inline tagy **[OPRAVA]/[v2.2]/[v2.3]**.
+> manual env, conversion_log kontrakt, fbc/fbp).
+> v2.4 po 3. externí review (verify endpoint = 4. bod, lease-claim, transactionDate, rozpory textu,
+> rozhraní s conversionOccurredAt, Google dvě implementace). Inline tagy **[OPRAVA]/[v2.2]/[v2.3]/[v2.4]**.
 
 ## Changelog verzí (pro oponenturu)
 
@@ -43,6 +45,17 @@ Změny jsou v textu označené inline tagy `[OPRAVA]` (v1→v2) a `[v2.2]` (v2�
   - **[P2] `conversion_log` kontrakt** — `UNIQUE(purchaseId,provider)`, `attemptCount`, `lastError`,
     `httpStatus`, `requestId`, `updatedAt`.
   - **[P2] fbc/fbp** — z `fbclid` skládat serverový `fbc` (`fb.1.<ms>.<fbclid>`), `fbp` jen z existující cookie.
+- **v2.4** — po 3. externí review (2 blokery + rozpory + 2 P2):
+  - **[P1] Verify endpoint = 4. reportovací bod** — `/api/fio/verify/:vs` →
+    `activateFioPurchaseIfPending` (`checkout.tsx:847`) aktivuje pending převod z platební stránky;
+    dosud nenapojený → tyto platby se neměřily. R2 nyní ČTYŘI body.
+  - **[P1] Claim není lock** — `status!='sent'` pustí dva souběžné běhy → přidán lease
+    (`claimToken`/`claimedAt`/`leaseUntil`, TTL 120 s), claim jen `failed`/expired-`pending`.
+  - **[P1] `transactionDate` se zahazuje** v `pendingMatches`/`activateMatchedPurchase`/verify
+    → explicitně protáhnout datum transakce do match struktur (jinak `conversionOccurredAt` = čas spárování).
+  - **[P2] Rozpor textu** — sekce `conversions.ts` pořád citovala zrušený `conversionAttemptedAt` → sjednoceno.
+  - **[P2] Rozhraní** — `reportPurchase(..., { valueOverride?, conversionOccurredAt })`; čas uložit PŘED reportem.
+  - **[P2] Google dvě implementace** — `GoogleAdsApiReporter` vs `DataManagerReporter` za jedním rozhraním.
 
 ## Kontext / zjištěný stav (ověřeno v kódu)
 - Web: Cloudflare Workers + Hono (JSX SSR), TypeScript. Layout `src/views/layout.tsx`.
@@ -77,41 +90,51 @@ referenční `vibecoding-site/conversions.ts`. Tím padá race condition, dedup 
 **Výjimka — pixely v layoutu** (PageView/retargeting pro Meta/Sklik/gtag) se NEnasadí dokud
 není consent vrstva (viz R4). Pro konverze nejsou potřeba; server-side stačí.
 
-### R2. TŘI reportovací body, ne jeden. **[OPRAVA — hlavní věcný blocker v1; rozšířeno v2.2]**
-`reportPurchase(db, env, purchaseId, valueOverride?)` se volá ze VŠECH tří míst, kde vzniká
-reálná placená konverze:
+### R2. ČTYŘI reportovací body, ne jeden. **[OPRAVA v1; v2.2; doplněno v2.4]**
+`reportPurchase(db, env, purchaseId, { valueOverride?, conversionOccurredAt })` se volá ze VŠECH
+čtyř míst, kde se pending objednávka aktivuje na reálnou placenou konverzi:
 1. `handleCheckoutCompleted` (`queue.ts`) — Stripe nákupy. Jednou, na konci, mimo if/else větve.
-   Hodnota = `paidAmountCzk` (z `amount_total`).
+   Hodnota = `paidAmountCzk` (z `amount_total`); čas = `checkout.session.completed`.
 2. `activateMatchedPurchase` (`scheduled.ts`) — FIO + Creditas (cron scan).
    **Hodnota = `match.amountPaid` (reálně přijatá), NE `p.amountPaid`** — to u pending FIO drží jen
-   OČEKÁVANOU částku z objednání (`schema.ts:105`). **[OPRAVA v2.1]**
-3. Ruční potvrzení převodu adminem (`kind='manual'`). Hodnota = `amountPaid` použitá při potvrzení
+   OČEKÁVANOU částku z objednání (`schema.ts:105`). **[OPRAVA v2.1]** Čas = `transactionDate` (R6).
+3. **`/api/fio/verify/:vs` → `activateFioPurchaseIfPending`** (`checkout.tsx:847`) — uživatel na platební
+   stránce klikne „ověřit platbu" a tím aktivuje pending převod (FIO i Creditas). **[v2.4 — chyběl úplně!]**
+   Je to JINÁ funkce než cron (bod 2) i admin (bod 4). Bez napojení se tyhle platby neměří.
+   Hodnota = `matchedTx.amount`; čas = datum bankovní transakce. Report volat v ROUTE (má `c.env`).
+4. Ruční potvrzení převodu adminem (`kind='manual'`). Hodnota = `amountPaid` použitá při potvrzení
    (`opts.amountPaid ?? row.amountPaid`). **POZOR [v2.3]: `manuallyConfirmPayment` (`admin-users.ts:518`)
    bere jen `(db, opts)` a `env` NEMÁ.** `env` je až v route handleru (`admin.tsx:1256`, má `c.env`).
-   Helper nechat čistě DB; **`reportPurchase` volat v ROUTE po úspěšném `manuallyConfirmPayment`**
-   (tam je `c.env` i `db`), ne uvnitř helperu.
-Bez bodu 2 by se neměřila polovina trafficu; bez bodu 3 by chyběly ručně potvrzené převody.
-Guard na `kind` uvnitř `reportPurchase` stejně odfiltruje comp/staff, takže přidání bodu 3 je bezpečné.
+   Helper nechat čistě DB; **`reportPurchase` volat v ROUTE po úspěšném potvrzení**, ne uvnitř helperu.
+Bez bodu 2 by se neměřila polovina trafficu; bez bodu 3 by chyběly self-service ověřené převody;
+bez bodu 4 ručně potvrzené. Guard na `kind` v `reportPurchase` odfiltruje comp/staff → přidání bezpečné.
+Per-provider claim (R3) zajistí, že když se táž platba aktivuje přes víc cest (verify + cron scan),
+konverze se NEpošle dvakrát.
 
 ### R3. Idempotence + retry: claim PER-PROVIDER, ne per-purchase. **[OPRAVA; v2.2; přepracováno v2.3]**
 v2 mělo díru: `conversionReportedAt` PŘED odesláním → selhání = trvalá ztráta. v2.2 zavedlo
 per-purchase `conversionAttemptedAt`, ale to mělo **vnitřní rozpor**: jakmile první pokus nastaví
 `conversionAttemptedAt`, další běh skončí na purchase-level skipu a `failed` provider se NEdoposlá. **[v2.3]**
 Opraveno — claim i stav jsou **per-provider** v `conversion_log`, žádný purchase-level lock:
-- `conversion_log` má unikát `(purchaseId, provider)` (viz migrace). Pro každý aktivní provider
-  `reportPurchase` provede **atomický upsert-claim**:
-  `INSERT (purchaseId, provider, status='pending', attemptCount=1) ON CONFLICT(purchaseId,provider)
-   DO UPDATE SET status='pending', attemptCount=attemptCount+1, updatedAt=now
-   WHERE conversion_log.status != 'sent'`
-  a přečte `meta.changes` (funkční vzor `admin-users.ts:438`).
-  - 0 změněných řádků → provider už `sent` (nebo si claim drží souběžný běh) → **skip jen tento provider**.
-  - >0 → claim získán → odeslat; po výsledku `UPDATE status='sent'|'failed', httpStatus, lastError, updatedAt`.
-- **Re-run doposílá jen `failed`/`pending` providery** — `sent` se přeskočí, ostatní se zkusí znovu.
-  Tím funguje queue retry (max_retries=3), opět. cron scan i ruční `retryFailed`, bez ztráty konverze.
+- `conversion_log` má unikát `(purchaseId, provider)` (viz migrace) + lease pole `claimToken`,
+  `claimedAt`, `leaseUntil`. **[v2.4 — `status!='sent'` sám o sobě NENÍ lock]**: dva souběžné běhy
+  by oba prošly `status!='sent'` a oba by odeslaly. Proto skutečný lease-claim:
+  1. `INSERT (purchaseId, provider, status='pending', attemptCount=1) ON CONFLICT DO NOTHING`
+     (jen založí řádek, pokud chybí).
+  2. **Atomický lease**:
+     `UPDATE conversion_log SET claimToken=?, claimedAt=now, leaseUntil=now+120s, attemptCount=attemptCount+1
+      WHERE purchaseId=? AND provider=? AND status!='sent' AND (leaseUntil IS NULL OR leaseUntil<now)`
+     + přečíst `meta.changes` (vzor `admin-users.ts:438`).
+  - 0 změněných → buď už `sent`, NEBO drží živý lease jiný běh → **skip jen tento provider**.
+  - 1 změněný → claim náš (ověřit přečtením `claimToken`) → odeslat → `UPDATE status='sent'|'failed',
+    httpStatus, lastError, updatedAt, leaseUntil=NULL`.
+- **Claimuje se jen `failed` nebo `pending` se zašlým/prázdným `leaseUntil`.** `sent` se nikdy nesahá.
+- **Re-run doposílá jen `failed` / expired-`pending`** — `sent` přeskočí. Tím funguje queue retry
+  (max_retries=3), opět. cron scan, verify endpoint i ruční `retryFailed`, bez ztráty i bez duplicity.
+- Lease s TTL 120 s navíc pojistí proti uváznutí: spadlý běh (crash mezi claimem a výsledkem) nechá
+  `pending` s prošlým `leaseUntil`, který další běh legálně přebere.
 - **Žádný `conversionAttemptedAt`/`conversionReportedAt` na purchase** (v2.2 sloupce ruším).
   Volitelně lze `conversionReportedAt` dopočítat jako „všichni aktivní provideři sent", čistě informativně.
-- (Souběh: claim přes `status!='sent'` ve WHERE chrání před dvojím odesláním téhož provideru;
-  krátké okno dvou souběžných `pending` claimů řeší Meta `event_id` dedup, u Google `order_id`/dedup okno.)
 - `eventId` (Meta dedup) = `purchase.id`, ne `session_id` (session_id u převodů neexistuje). **[OPRAVA]**
 
 ### R4. GDPR — consent gate je podmínka nasazení. **[BLOCKER, řešit napřed]**
@@ -137,11 +160,17 @@ Opraveno — claim i stav jsou **per-provider** v `conversion_log`, žádný pur
 
 ### `src/lib/conversions.ts` (server-side; DB potřebuje pro claim + log) **[rozhraní přepsáno v2.2]**
 v2 popisoval modul jako „bez DB závislostí", ale měl dělat DB claim i `conversion_log` → vnitřní
-rozpor. **[v2.2]** Opraveno: rozhraní `reportPurchase(db, env, purchaseId, valueOverride?)`:
-- Uvnitř načte aktuální `purchase` row (email, kind, createdAt, consent, fbc/fbp/ip/ua, amountPaid).
-  `valueOverride` pokrývá případy, kdy se reálná hodnota liší od `p.amountPaid` (cron `match.amountPaid`,
-  manuál `opts.amountPaid`). Volající nemusí skládat celý objekt — předá jen ID + případně hodnotu.
-- **Claim** dle R3 (atomický UPDATE `conversionAttemptedAt`, čtení `meta.changes`); 0 změněných → skip.
+rozpor. **[v2.2]** Opraveno: rozhraní
+`reportPurchase(db, env, purchaseId, { valueOverride?, conversionOccurredAt })`: **[doplněno v2.4]**
+- **`conversionOccurredAt` předává volající** (čas reálné platby — viz R6), protože ne každý bod ho má
+  uložený na row v moment volání. Pořadí: volající NEJDŘÍV uloží `conversionOccurredAt` na purchase
+  (součást aktivačního UPDATu), PAK zavolá `reportPurchase` → žádný závod „report před uložením času".
+  `reportPurchase` čte čas primárně z parametru, fallback z row.
+- Uvnitř načte aktuální `purchase` row (email, kind, consent, fbc/fbp/ip/ua, amountPaid, conversionOccurredAt).
+  `valueOverride` pokrývá případy, kdy se reálná hodnota liší od `p.amountPaid` (bankovní `match.amountPaid`,
+  manuál `opts.amountPaid`). Volající nemusí skládat celý objekt — předá ID + hodnotu + čas.
+- **Per-provider lease-claim** dle R3 (lease v `conversion_log`, čtení `meta.changes`); 0 změněných → skip
+  provideru. **(žádný `conversionAttemptedAt` — ten je z plánu zrušen, R3/v2.3.)** **[oprava rozporu v2.4]**
 - Guard: skip pokud `kind` ∈ {comp, staff} nebo hodnota `<=0` nebo `!marketingConsent`.
 - `Promise.allSettled([ sendMetaCapi(), sendGoogleAds() ])` + per-call `try/catch`; výsledek každého
   provideru zapíše do `conversion_log` (`sent|failed`), aby šlo selhání doposlat (R3).
@@ -173,7 +202,12 @@ rozpor. **[v2.2]** Opraveno: rozhraní `reportPurchase(db, env, purchaseId, valu
   Web žádné click ID neukládá (grep = 0). User-provided data (hashed email) mohou pomoct atribuci
   i bez GCLID, ale **závisí na typu conversion action v účtu** — bez ověření nepokračovat.
 - **Fáze A (teď): zavést click-ID capture** — viz R5 (capture na vstupu, ne ze static GET formuláře).
-- **Fáze B: až click ID teče A je ověřená API cesta** → Offline/Data Manager import z `reportPurchase`.
+- **Rozhodovací podúkol [v2.4]**: Google Ads API a Data Manager API NEJSOU jen výměna endpointu —
+  liší se payload, identifikátory, diagnostika i dedup logika. Navrhnout proto **dvě implementace
+  jednoho provider rozhraní**: `GoogleAdsApiReporter` (allowlistnutý token) vs `DataManagerReporter`
+  (nový adopter), výběr podle výsledku ověření allowlistu. Zbytek `conversions.ts` na konkrétní volbě
+  nezávisí (volá jen `sendGoogle()`).
+- **Fáze B: až click ID teče A je ověřená API cesta** → import z `reportPurchase`.
   OAuth refresh → `oauth2.googleapis.com/token`, access token CACHOVAT v KV (~50 min TTL, ne per-nákup).
   REST (ne gRPC). `login-customer-id` = MCC bez pomlček. `conversion_date_time` = **`conversionOccurredAt`**
   (viz R6), NE `createdAt`.
@@ -199,10 +233,17 @@ v2.2 chtělo `conversion_date_time` z `purchase.createdAt`. To je ale **čas obj
 mezi objednáním a přijetím platby uběhnou klidně dny → Google/Meta by dostaly událost datovanou PŘED
 faktickou konverzí. Měříme Purchase až po reálné platbě, takže potřebujeme samostatný čas konverze:
 - **Nová kolonka `purchase.conversionOccurredAt`** (nullable), nastavená v momentě, kdy platba reálně
-  nastane — z každého ze tří reportovacích bodů:
-  - **Stripe**: čas z `checkout.session.completed` (webhook event / session created), v consumeru.
-  - **FIO/Creditas**: datum bankovní transakce nebo čas spárování v `activateMatchedPurchase`.
+  nastane — ze všech ČTYŘ reportovacích bodů (R2):
+  - **Stripe**: čas z `checkout.session.completed` (webhook event), v consumeru.
+  - **FIO/Creditas cron** + **verify endpoint**: **datum bankovní TRANSAKCE**, ne čas spárování.
   - **manual**: čas ručního potvrzení v route handleru.
+- **POZOR — `transactionDate` se dnes v kódu ZAHAZUJE [v2.4, P1]**: bankovní matchery datum nesou
+  (`r.transaction`), ale `pendingMatches` ho do struktury nepřidává (`scheduled.ts:194,212`),
+  `activateMatchedPurchase` přijímá jen `{bank, transactionId, amountPaid}` (`scheduled.ts:279`),
+  a verify endpoint redukuje match na `{id, amount}` (`checkout.tsx:813,824,838`). **Nutné explicitně
+  protáhnout `transactionDate`**: přidat ho do `pendingMatches` objektu, do signatury
+  `activateMatchedPurchase` (`match.transactionDate`), a do `matchedTx` ve verify endpointu.
+  Jinak implementer skončí u času spárování (= dnešní `new Date()`), což je špatně.
 - `reportPurchase` posílá `conversion_date_time` (Google) i `event_time` (Meta CAPI) z `conversionOccurredAt`.
   Deterministické (uložené, ne `new Date()` při běhu) → idempotentní i při retry.
 - Pozn. Meta CAPI okno: `event_time` nesmí být starší než 7 dní — u dlouho visících převodů, které se
@@ -220,10 +261,11 @@ Nové nullable sloupce na `purchase`: `conversionOccurredAt` (čas platby, R6), 
 **[v2.3] `conversionAttemptedAt`/`conversionReportedAt` z v2.2 ZRUŠENY** — claim je per-provider
 v `conversion_log` (R3), ne na purchase.
 
-Tabulka `conversion_log` — kontrakt pro deterministický re-run **[v2.3]**:
+Tabulka `conversion_log` — kontrakt pro deterministický re-run **[v2.3; lease v2.4]**:
 - `purchaseId` (FK), `provider` (`meta|google|sklik`)
 - **`UNIQUE(purchaseId, provider)`** — bez něj vznikají duplicitní řádky a není jasné, co je pravda
 - `status` (`pending|sent|failed`)
+- **lease (R3): `claimToken` (text), `claimedAt`, `leaseUntil`** — skutečný lock proti souběhu **[v2.4]**
 - `attemptCount` (int, ++ při každém claimu), `lastError` (text), `httpStatus` (int), `responseBody` (text)
 - `requestId` (idempotency key poslaný provideru, kde to dává smysl)
 - `createdAt`, `updatedAt`
@@ -232,10 +274,13 @@ Tabulka `conversion_log` — kontrakt pro deterministický re-run **[v2.3]**:
 1. **Consent vrstva + přepis privacy.tsx** (R4) — BLOCKER, musí být první.
 2. **Migrace** (nové sloupce + conversion_log).
 3. **Click-ID + consent capture** (R5: capture na vstupu → cookie/hidden → POST → Stripe metadata / FIO row).
-4. **`conversions.ts` + Meta CAPI** s claim/log/retry/timeout/guard a env `META_API_VERSION`.
-5. **Napojení reportPurchase ze TŘÍ míst**: `queue.ts` (Stripe), `scheduled.ts` (FIO+Creditas) — oba
-   mají `env`; **manual v ROUTE `admin.tsx:1256` po `manuallyConfirmPayment`** (helper `env` nemá, R2/v2.3).
-   Každý bod nastaví `conversionOccurredAt` (R6). Idempotence per-provider claim (R3).
+   + **protáhnout `transactionDate`** match strukturami (`pendingMatches`, `activateMatchedPurchase`,
+   verify `matchedTx`) — předpoklad pro R6. **[v2.4]**
+4. **`conversions.ts` + Meta CAPI** s lease-claim/log/retry/timeout/guard a env `META_API_VERSION`.
+5. **Napojení reportPurchase ze ČTYŘ míst** (R2): `queue.ts` (Stripe), `scheduled.ts` cron (FIO+Creditas),
+   **verify endpoint `checkout.tsx:847`** (`activateFioPurchaseIfPending`, v ROUTE — má `c.env`),
+   **manual v ROUTE `admin.tsx:1256`** (helper `env` nemá). Každý bod uloží `conversionOccurredAt`
+   (= datum transakce / čas platby, R6) PŘED reportem. Idempotence per-provider lease-claim (R3).
 6. **Test** Meta přes test_event_code → Events Manager.
 7. **Google fáze B** (až click ID teče): **KROK 0 — ověřit allowlist developer tokenu** → podle výsledku
    Google Ads API NEBO Data Manager API (R-Google/v2.3). Pak import + KV token cache. Ověřit conversion action.
@@ -244,8 +289,10 @@ Tabulka `conversion_log` — kontrakt pro deterministický re-run **[v2.3]**:
 ## Testování
 - Meta: `META_TEST_EVENT_CODE` → Events Manager Test Events živě vidí Purchase + dedup dle event_id.
 - Stripe test mode nákup → ověřit report z queue. FIO: testovací spárování → report z cronu.
-  Manual: admin ruční potvrzení (route) → ověřit report. Ověřit `conversionOccurredAt` = čas platby, ne objednávky.
-- Idempotence: ručně přehrát queue zprávu → `sent` provider se NEpošle podruhé (per-provider claim).
+  **Verify endpoint: na platební stránce kliknout „ověřit" → report z route** (4. bod, R2).
+  Manual: admin ruční potvrzení (route) → ověřit report. Ověřit `conversionOccurredAt` = datum transakce, ne objednávky/spárování.
+- Idempotence/souběh: **táž platba přes verify endpoint I cron scan** → konverze poslána právě jednou
+  (per-provider lease-claim). Přehrát queue zprávu → `sent` provider se NEpošle podruhé.
   Selhání Meta → `conversion_log` drží `failed`; re-run **doposílá `failed`, ale `sent` přeskočí** (R3).
 - Google: API diagnostics / „Recent conversions" v Ads. Sklik: náhled měření konverzí.
 
