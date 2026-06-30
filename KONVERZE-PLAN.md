@@ -9,27 +9,32 @@
 
 ## Stav implementace (větev `feat/conversion-tracking`)
 
-**HOTOVO a otestováno (server-side jádro):**
+**HOTOVO a otestováno:**
 - ✅ **Fáze 2** — DB schema + migrace 0031 (purchase sloupce + conversion_log s lease).
 - ✅ **Fáze 4** — `src/lib/conversions.ts`: reportPurchase, per-provider lease-claim,
-  Meta CAPI s retry/timeout, guardy, Google reporter jako stub. 13 unit testů zelených.
+  Meta CAPI s retry/timeout, guardy, Google reporter jako stub.
 - ✅ **Fáze 5** — napojení všech 4 reportovacích bodů (Stripe queue, FIO/Creditas cron,
   verify endpoint, admin manual) + protažení transactionDate + bankDateToConversionInstant.
+- ✅ **Fáze 1** — privacy.tsx přepsán; consent lišta + pixely v `analytics-snippet.ts`,
+  vkládané centrálně do </body>. Pixely se načítají PŘEDEM (rozhodnutí provozovatele),
+  consent signál ale odráží realitu (revoke/denied dokud souhlas; žádný falešný grant).
+- ✅ **Fáze 3** — capture click-ID/consent v checkoutu (checkbox + cookie → Stripe metadata /
+  FIO row → extractSignals ve webhooku → reportPurchase). fbc skládaný z fbclid.
+- ✅ **Fáze 8 (client-side část)** — Sklik conversionHit + Meta Pixel + gtag jsou v snippetu.
 
-→ Měření je technicky kompletní server-side. Jakmile se nastaví Meta secrets a uživatel
-  odsouhlasí marketing, Meta Purchase konverze se začnou reportovat ze všech 4 cest.
+Celkem 32 unit testů (conversions + analytics-snippet) zelených, typecheck čistý,
+celá suite zelená mimo 3 předexistující cc-news faily (padají i na main, nesouvisí).
 
-**ZBÝVÁ — vyžaduje vstup mimo kód (proto NEimplementováno autonomně):**
-- ⏳ **Fáze 1** — consent banner + přepis privacy.tsx. **Právní rozhodnutí**: text privacy
-  policy a právní základ musí schválit člověk. Bez consentu se reálně nereportuje (guard).
-- ⏳ **Fáze 3** — capture click-ID + marketingConsent v checkoutu. Smysluplné AŽ po fázi 1
-  (banner řídí hodnotu consentu). Technicky aditivní, ale navázané na consent UI.
-- ⏳ **Fáze 7** — Google reporter. Uživatel řeší API token/allowlist zvlášť (jeho slova).
-- ⏳ **Fáze 8** — Sklik client-side + base pixely v layoutu. Až za consent gate. Chybí secrets.
+- ✅ **Frontend capture click-ID** — hidden fieldy + inline JS v checkout view naplní
+  gclid/gbraid/wbraid/fbclid z URL query nebo cookie (capture na vstupu, R5 krok 1).
+
+**ZBÝVÁ — vyžaduje vstup mimo kód:**
+- ⏳ **Fáze 7** — Google reporter (`sendGoogle` je stub). Uživatel řeší API token/allowlist zvlášť.
+  Po ověření allowlistu doimplementovat GoogleAdsApiReporter NEBO DataManagerReporter.
 
 **Potřebné secrets (wrangler), bez nich měření neběží naživo:**
 `META_PIXEL_ID`, `META_CAPI_TOKEN` (+ volitelně `META_API_VERSION`, `META_TEST_EVENT_CODE`),
-`SKLIK_CONVERSION_ID`, a Google `GOOGLE_ADS_*` (později).
+`SKLIK_CONVERSION_ID`, `GTAG_ID`, a Google `GOOGLE_ADS_*` (později).
 
 ## Changelog verzí (pro oponenturu)
 

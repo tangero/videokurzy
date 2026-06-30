@@ -84,6 +84,28 @@ export const CheckoutSelect: FC<{
           {inviteToken && (
             <input type="hidden" name="inviteToken" value={inviteToken} />
           )}
+          {/* Click ID z reklamy (capture na vstupu, R5). Naplní je skript níže
+              z URL query nebo z cookie uložené při příchodu na web. */}
+          <input type="hidden" name="gclid" id="f_gclid" value="" />
+          <input type="hidden" name="gbraid" id="f_gbraid" value="" />
+          <input type="hidden" name="wbraid" id="f_wbraid" value="" />
+          <input type="hidden" name="fbclid" id="f_fbclid" value="" />
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(function(){
+  function qs(n){return new URLSearchParams(location.search).get(n);}
+  function ck(n){var m=document.cookie.match(new RegExp('(?:^|;\\\\s*)'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null;}
+  // Capture na vstupu: když click ID přijde v URL, ulož do cookie (90 dní), ať
+  // přežije přechod na checkout. Do hidden fieldu dej URL hodnotu nebo cookie.
+  ['gclid','gbraid','wbraid','fbclid'].forEach(function(k){
+    var v=qs(k);
+    if(v){document.cookie=k+'='+encodeURIComponent(v)+';path=/;max-age=7776000;SameSite=Lax;Secure';}
+    var el=document.getElementById('f_'+k);
+    if(el){el.value=v||ck(k)||'';}
+  });
+})();`,
+            }}
+          />
           <div>
             <label for="email" class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
             <input
