@@ -123,6 +123,24 @@ export const purchase = sqliteTable("purchase", {
   // Nehádatelný token (nanoid) pro přístup k pay/proforma stránce — oprava
   // IDOR (VS šlo enumerovat). Nullable: staré objednávky token nemají.
   accessToken: text("accessToken"),
+  // ─── Konverzní měření (reklamní platformy) ───────────────────────
+  // Čas, kdy platba REÁLNĚ nastala — NE čas objednávky (createdAt). U převodů
+  // je to datum bankovní transakce (začátek dne v Europe/Prague), u Stripe čas
+  // checkout.session.completed, u manuálu čas potvrzení. Posílá se jako
+  // conversion time do Google/Meta. Nullable: granty a staré nákupy ho nemají.
+  conversionOccurredAt: integer("conversionOccurredAt", { mode: "timestamp" }),
+  // Souhlas s marketingem v okamžiku checkoutu. Konverze se reportuje jen při true
+  // (právní základ pro CAPI/Offline Conversions = souhlas, ne plnění smlouvy).
+  marketingConsent: integer("marketingConsent", { mode: "boolean" }).notNull().default(false),
+  // Match signály zachycené v checkoutu (lepší atribuce). Vše nullable.
+  // fbc = serverový formát fb.1.<ms>.<fbclid> (NE raw fbclid), fbp jen z existující cookie.
+  fbc: text("fbc"),
+  fbp: text("fbp"),
+  gclid: text("gclid"),
+  gbraid: text("gbraid"),
+  wbraid: text("wbraid"),
+  clientIp: text("clientIp"),
+  userAgent: text("userAgent"),
 }, (table) => [
   // Partial unique index: zabraňuje dvojímu spárování stejné FIO transakce
   // (defense-in-depth proti double-spend, finding 28). NULL je povolen
@@ -170,6 +188,35 @@ export const discountInvite = sqliteTable("discount_invite", {
   // Který purchase token spotřeboval (FK na purchase.id, bez DB constraintu).
   usedByPurchaseId: integer("usedByPurchaseId"),
 });
+
+// Per-provider stav reportování konverze do reklamních platforem. Jeden řádek
+// na (purchase, provider). Drží claim/lease proti souběhu i historii pokusů, aby
+// re-run mohl doposlat jen selhané providery a 'sent' přeskočit (idempotence R3).
+export const conversionLog = sqliteTable("conversion_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  purchaseId: integer("purchaseId").notNull(),
+  provider: text("provider", { enum: ["meta", "google", "sklik"] }).notNull(),
+  status: text("status", { enum: ["pending", "sent", "failed"] }).notNull().default("pending"),
+  // Lease (skutečný lock proti souběhu): claim drží jen jeden běh do leaseUntil.
+  // Spadlý běh nechá prošlý lease, který další běh legálně přebere.
+  claimToken: text("claimToken"),
+  claimedAt: integer("claimedAt", { mode: "timestamp" }),
+  leaseUntil: integer("leaseUntil", { mode: "timestamp" }),
+  // attemptCount: insert=0, inkrement jen při lease UPDATE (žádné dvojí započítání).
+  attemptCount: integer("attemptCount").notNull().default(0),
+  lastError: text("lastError"),
+  httpStatus: integer("httpStatus"),
+  responseBody: text("responseBody"),
+  // Idempotency key poslaný provideru (kde to dává smysl, např. = purchaseId).
+  requestId: text("requestId"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => [
+  // Jeden řádek na (purchase, provider) — bez toho duplicity a nejasný zdroj pravdy.
+  uniqueIndex("conversion_log_purchase_provider_unique").on(table.purchaseId, table.provider),
+  // Re-run hledá failed / expired-pending k doposlání.
+  index("idx_conversion_log_status").on(table.status),
+]);
 
 // ─── Relations ────────────────────────────────────────────────────
 
