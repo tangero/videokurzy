@@ -20,6 +20,12 @@ CC_NEWS_LLM = "1"
 # bránu cc_news_live_send (DB) + RESEND_API_KEY, takže samotná "0" nic nerozešle
 # bez admin přepínače. env.test toto NEdědí → testy zůstávají dry-run.
 CC_NEWS_DRY_RUN = "0"
+# Meta konverzní měření (Conversions API). Pixel/Dataset ID je veřejné, patří sem
+# (deploy by ho z dashboardu smazal). CAPI token je secret → `wrangler secret put
+# META_CAPI_TOKEN`. Dataset "Videokurzy" v Events Manageru, oddělený od vibecoding.
+META_PIXEL_ID = "986046454414686"
+# Verze Graph API (override defaultu v conversions.ts). Aktualizuj dle changelogu Meta.
+META_API_VERSION = "v23.0"
 
 [assets]
 directory = "./public"
