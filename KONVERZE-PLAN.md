@@ -1,4 +1,4 @@
-# Plán v2.4: Konverzní měření pro videokurzy (Meta + Google + Sklik)
+# Plán v2.5: Konverzní měření pro videokurzy (Meta + Google + Sklik) — SCHVÁLENO K IMPLEMENTACI
 
 > v2 po vypořádání 3 nezávislých oponentur (technika / korektnost dat / GDPR).
 > v2.2 po 1. externí review (Meta API verze, manual platby, idempotence, rozhraní, capture, Google doc).
@@ -56,6 +56,12 @@ Změny jsou v textu označené inline tagy `[OPRAVA]` (v1→v2) a `[v2.2]` (v2�
   - **[P2] Rozpor textu** — sekce `conversions.ts` pořád citovala zrušený `conversionAttemptedAt` → sjednoceno.
   - **[P2] Rozhraní** — `reportPurchase(..., { valueOverride?, conversionOccurredAt })`; čas uložit PŘED reportem.
   - **[P2] Google dvě implementace** — `GoogleAdsApiReporter` vs `DataManagerReporter` za jedním rozhraním.
+- **v2.5** — akceptační upřesnění před implementací (4 implementační hrany, ne blokery):
+  - `conversionOccurredAt` z banky normalizovat: začátek dne transakce v `Europe/Prague`, fallback čas
+    spárování; Google formát s TZ, Meta unix ts.
+  - Guardy (`kind`/`value<=0`/`!consent`/chybí config) běží PŘED claimem — žádné zbytečné `pending/failed`.
+  - Lease při převzetí `failed`/expired-`pending` resetuje `status='pending'` a čistí `lastError/httpStatus/responseBody`.
+  - `attemptCount` insert=0, inkrement jen v lease UPDATE — žádné dvojí započítání prvního pokusu.
 
 ## Kontext / zjištěný stav (ověřeno v kódu)
 - Web: Cloudflare Workers + Hono (JSX SSR), TypeScript. Layout `src/views/layout.tsx`.
@@ -116,15 +122,22 @@ v2 mělo díru: `conversionReportedAt` PŘED odesláním → selhání = trvalá
 per-purchase `conversionAttemptedAt`, ale to mělo **vnitřní rozpor**: jakmile první pokus nastaví
 `conversionAttemptedAt`, další běh skončí na purchase-level skipu a `failed` provider se NEdoposlá. **[v2.3]**
 Opraveno — claim i stav jsou **per-provider** v `conversion_log`, žádný purchase-level lock:
+- **Guardy běží PŘED claimem [v2.5]**: `kind ∈ {comp,staff}`, `value<=0`, `!marketingConsent`,
+  chybějící konfigurace daného provideru → konverze/provider se vůbec neclaimuje. Jinak by vznikaly
+  zbytečné `pending/failed` řádky pro konverze, které se nikdy nemají poslat.
 - `conversion_log` má unikát `(purchaseId, provider)` (viz migrace) + lease pole `claimToken`,
   `claimedAt`, `leaseUntil`. **[v2.4 — `status!='sent'` sám o sobě NENÍ lock]**: dva souběžné běhy
   by oba prošly `status!='sent'` a oba by odeslaly. Proto skutečný lease-claim:
-  1. `INSERT (purchaseId, provider, status='pending', attemptCount=1) ON CONFLICT DO NOTHING`
-     (jen založí řádek, pokud chybí).
-  2. **Atomický lease**:
-     `UPDATE conversion_log SET claimToken=?, claimedAt=now, leaseUntil=now+120s, attemptCount=attemptCount+1
+  1. `INSERT (purchaseId, provider, status='pending', attemptCount=0) ON CONFLICT DO NOTHING`
+     (jen založí řádek, pokud chybí). **`attemptCount=0` [v2.5]** — inkrement dělá až lease (krok 2),
+     jinak by se první pokus započítal dvakrát.
+  2. **Atomický lease** (převzetí řádku do běhu = přepnout na `pending` a vyčistit stopy minulého pokusu):
+     `UPDATE conversion_log SET status='pending', claimToken=?, claimedAt=now, leaseUntil=now+120s,
+      attemptCount=attemptCount+1, lastError=NULL, httpStatus=NULL, responseBody=NULL, updatedAt=now
       WHERE purchaseId=? AND provider=? AND status!='sent' AND (leaseUntil IS NULL OR leaseUntil<now)`
-     + přečíst `meta.changes` (vzor `admin-users.ts:438`).
+     + přečíst `meta.changes` (vzor `admin-users.ts:438`). **[v2.5]** Reset `status='pending'` +
+     vyčištění `lastError/httpStatus/responseBody` zajistí, že řádek během živého retry nevypadá jako
+     `failed` (stav minulého pokusu drží jen do převzetí; pak je čistý `pending`).
   - 0 změněných → buď už `sent`, NEBO drží živý lease jiný běh → **skip jen tento provider**.
   - 1 změněný → claim náš (ověřit přečtením `claimToken`) → odeslat → `UPDATE status='sent'|'failed',
     httpStatus, lastError, updatedAt, leaseUntil=NULL`.
@@ -169,9 +182,11 @@ rozpor. **[v2.2]** Opraveno: rozhraní
 - Uvnitř načte aktuální `purchase` row (email, kind, consent, fbc/fbp/ip/ua, amountPaid, conversionOccurredAt).
   `valueOverride` pokrývá případy, kdy se reálná hodnota liší od `p.amountPaid` (bankovní `match.amountPaid`,
   manuál `opts.amountPaid`). Volající nemusí skládat celý objekt — předá ID + hodnotu + čas.
+- **Pořadí uvnitř [v2.5]: 1) guardy → 2) per-provider lease-claim → 3) send.**
+  Guard NEJDŘÍV: skip pokud `kind` ∈ {comp, staff} nebo hodnota `<=0` nebo `!marketingConsent`
+  nebo chybí konfigurace provideru. Teprve potom claim (R3) — ať nevznikají zbytečné `pending/failed`.
 - **Per-provider lease-claim** dle R3 (lease v `conversion_log`, čtení `meta.changes`); 0 změněných → skip
   provideru. **(žádný `conversionAttemptedAt` — ten je z plánu zrušen, R3/v2.3.)** **[oprava rozporu v2.4]**
-- Guard: skip pokud `kind` ∈ {comp, staff} nebo hodnota `<=0` nebo `!marketingConsent`.
 - `Promise.allSettled([ sendMetaCapi(), sendGoogleAds() ])` + per-call `try/catch`; výsledek každého
   provideru zapíše do `conversion_log` (`sent|failed`), aby šlo selhání doposlat (R3).
 - **Vnější `try/catch` v místě volání** (queue.ts / scheduled.ts / admin-users.ts) tak, že reportPurchase
@@ -244,6 +259,12 @@ faktickou konverzí. Měříme Purchase až po reálné platbě, takže potřebu
   protáhnout `transactionDate`**: přidat ho do `pendingMatches` objektu, do signatury
   `activateMatchedPurchase` (`match.transactionDate`), a do `matchedTx` ve verify endpointu.
   Jinak implementer skončí u času spárování (= dnešní `new Date()`), což je špatně.
+- **Normalizace data z banky [v2.5]**: FIO/Creditas nesou typicky **datum bez času**. Pravidlo:
+  `conversionOccurredAt` = **začátek dne transakce v `Europe/Prague`** (převedený na UTC instant);
+  fallback = čas spárování, jen když datum transakce úplně chybí. Stripe a manual mají přesný čas.
+- **Formáty na výstupu [v2.5]**: Google `conversion_date_time` = string s časovou zónou
+  (`yyyy-MM-dd HH:mm:ss+HH:mm`); Meta `event_time` = unix timestamp (s). Oba odvozené z téhož
+  uloženého instantu → konzistentní.
 - `reportPurchase` posílá `conversion_date_time` (Google) i `event_time` (Meta CAPI) z `conversionOccurredAt`.
   Deterministické (uložené, ne `new Date()` při běhu) → idempotentní i při retry.
 - Pozn. Meta CAPI okno: `event_time` nesmí být starší než 7 dní — u dlouho visících převodů, které se
