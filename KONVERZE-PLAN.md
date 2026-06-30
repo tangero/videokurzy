@@ -7,6 +7,30 @@
 > v2.4 po 3. externí review (verify endpoint = 4. bod, lease-claim, transactionDate, rozpory textu,
 > rozhraní s conversionOccurredAt, Google dvě implementace). Inline tagy **[OPRAVA]/[v2.2]/[v2.3]/[v2.4]**.
 
+## Stav implementace (větev `feat/conversion-tracking`)
+
+**HOTOVO a otestováno (server-side jádro):**
+- ✅ **Fáze 2** — DB schema + migrace 0031 (purchase sloupce + conversion_log s lease).
+- ✅ **Fáze 4** — `src/lib/conversions.ts`: reportPurchase, per-provider lease-claim,
+  Meta CAPI s retry/timeout, guardy, Google reporter jako stub. 13 unit testů zelených.
+- ✅ **Fáze 5** — napojení všech 4 reportovacích bodů (Stripe queue, FIO/Creditas cron,
+  verify endpoint, admin manual) + protažení transactionDate + bankDateToConversionInstant.
+
+→ Měření je technicky kompletní server-side. Jakmile se nastaví Meta secrets a uživatel
+  odsouhlasí marketing, Meta Purchase konverze se začnou reportovat ze všech 4 cest.
+
+**ZBÝVÁ — vyžaduje vstup mimo kód (proto NEimplementováno autonomně):**
+- ⏳ **Fáze 1** — consent banner + přepis privacy.tsx. **Právní rozhodnutí**: text privacy
+  policy a právní základ musí schválit člověk. Bez consentu se reálně nereportuje (guard).
+- ⏳ **Fáze 3** — capture click-ID + marketingConsent v checkoutu. Smysluplné AŽ po fázi 1
+  (banner řídí hodnotu consentu). Technicky aditivní, ale navázané na consent UI.
+- ⏳ **Fáze 7** — Google reporter. Uživatel řeší API token/allowlist zvlášť (jeho slova).
+- ⏳ **Fáze 8** — Sklik client-side + base pixely v layoutu. Až za consent gate. Chybí secrets.
+
+**Potřebné secrets (wrangler), bez nich měření neběží naživo:**
+`META_PIXEL_ID`, `META_CAPI_TOKEN` (+ volitelně `META_API_VERSION`, `META_TEST_EVENT_CODE`),
+`SKLIK_CONVERSION_ID`, a Google `GOOGLE_ADS_*` (později).
+
 ## Changelog verzí (pro oponenturu)
 
 Změny jsou v textu označené inline tagy `[OPRAVA]` (v1→v2) a `[v2.2]` (v2→v2.2).
