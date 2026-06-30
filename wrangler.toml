@@ -26,6 +26,10 @@ CC_NEWS_DRY_RUN = "0"
 META_PIXEL_ID = "986046454414686"
 # Verze Graph API (override defaultu v conversions.ts). Aktualizuj dle changelogu Meta.
 META_API_VERSION = "v23.0"
+# Sklik (Seznam) — veřejná ID. Konverze (conversionHit na success/pay stránce) a
+# retargeting (retargetingHit na všech stránkách) jsou DVĚ různá ID.
+SKLIK_CONVERSION_ID = "100281202"
+SKLIK_RETARGETING_ID = "161175"
 
 [assets]
 directory = "./public"

@@ -7,7 +7,7 @@ import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { purchase, organization, siteConfig } from "../db/schema";
 import { reportPurchase, bankDateToConversionInstant, captureSignals, type ConversionSignals } from "../lib/conversions";
-import { sklikConversionSnippet } from "../lib/analytics-snippet";
+import { sklikConversionSnippetFor } from "../lib/analytics-snippet";
 import { lookupByIco, lookupByName } from "../lib/ares";
 import { generateProformaHtml } from "../lib/proforma";
 import { nextProformaNumber } from "../lib/proforma-sequence";
@@ -764,6 +764,15 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
     domain = emailDomain(p.email);
   }
 
+  // Sklik conversionHit „při objednávce" — i pro zatím nezaplacené převody
+  // (rozhodnutí provozovatele). Dedup přes sessionStorage na VS (pay stránka se
+  // zobrazuje opakovaně). E-mail se hashuje server-side pro identity matching.
+  const sklikConv = await sklikConversionSnippetFor(c.env, {
+    value: price,
+    orderId: p.variableSymbol!,
+    email: p.email,
+  });
+
   return c.html(
     <Layout title={p.proformaNumber ? `Zálohový doklad ${p.proformaNumber}` : "Platba bankovním převodem"}>
       <PaymentDetails
@@ -797,13 +806,7 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
         companyZip={p.companyZip}
         contactName={p.contactName}
       />
-      {/* Sklik conversionHit „při objednávce" — pálí se i pro zatím nezaplacené
-          převody (rozhodnutí provozovatele). Dedup přes sessionStorage na VS,
-          protože pay stránka se zobrazuje opakovaně. */}
-      {(() => {
-        const sklik = sklikConversionSnippet(c.env, { value: price, orderId: p.variableSymbol! });
-        return sklik ? <div dangerouslySetInnerHTML={{ __html: sklik }} /> : null;
-      })()}
+      {sklikConv && <div dangerouslySetInnerHTML={{ __html: sklikConv }} />}
     </Layout>
   );
 });

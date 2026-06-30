@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import Stripe from "stripe";
 import type { Env, Variables } from "../types";
-import { sklikConversionSnippet } from "../lib/analytics-snippet";
+import { sklikConversionSnippetFor } from "../lib/analytics-snippet";
 
 const stripeRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -28,7 +28,8 @@ stripeRoutes.get("/checkout/success", async (c) => {
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       if (session.payment_status === "paid") {
         const valueCzk = Math.round((session.amount_total ?? 0) / 100);
-        sklik = sklikConversionSnippet(c.env, { value: valueCzk, orderId: sessionId });
+        const email = session.customer_details?.email ?? session.customer_email ?? null;
+        sklik = await sklikConversionSnippetFor(c.env, { value: valueCzk, orderId: sessionId, email });
       }
     } catch (err) {
       console.error("[sklik] success page session retrieve failed:", err);

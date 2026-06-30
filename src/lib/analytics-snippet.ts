@@ -15,6 +15,7 @@
 // - Lišta je velmi tenká, neblokující, na konci stránky (sticky patička).
 
 import type { Env } from "../types";
+import { sha256Hex } from "./cc-news/detect";
 
 const CONSENT_COOKIE = "vk_consent";
 
@@ -154,10 +155,15 @@ export function analyticsSnippet(env: Env): string {
  */
 export function sklikConversionSnippet(
   env: Env,
-  opts: { value: number; orderId: string },
+  opts: { value: number; orderId: string; emailHash?: string | null },
 ): string {
   const id = env.SKLIK_CONVERSION_ID;
   if (!id || !opts.value || opts.value <= 0) return "";
+
+  // Identity matching: hashovaný e-mail (SHA-256) přes updateIdentities zlepší
+  // atribuci. Hash se počítá server-side (sklikConversionSnippetFor), do HTML
+  // jde jen hash, ne čitelný e-mail. eid=null když hash chybí.
+  const eid = opts.emailHash ? jsStr(opts.emailHash) : "null";
 
   const js = `
 (function () {
@@ -170,6 +176,11 @@ export function sklikConversionSnippet(
   var s = document.createElement('script');
   s.src = 'https://c.seznam.cz/js/rc.js';
   s.onload = function () {
+    try {
+      if (window.sznIVA && window.sznIVA.IS && window.sznIVA.IS.updateIdentities) {
+        window.sznIVA.IS.updateIdentities({ eid: ${eid} });
+      }
+    } catch (e) {}
     if (window.rc && window.rc.conversionHit) {
       window.rc.conversionHit({
         id: Number(${jsStr(id)}),
@@ -182,4 +193,17 @@ export function sklikConversionSnippet(
   document.head.appendChild(s);
 })();`;
   return `<script>${js}</script>`;
+}
+
+/**
+ * Jako sklikConversionSnippet, ale e-mail zahashuje server-side (SHA-256) pro
+ * identity matching. E-mail se do HTML nikdy nedostane v čitelné podobě.
+ */
+export async function sklikConversionSnippetFor(
+  env: Env,
+  opts: { value: number; orderId: string; email?: string | null },
+): Promise<string> {
+  let emailHash: string | null = null;
+  if (opts.email) emailHash = await sha256Hex(opts.email.trim().toLowerCase());
+  return sklikConversionSnippet(env, { value: opts.value, orderId: opts.orderId, emailHash });
 }

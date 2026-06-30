@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyticsSnippet, sklikConversionSnippet } from "../../src/lib/analytics-snippet";
+import { analyticsSnippet, sklikConversionSnippet, sklikConversionSnippetFor } from "../../src/lib/analytics-snippet";
 import type { Env } from "../../src/types";
 
 function envWith(overrides: Partial<Env>): Env {
@@ -59,5 +59,26 @@ describe("sklikConversionSnippet", () => {
     expect(html).toContain("vk_sklik_conv_");
     expect(html).toContain("VS99");
     expect(html).toContain("sessionStorage");
+  });
+
+  it("identity matching: eid=null bez hashe, jinak hashovaný e-mail (ne čitelný)", () => {
+    const without = sklikConversionSnippet(envWith({ SKLIK_CONVERSION_ID: "7" }), { value: 100, orderId: "A" });
+    expect(without).toContain("eid: null");
+    const withHash = sklikConversionSnippet(envWith({ SKLIK_CONVERSION_ID: "7" }), { value: 100, orderId: "A", emailHash: "deadbeef" });
+    expect(withHash).toContain('updateIdentities({ eid: "deadbeef" })');
+  });
+});
+
+describe("sklikConversionSnippetFor — hashuje e-mail server-side", () => {
+  it("e-mail se do HTML dostane jen jako SHA-256 hash, ne čitelně", async () => {
+    const html = await sklikConversionSnippetFor(envWith({ SKLIK_CONVERSION_ID: "7" }), {
+      value: 100,
+      orderId: "A",
+      email: "Test@Example.com",
+    });
+    expect(html).not.toContain("Test@Example.com");
+    expect(html).not.toContain("test@example.com");
+    // SHA-256 hex je 64 znaků
+    expect(html).toMatch(/eid: "[a-f0-9]{64}"/);
   });
 });
