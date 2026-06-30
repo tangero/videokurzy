@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import Stripe from "stripe";
 import type { Env, Variables } from "../types";
+import { sklikConversionSnippet } from "../lib/analytics-snippet";
 
 const stripeRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -16,7 +17,24 @@ stripeRoutes.post("/api/checkout/organization", (c) => c.redirect("/checkout/org
 stripeRoutes.get("/api/checkout/organization", (c) => c.redirect("/checkout/organization", 303));
 
 // Checkout success page
-stripeRoutes.get("/checkout/success", (c) => {
+stripeRoutes.get("/checkout/success", async (c) => {
+  // Sklik conversionHit: hodnotu bereme z ověřené Stripe session (autoritativní,
+  // řeší race i fingování). conversionHit jen když je session reálně zaplacená.
+  let sklik = "";
+  const sessionId = c.req.query("session_id");
+  if (sessionId) {
+    try {
+      const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      if (session.payment_status === "paid") {
+        const valueCzk = Math.round((session.amount_total ?? 0) / 100);
+        sklik = sklikConversionSnippet(c.env, { value: valueCzk, orderId: sessionId });
+      }
+    } catch (err) {
+      console.error("[sklik] success page session retrieve failed:", err);
+    }
+  }
+
   return c.html(
     <html lang="cs">
       <head>
@@ -36,6 +54,7 @@ stripeRoutes.get("/checkout/success", (c) => {
             Přihlásit se
           </a>
         </div>
+        {sklik && <div dangerouslySetInnerHTML={{ __html: sklik }} />}
       </body>
     </html>
   );

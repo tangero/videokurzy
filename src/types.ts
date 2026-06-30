@@ -40,8 +40,10 @@ export interface Env {
   META_CAPI_TOKEN?: string;
   META_API_VERSION?: string;   // override verze Graph API (default v conversions.ts)
   META_TEST_EVENT_CODE?: string;
-  // Sklik konverzní/retargeting ID (veřejné, jde do HTML). Client-side conversionHit.
+  // Sklik (veřejná ID, jdou do HTML). Konverze (conversionHit na success stránce)
+  // a retargeting (retargetingHit na všech stránkách) jsou DVĚ různá ID.
   SKLIK_CONVERSION_ID?: string;
+  SKLIK_RETARGETING_ID?: string;
   // Google gtag ID (G-... GA4 nebo AW-... Ads). Veřejné, client-side za consentem.
   GTAG_ID?: string;
   // Google Ads Offline / Data Manager — vše server-only. Aktivace až po ověření

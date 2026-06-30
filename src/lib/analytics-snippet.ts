@@ -27,7 +27,7 @@ interface AnalyticsConfig {
 function readAnalyticsConfig(env: Env): AnalyticsConfig {
   return {
     metaPixelId: env.META_PIXEL_ID,
-    sklikRetargetingId: env.SKLIK_CONVERSION_ID,
+    sklikRetargetingId: env.SKLIK_RETARGETING_ID,
     gtagId: env.GTAG_ID,
   };
 }
@@ -141,4 +141,45 @@ export function analyticsSnippet(env: Env): string {
 </div>`;
 
   return `${bar}\n<script>${loader}</script>`;
+}
+
+/**
+ * Sklik conversionHit pro stránku po objednávce (success / platební pokyny).
+ * Sklik nemá rozumné server-side API → konverze je client-side. Dedup přes
+ * sessionStorage keyovaný na orderId (stránka platebních pokynů se zobrazuje
+ * opakovaně — uživatel se vrací zkontrolovat platbu). Pálí se „při objednávce"
+ * (rozhodnutí provozovatele): u převodů tedy i pro zatím nezaplacené.
+ * Respektuje consent (rc.js consent param odráží volbu, ne napevno 1).
+ * Vrací "" když chybí konverzní ID nebo hodnota.
+ */
+export function sklikConversionSnippet(
+  env: Env,
+  opts: { value: number; orderId: string },
+): string {
+  const id = env.SKLIK_CONVERSION_ID;
+  if (!id || !opts.value || opts.value <= 0) return "";
+
+  const js = `
+(function () {
+  var KEY = 'vk_sklik_conv_' + ${jsStr(opts.orderId)};
+  try { if (sessionStorage.getItem(KEY)) return; } catch (e) {}
+  function consent() {
+    var m = document.cookie.match(/(?:^|;\\s*)vk_consent=([^;]+)/);
+    return m && m[1] === '1' ? 1 : 0;
+  }
+  var s = document.createElement('script');
+  s.src = 'https://c.seznam.cz/js/rc.js';
+  s.onload = function () {
+    if (window.rc && window.rc.conversionHit) {
+      window.rc.conversionHit({
+        id: Number(${jsStr(id)}),
+        value: ${Number(opts.value)},
+        consent: consent()
+      });
+      try { sessionStorage.setItem(KEY, '1'); } catch (e) {}
+    }
+  };
+  document.head.appendChild(s);
+})();`;
+  return `<script>${js}</script>`;
 }

@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { purchase, organization, siteConfig } from "../db/schema";
 import { reportPurchase, bankDateToConversionInstant, captureSignals, type ConversionSignals } from "../lib/conversions";
+import { sklikConversionSnippet } from "../lib/analytics-snippet";
 import { lookupByIco, lookupByName } from "../lib/ares";
 import { generateProformaHtml } from "../lib/proforma";
 import { nextProformaNumber } from "../lib/proforma-sequence";
@@ -796,6 +797,13 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
         companyZip={p.companyZip}
         contactName={p.contactName}
       />
+      {/* Sklik conversionHit „při objednávce" — pálí se i pro zatím nezaplacené
+          převody (rozhodnutí provozovatele). Dedup přes sessionStorage na VS,
+          protože pay stránka se zobrazuje opakovaně. */}
+      {(() => {
+        const sklik = sklikConversionSnippet(c.env, { value: price, orderId: p.variableSymbol! });
+        return sklik ? <div dangerouslySetInnerHTML={{ __html: sklik }} /> : null;
+      })()}
     </Layout>
   );
 });
