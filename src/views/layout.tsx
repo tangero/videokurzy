@@ -154,10 +154,57 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
           <div class="footer-links">
             <a href="/privacy">ochrana osobních údajů</a>
             <a href="/terms">obchodní podmínky</a>
+            <a href="#" data-cookie-settings>nastavení cookies</a>
             <a href="mailto:patrick@vibecoding.cz">kontakt</a>
           </div>
         </div>
       </footer>
+
+      {/* Cookie lišta. Zobrazí se jen dokud návštěvník neodklikne souhlas
+          (uložený v localStorage). Po souhlasu trvale mizí; změnit se dá už
+          jen odkazem „nastavení cookies" v patičce. Renderuje se hidden, aby
+          se u vracejících se návštěvníků neobjevila ani na okamžik. */}
+      <div id="cookie-banner" class="cookie-banner" role="region" aria-label="Souhlas s cookies" hidden>
+        <div class="container cookie-banner-inner">
+          <p class="cookie-banner-text">
+            Používáme jen technické cookies nezbytné pro přihlášení a anonymní
+            měření návštěvnosti (Cloudflare, bez cookies). Žádné marketingové ani
+            sledovací cookies. Detaily v{" "}
+            <a href="/privacy">zásadách ochrany osobních údajů</a>.
+          </p>
+          <div class="cookie-banner-actions">
+            <button type="button" class="btn btn-sm" data-cookie-accept>
+              Rozumím
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `(function () {
+  var KEY = "cookie-consent-v1";
+  function decided() { try { return localStorage.getItem(KEY) === "accepted"; } catch (e) { return true; } }
+  function banner() { return document.getElementById("cookie-banner"); }
+  function show() { var b = banner(); if (b) b.hidden = false; }
+  function hide() { var b = banner(); if (b) b.hidden = true; }
+  function sync() { if (decided()) hide(); else show(); }
+  if (!window.__cookieConsentInit) {
+    window.__cookieConsentInit = true;
+    document.addEventListener("click", function (e) {
+      if (e.target.closest("[data-cookie-accept]")) {
+        try { localStorage.setItem(KEY, "accepted"); } catch (e) {}
+        hide();
+      } else if (e.target.closest("[data-cookie-settings]")) {
+        e.preventDefault();
+        show();
+      }
+    });
+  }
+  sync();
+})();`,
+        }}
+      ></script>
     </body>
   </html>
 );

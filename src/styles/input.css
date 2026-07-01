@@ -570,6 +570,29 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 .footer-links a { margin-left: 14px; color: var(--muted); text-decoration: none; }
 .footer-links a:hover { color: var(--accent); }
 
+/* COOKIE CONSENT */
+.cookie-banner {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
+  background: var(--surface); border-top: 1px solid var(--border-strong);
+  box-shadow: 0 -8px 30px rgba(13,12,10,0.10);
+  padding: 14px 0;
+}
+.cookie-banner[hidden] { display: none; }
+.cookie-banner-inner {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  justify-content: space-between;
+}
+.cookie-banner-text {
+  margin: 0; font-size: 0.82rem; line-height: 1.5;
+  color: var(--ink-soft); max-width: 720px;
+}
+.cookie-banner-text a { color: var(--accent); }
+.cookie-banner-actions { display: flex; gap: 10px; flex-shrink: 0; }
+@media (max-width: 640px) {
+  .cookie-banner-actions { width: 100%; }
+  .cookie-banner-actions .btn { width: 100%; }
+}
+
 /* UTILITIES */
 .hstack { display: flex; align-items: center; gap: 10px; }
 .vstack { display: flex; flex-direction: column; gap: 10px; }
