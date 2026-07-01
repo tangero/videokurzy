@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
-import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch } from "../db/schema";
+import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch, invoiceJob } from "../db/schema";
 import { reportPurchase } from "../lib/conversions";
 import { Layout } from "../views/layout";
 import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml, ccNewsNewsletterHtml } from "../lib/email";
@@ -49,6 +49,9 @@ import {
   listSubjectInvoices,
   markInvoicePaid,
 } from "../lib/fakturoid";
+import { createAndEnqueueInvoiceJob, enqueueInvoiceJob } from "../invoice-queue";
+import { shouldInvoice, paidOnFromDate, paidOnToTimestamp, purchaseToBillingSnapshot } from "../lib/invoicing/jobs";
+import { maskEmail } from "../lib/errors";
 import Stripe from "stripe";
 import {
   AdminNav,
@@ -470,7 +473,7 @@ admin.get("/admin", async (c) => {
           );
         })()}
         {/* Stats */}
-        <div class="grid grid-cols-3 gap-4 mb-4">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
           <div
             class="bg-white p-4 rounded-lg border"
             title="Všichni řádky v tabulce user — magic link signupy, admin granty i zaplacení uživatelé."
@@ -648,15 +651,27 @@ admin.get("/admin", async (c) => {
                 e-mail na adminy. Publikace nastane až po kliknutí na odkaz v e-mailu.
               </p>
             </div>
-            <form method="post" action="/admin/api/cc-news/trigger" hx-boost="false">
-              <button
-                type="submit"
-                class="text-sm bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700"
-                title="Spustí detekci + redakční pipeline a reálně odešle schvalovací e-mail na ADMIN_EMAILS."
-              >
-                Poslat ke schválení
-              </button>
-            </form>
+            <div class="flex items-center gap-2 flex-wrap">
+              <form method="post" action="/admin/api/cc-news/backfill" hx-boost="false">
+                <button
+                  type="submit"
+                  class="text-sm bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-50"
+                  title="Zacelí mezery: doplní a publikuje na web chybějící STARŠÍ týdny (nejnovější koncept nechá být). Běží na pozadí."
+                  onclick="return confirm('Doplnit a publikovat chybějící starší týdny na web? Nejnovější týden (koncept) zůstane beze změny.');"
+                >
+                  Doplnit chybějící týdny
+                </button>
+              </form>
+              <form method="post" action="/admin/api/cc-news/trigger" hx-boost="false">
+                <button
+                  type="submit"
+                  class="text-sm bg-gray-900 text-white px-4 py-2 rounded hover:bg-gray-700"
+                  title="Spustí detekci + redakční pipeline a reálně odešle schvalovací e-mail na ADMIN_EMAILS."
+                >
+                  Poslat ke schválení
+                </button>
+              </form>
+            </div>
           </div>
         </div>
 
@@ -672,8 +687,8 @@ admin.get("/admin", async (c) => {
             </a>
           </div>
         </div>
-        <div class="bg-white rounded-lg border overflow-hidden mb-8">
-          <table class="w-full text-sm">
+        <div class="bg-white rounded-lg border overflow-x-auto mb-8">
+          <table class="w-full text-sm whitespace-nowrap">
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-2 text-left">E-mail</th>
@@ -776,7 +791,7 @@ admin.get("/admin", async (c) => {
               })}
               {recentUsers.length === 0 && (
                 <tr>
-                  <td colspan={5} class="px-4 py-4 text-gray-500 text-center">
+                  <td colspan={5} class="px-4 py-4 text-gray-500 text-center whitespace-normal">
                     Zatím žádní uživatelé
                   </td>
                 </tr>
@@ -791,8 +806,8 @@ admin.get("/admin", async (c) => {
             <h2 class="text-xl font-bold">Nejaktivnější uživatelé</h2>
             <span class="text-xs text-gray-500">podle počtu lekcí, které sledovali</span>
           </div>
-          <div class="bg-white rounded-lg border overflow-hidden">
-            <table class="w-full text-sm">
+          <div class="bg-white rounded-lg border overflow-x-auto">
+            <table class="w-full text-sm whitespace-nowrap">
               <thead class="bg-gray-50">
                 <tr>
                   <th class="px-4 py-2 text-left">E-mail</th>
@@ -819,7 +834,7 @@ admin.get("/admin", async (c) => {
                 ))}
                 {topActive.length === 0 && (
                   <tr>
-                    <td colspan={3} class="px-4 py-4 text-gray-500 text-center">
+                    <td colspan={3} class="px-4 py-4 text-gray-500 text-center whitespace-normal">
                       Zatím žádná data o sledování
                     </td>
                   </tr>
@@ -831,8 +846,8 @@ admin.get("/admin", async (c) => {
 
         {/* Organizations */}
         <h2 class="text-xl font-bold mb-4">Organizace</h2>
-        <div class="bg-white rounded-lg border overflow-hidden mb-8">
-          <table class="w-full text-sm">
+        <div class="bg-white rounded-lg border overflow-x-auto mb-8">
+          <table class="w-full text-sm whitespace-nowrap">
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-2 text-left">Doména</th>
@@ -889,7 +904,7 @@ admin.get("/admin", async (c) => {
               })}
               {orgs.length === 0 && (
                 <tr>
-                  <td colspan={4} class="px-4 py-4 text-gray-500 text-center">
+                  <td colspan={4} class="px-4 py-4 text-gray-500 text-center whitespace-normal">
                     Zatím žádné organizace
                   </td>
                 </tr>
@@ -1273,6 +1288,42 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
       grantedBy: currentUser.email,
       amountPaid,
     });
+
+    // Fakturace přes outbox. Datum platby (paidOn) lze zadat ručně — default dnes.
+    // Audit potvrzení (kdo) drží grantedBy na purchase; paidOn je účetní datum.
+    const rawPaidOn = String(body.paidOn ?? "").trim();
+    const paidOn = /^\d{4}-\d{2}-\d{2}$/.test(rawPaidOn) ? rawPaidOn : paidOnFromDate(new Date());
+    const [p] = await db
+      .select({
+        kind: purchase.kind,
+        amountPaid: purchase.amountPaid,
+        email: purchase.email,
+        invoiceEmail: purchase.invoiceEmail,
+        companyName: purchase.companyName,
+        companyIco: purchase.companyIco,
+        companyDic: purchase.companyDic,
+        companyAddress: purchase.companyAddress,
+        companyCity: purchase.companyCity,
+        companyZip: purchase.companyZip,
+        contactName: purchase.contactName,
+      })
+      .from(purchase)
+      .where(eq(purchase.id, purchaseId))
+      .limit(1);
+    if (p && shouldInvoice({ kind: p.kind, amountPaid: p.amountPaid })) {
+      // Poledne UTC → po převodu do TZ Praha zůstává stejný účetní den (bez DST posunu).
+      await createAndEnqueueInvoiceJob(db, c.env, {
+        purchaseId,
+        jobKind: "initial_purchase",
+        paymentSource: "manual",
+        sourceEventId: `manual-confirm-${purchaseId}`,
+        amount: p.amountPaid,
+        paidAt: paidOnToTimestamp(paidOn),
+        paidAtSource: "manual_admin_input",
+        billing: purchaseToBillingSnapshot(p),
+      });
+    }
+
     await invalidateAccessCache(c.env.KV, id);
 
     // Report konverze do reklamních platforem. manuallyConfirmPayment je čistě
@@ -1288,6 +1339,270 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
     const message = encodeURIComponent((err as Error).message || "Platbu se nepodařilo potvrdit.");
     return c.redirect(`/admin/users/${id}?err=${message}`);
   }
+});
+
+// ─── Fakturace (outbox invoice_job) ──────────────────────────────────────
+// Panel pro dohled nad fakturačními úlohami: filtr dle stavu, ruční retry a
+// uzavření (resolved_manually s povinnou poznámkou). Viz plán sekce 5.9.
+type InvoiceJobState = NonNullable<(typeof invoiceJob.$inferInsert)["state"]>;
+const ATTENTION_STATES = [
+  "pending",
+  "processing",
+  "failed_retryable",
+  "failed_permanent",
+  "needs_manual_review",
+  "needs_reconcile",
+] as const;
+
+admin.get("/admin/fakturace", async (c) => {
+  const currentUser = c.get("user")!;
+  const db = drizzle(c.env.DB);
+  const stateParam = c.req.query("state");
+
+  const where =
+    stateParam && stateParam !== "all"
+      ? eq(invoiceJob.state, stateParam as InvoiceJobState)
+      : stateParam === "all"
+        ? undefined
+        : inArray(invoiceJob.state, [...ATTENTION_STATES]);
+
+  const base = db
+    .select({
+      id: invoiceJob.id,
+      customId: invoiceJob.customId,
+      state: invoiceJob.state,
+      amount: invoiceJob.amount,
+      paidOn: invoiceJob.paidOn,
+      attempts: invoiceJob.attempts,
+      lastErrorCode: invoiceJob.lastErrorCode,
+      email: invoiceJob.email,
+      createdAt: invoiceJob.createdAt,
+    })
+    .from(invoiceJob);
+
+  const rows = await (where ? base.where(where) : base)
+    .orderBy(desc(invoiceJob.createdAt))
+    .limit(100);
+
+  const counts = await db
+    .select({ state: invoiceJob.state, n: sql<number>`count(*)` })
+    .from(invoiceJob)
+    .groupBy(invoiceJob.state);
+  const countMap = new Map<string, number>(counts.map((r) => [r.state, r.n]));
+
+  const ok = c.req.query("ok");
+  const err = c.req.query("err");
+
+  return c.html(
+    <Layout title="Fakturace" user={currentUser}>
+      <div class="max-w-5xl mx-auto px-4 py-8">
+        <h1 class="text-2xl font-bold mb-6">Fakturace</h1>
+        <AdminNav active="/admin" />
+
+        {ok && (
+          <div class="mb-4 rounded-lg border-2 border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            {ok === "retry"
+              ? "Úloha znovu zařazena ke zpracování."
+              : ok === "date"
+                ? "Datum potvrzeno, faktura zařazena k vystavení."
+                : "Úloha uzavřena."}
+          </div>
+        )}
+        {err && (
+          <div class="mb-4 rounded-lg border-2 border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+            {decodeURIComponent(err)}
+          </div>
+        )}
+
+        <div class="flex flex-wrap gap-2 mb-5 text-sm">
+          <a href="/admin/fakturace" class="px-3 py-1 rounded-full border bg-gray-50 hover:bg-gray-100">
+            K řešení
+          </a>
+          <a href="/admin/fakturace?state=all" class="px-3 py-1 rounded-full border bg-gray-50 hover:bg-gray-100">
+            Vše
+          </a>
+          {[...ATTENTION_STATES, "done", "resolved_manually"].map((s) => (
+            <a
+              href={`/admin/fakturace?state=${s}`}
+              class="px-3 py-1 rounded-full border bg-white hover:bg-gray-100"
+            >
+              {s} <span class="text-gray-500">({countMap.get(s) ?? 0})</span>
+            </a>
+          ))}
+        </div>
+
+        <div class="bg-white rounded-lg border overflow-x-auto">
+          <table class="w-full text-sm min-w-[760px]">
+            <thead class="bg-gray-50">
+              <tr>
+                <th scope="col" class="px-3 py-2 text-left">Stav</th>
+                <th scope="col" class="px-3 py-2 text-left">custom_id</th>
+                <th scope="col" class="px-3 py-2 text-left">E-mail</th>
+                <th scope="col" class="px-3 py-2 text-right">Kč</th>
+                <th scope="col" class="px-3 py-2 text-left">paidOn</th>
+                <th scope="col" class="px-3 py-2 text-right">Pok.</th>
+                <th scope="col" class="px-3 py-2 text-left">Chyba</th>
+                <th scope="col" class="px-3 py-2 text-left">Akce</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colspan={8} class="px-3 py-6 text-center text-gray-500">Žádné úlohy.</td>
+                </tr>
+              )}
+              {rows.map((r) => (
+                <tr class="border-t align-top">
+                  <td class="px-3 py-2 font-medium">{r.state}</td>
+                  <td class="px-3 py-2 font-mono text-xs">{r.customId}</td>
+                  <td class="px-3 py-2">{maskEmail(r.email)}</td>
+                  <td class="px-3 py-2 text-right">{r.amount}</td>
+                  <td class="px-3 py-2">{r.paidOn}</td>
+                  <td class="px-3 py-2 text-right">{r.attempts}</td>
+                  <td class="px-3 py-2 text-xs text-red-700">{r.lastErrorCode ?? ""}</td>
+                  <td class="px-3 py-2">
+                    <div class="flex flex-col gap-2">
+                      {r.lastErrorCode === "estimated_paid_date" && (
+                        <form method="post" action={`/admin/fakturace/${r.id}/set-date`} class="flex gap-1">
+                          <input
+                            type="date"
+                            name="paidOn"
+                            required
+                            title="Skutečné datum platby (účetní datum faktury)"
+                            class="border rounded px-1 py-0.5 text-xs"
+                          />
+                          <button class="text-emerald-700 hover:underline text-xs">Potvrdit datum a vystavit</button>
+                        </form>
+                      )}
+                      {r.lastErrorCode !== "estimated_paid_date" && (
+                        <form method="post" action={`/admin/fakturace/${r.id}/retry`}>
+                          <button class="text-blue-600 hover:underline text-xs">Zkusit znovu</button>
+                        </form>
+                      )}
+                      <form method="post" action={`/admin/fakturace/${r.id}/resolve`} class="flex gap-1">
+                        <input
+                          name="note"
+                          placeholder="poznámka (povinná)"
+                          class="border rounded px-1 py-0.5 text-xs w-40"
+                        />
+                        <button class="text-gray-700 hover:underline text-xs">Uzavřít</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Layout>,
+  );
+});
+
+admin.post("/admin/fakturace/:id/retry", async (c) => {
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+
+  // Estimated job (odhadnuté datum, faktura ještě nevznikla) by se prostým retry
+  // jen zacyklil zpět do manual review — paidOn dál drží fallback. Nasměruj admina
+  // na 'Potvrdit datum a vystavit', kde zadá skutečné datum.
+  const [j] = await db
+    .select({
+      paidAtConfidence: invoiceJob.paidAtConfidence,
+      fakturoidInvoiceId: invoiceJob.fakturoidInvoiceId,
+      lastErrorCode: invoiceJob.lastErrorCode,
+    })
+    .from(invoiceJob)
+    .where(eq(invoiceJob.id, jobId))
+    .limit(1);
+  if (j && j.paidAtConfidence === "estimated" && !j.fakturoidInvoiceId) {
+    return c.redirect(
+      `/admin/fakturace?err=${encodeURIComponent("Odhadnuté datum platby — použij 'Potvrdit datum a vystavit', prostý retry by se zacyklil.")}`,
+    );
+  }
+  // Nedovol tiché vystavení zaokrouhlené částky — částka není celá koruna a vyžaduje
+  // ruční korekci u zdroje, ne slepý retry (jinak by faktura šla na Math.round částku).
+  if (j && j.lastErrorCode === "non_integer_amount" && !j.fakturoidInvoiceId) {
+    return c.redirect(
+      `/admin/fakturace?err=${encodeURIComponent("Částka není celá koruna — oprav u zdroje a vyřeš ručně, retry by vystavil zaokrouhlenou částku.")}`,
+    );
+  }
+
+  // Reset na čerstvý pokus: stav, nextRetryAt=teď, vynuluj počítadlo i chybu.
+  await db
+    .update(invoiceJob)
+    .set({
+      state: "failed_retryable",
+      nextRetryAt: new Date(),
+      attempts: 0,
+      lastErrorCode: null,
+      lastErrorStatus: null,
+      lastErrorMessage: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  try {
+    await enqueueInvoiceJob(c.env, jobId);
+  } catch (e) {
+    console.error(`[admin] enqueue retry failed for job ${jobId}:`, e);
+  }
+  return c.redirect("/admin/fakturace?ok=retry");
+});
+
+admin.post("/admin/fakturace/:id/resolve", async (c) => {
+  const currentUser = c.get("user")!;
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const note = String(body.note ?? "").trim();
+  if (!note) {
+    return c.redirect(`/admin/fakturace?err=${encodeURIComponent("Poznámka je povinná pro uzavření.")}`);
+  }
+  await db
+    .update(invoiceJob)
+    .set({
+      state: "resolved_manually",
+      resolvedNote: note,
+      resolvedManuallyBy: currentUser.email,
+      resolvedAt: new Date(),
+      nextRetryAt: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  return c.redirect("/admin/fakturace?ok=resolved");
+});
+
+// Potvrzení účetního data u estimated jobů (needs_manual_review). Bez tohoto by
+// job s odhadnutým datem (chybějící datum z banky/Stripe) zůstal nefakturovatelný:
+// retry jen resetuje stav, ale paidOn dál drží fallback → znovu manual review.
+// Tady admin zadá skutečné datum, označí confidence=exact a job se vystaví.
+admin.post("/admin/fakturace/:id/set-date", async (c) => {
+  const jobId = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const rawPaidOn = String(body.paidOn ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawPaidOn)) {
+    return c.redirect(`/admin/fakturace?err=${encodeURIComponent("Neplatné datum (formát YYYY-MM-DD).")}`);
+  }
+  // Poledne UTC → po převodu do TZ Praha stejný účetní den (bez DST posunu).
+  await db
+    .update(invoiceJob)
+    .set({
+      paidOn: rawPaidOn,
+      paidAt: paidOnToTimestamp(rawPaidOn),
+      paidAtConfidence: "exact",
+      state: "failed_retryable",
+      nextRetryAt: new Date(),
+      attempts: 0,
+      lastErrorCode: null,
+      lastErrorStatus: null,
+      lastErrorMessage: null,
+    })
+    .where(eq(invoiceJob.id, jobId));
+  try {
+    await enqueueInvoiceJob(c.env, jobId);
+  } catch (e) {
+    console.error(`[admin] enqueue set-date failed for job ${jobId}:`, e);
+  }
+  return c.redirect("/admin/fakturace?ok=date");
 });
 
 // Approve organization (htmx)
@@ -1826,6 +2141,48 @@ admin.post("/admin/api/cc-news/diag/llm", async (c) => {
 admin.get("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
 admin.post("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
 
+// Doplnění chybějících STARŠÍCH týdnů přímo na web (zacelení mezer typu Week 25,
+// které cron historicky přeskočil). Nejnovější týden se ZÁMĚRNĚ nepublikuje
+// (excludeNewest) — ten patří do schvalovacího toku. Zpracování (LLM přepis +
+// publikace) je dlouhé, takže běží na pozadí přes waitUntil a odpovídáme hned.
+admin.get("/admin/api/cc-news/backfill", async (c) => runCcNewsBackfill(c));
+admin.post("/admin/api/cc-news/backfill", async (c) => runCcNewsBackfill(c));
+
+async function runCcNewsBackfill(c: Context<{ Bindings: Env; Variables: Variables }>) {
+  const weeksParam = parseInt(c.req.query("weeks") ?? "4", 10);
+  const weeks = Number.isFinite(weeksParam) ? weeksParam : 4;
+  // ?force=1 přepublikuje i už publikované týdny (přegeneruje z aktuálního digestu).
+  const force = c.req.query("force") === "1";
+
+  // Práce běží na pozadí (LLM přepis ~1 min/týden by utnul HTTP request). Vlastní
+  // drizzle instance, ať nesdílí stav s requestem, který už dávno odpověděl.
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        const { backfillRecentWeeks } = await import("../lib/cc-news/backfill");
+        const db = drizzle(c.env.DB);
+        const res = await backfillRecentWeeks(db, c.env, new Date(), {
+          weeks,
+          force,
+          excludeNewest: true,
+        });
+        console.log(
+          `[cc-news] backfill hotov: published=${res.published}, skipped=${res.skipped}, errors=${res.errors}`,
+          JSON.stringify(res.entries),
+        );
+      } catch (err) {
+        console.error("[cc-news] backfill selhal:", (err as Error)?.message, (err as Error)?.stack);
+      }
+    })(),
+  );
+
+  const summary =
+    `Doplnění chybějících týdnů spuštěno na pozadí (posledních ${weeks} týdnů, ` +
+    `nejnovější se nepublikuje${force ? ", force" : ""}). Publikace běží ~1 min/týden; ` +
+    `výsledek uvidíš po obnovení v sekci Newsletter.`;
+  return c.redirect(`/admin?ccNews=${encodeURIComponent(summary)}`);
+}
+
 async function runCcNewsTrigger(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const db = drizzle(c.env.DB);
   try {
@@ -2131,12 +2488,26 @@ admin.post("/admin/api/cc-news/send", async (c) => {
   // frontu — neblokuje request a admin může stránku zavřít. Idempotenci drží
   // atomický zámek newsletterSentAt v konzumentovi. Vrátíme i očekávaný počet
   // příjemců, ať admin hned vidí rozsah rozeslání.
-  const { enqueueCcNewsSendNewsletter } = await import("../queue");
-  const { countRecipients } = await import("../lib/cc-news/newsletter");
-  const counts = await countRecipients(db, c.env.AUTH_INTERNAL_SECRET, new Date());
-  await enqueueCcNewsSendNewsletter(c.env, body.itemId, { force });
-
-  return c.json({ ok: true, queued: true, ...counts });
+  //
+  // Zařazení do fronty (WEBHOOK_QUEUE.send) i počítání příjemců můžou selhat
+  // (chybný/nedostupný queue binding, výpadek D1). Bez try/catch by to spadlo do
+  // globálního onError → 500; klient by uviděl jen „Zařazení do fronty selhalo".
+  // Tady chybu zachytíme a vrátíme konkrétní (admin-only) hlášku, ať je hned vidět
+  // co je špatně, místo opakovaného tipování.
+  try {
+    const { enqueueCcNewsSendNewsletter } = await import("../queue");
+    const { countRecipients } = await import("../lib/cc-news/newsletter");
+    const counts = await countRecipients(db, c.env.AUTH_INTERNAL_SECRET, new Date());
+    await enqueueCcNewsSendNewsletter(c.env, body.itemId, { force });
+    return c.json({ ok: true, queued: true, ...counts });
+  } catch (err) {
+    const detail = (err as Error)?.message ?? String(err);
+    console.error("[cc-news] zařazení rozeslání do fronty selhalo:", detail, (err as Error)?.stack);
+    return c.json(
+      { error: "enqueue_failed", message: `Zařazení do fronty selhalo: ${detail}` },
+      502,
+    );
+  }
 });
 
 // Náhled počtu příjemců PŘED rozesláním (způsobilí / odhlášení / reálně odeslaní).

@@ -32,7 +32,9 @@ export interface PaymentMatchResult {
   found: boolean;
   transaction?: {
     id: number;
-    date: string;
+    // null = banka datum neuvedla. NEfabrikovat (např. dnešek) — fakturace by pak
+    // vzala čas cronu jako účetní datum. Chybějící datum → estimated → manual review.
+    date: string | null;
     amount: number;
     senderName: string | null;
   };
@@ -86,7 +88,7 @@ export function matchPayment(
         found: true,
         transaction: {
           id: txId,
-          date: tx.column0?.value ?? new Date().toISOString(),
+          date: tx.column0?.value ?? null,
           amount,
           senderName: tx.column10?.value ?? null,
         },

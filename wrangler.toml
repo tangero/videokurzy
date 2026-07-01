@@ -65,8 +65,29 @@ queue = "videokurzy-webhooks-dlq"
 max_batch_size = 1
 max_retries = 0
 
+# Fakturační fronta — outbox invoice_job → vystavení faktury ve Fakturoidu.
+# Producent zařadí job po potvrzené platbě; konzument běží přes processInvoiceJob.
+[[queues.producers]]
+queue = "videokurzy-invoices"
+binding = "INVOICE_QUEUE"
+
+[[queues.consumers]]
+queue = "videokurzy-invoices"
+max_batch_size = 10
+max_retries = 3
+# Po vyčerpání transportních pokusů → DLQ (jen alert; zotavení řeší reconcile cron).
+dead_letter_queue = "videokurzy-invoices-dlq"
+
+[[queues.consumers]]
+queue = "videokurzy-invoices-dlq"
+max_batch_size = 1
+max_retries = 0
+
 [triggers]
-crons = ["0 3 * * *"]
+# */15 = reconcile fakturačního outboxu (záchranná síť); 0 3 = denní maintenance
+# (bank scan, reminders, expirace, video stats, CC news). Větveno v handleScheduled
+# dle event.cron — denní úlohy NEsmí běžet 96×/den.
+crons = ["*/15 * * * *", "0 3 * * *"]
 
 [env.test]
 [[env.test.d1_databases]]

@@ -79,10 +79,13 @@ stripeRoutes.post("/api/webhooks/stripe", async (c) => {
     return c.text("Invalid signature", 400);
   }
 
-  // Enqueue for async processing
+  // Enqueue for async processing. eventId/eventCreated se nesou kvůli fakturaci
+  // (paidAt z času Stripe události, ne z času běhu konzumenta).
   await c.env.WEBHOOK_QUEUE.send({
     type: event.type,
     data: event.data.object,
+    eventId: event.id,
+    eventCreated: event.created,
   });
 
   return c.json({ received: true });

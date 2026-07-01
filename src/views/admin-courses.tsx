@@ -1010,7 +1010,7 @@ export function AdminSettingsForm({
             Určuje, které číslo účtu, IBAN a QR kód se zobrazí na platební stránce a zálohovém listu
             pro nové převodové objednávky. Cron páruje obě banky bez ohledu na toto nastavení.
           </p>
-          <div class="flex gap-4">
+          <div class="flex flex-col sm:flex-row gap-4">
             <label class={`flex items-center gap-3 flex-1 rounded-md border px-3 py-2 cursor-pointer ${activeBank === "fio" ? "border-indigo-400 bg-indigo-50" : "border-gray-300 bg-white"}`}>
               <input type="radio" name="active_bank" value="fio" checked={activeBank === "fio"} class="h-4 w-4 text-indigo-600" />
               <span class="text-sm">
@@ -1070,7 +1070,7 @@ export function AdminSettingsForm({
         {/* Ceny */}
         <div>
           <h2 class="text-lg font-semibold mb-4">Ceny předplatného (CZK/rok)</h2>
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Osobní předplatné</label>
               <div class="flex items-center gap-2">
@@ -1113,7 +1113,7 @@ export function AdminSettingsForm({
               </span>
             </span>
           </label>
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label class="block">
               <span class="block text-sm font-medium text-gray-700 mb-1">Sleva</span>
               <div class="flex items-center gap-2">
@@ -1149,7 +1149,7 @@ export function AdminSettingsForm({
               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
           </label>
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label class="block">
               <span class="block text-sm font-medium text-gray-700 mb-1">Promo kód (volitelný)</span>
               <input

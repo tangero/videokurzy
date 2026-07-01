@@ -120,7 +120,7 @@ async function getAccountSlug(env: FakturoidEnv): Promise<string> {
   return cachedSlug;
 }
 
-async function apiRequest(
+export async function apiRequest(
   env: FakturoidEnv,
   method: string,
   path: string,

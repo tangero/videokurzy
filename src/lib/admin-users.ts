@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { user, lessonWatch } from "../db/schema";
-import { purchase, progress } from "../db/schema";
+import { purchase, progress, invoiceJob } from "../db/schema";
 import { userEmails } from "../db/identity-schema";
 import { ensureUserEmailRecord, normalizeEmail } from "./user-emails";
 import { linkPurchasesToUser } from "./access";
@@ -417,11 +417,41 @@ export async function anonymizeAndDeleteUser(db: Db, id: string): Promise<number
   //    waitUntil() souběžně — bez e-mailové podmínky by nespárovaný řádek
   //    s reálným e-mailem výmaz přežil (GDPR díra, greptile P1).
   //  - purchase.email se ukládá lowercased, proto porovnáváme lowercased.
+  // Nejdřív posbírej dotčené purchase id — PII snapshot v invoice_job (bez FK
+  // na purchase) se anonymizuje podle nich, ještě než přepíšeme purchase.email.
+  const affectedPurchases = await db
+    .select({ id: purchase.id })
+    .from(purchase)
+    .where(or(eq(purchase.userId, id), eq(purchase.email, emailLc)))
+    .all();
+  const purchaseIds = affectedPurchases.map((r) => r.id);
+
+  // Anonymizuj PII snapshot ve fakturačním outboxu (e-mail, fakturační e-mail,
+  // firemní údaje, kontaktní jméno). Účetní pole (amount, paidOn, customId,
+  // fakturoidInvoiceId) zůstávají — daňová kopie žije ve Fakturoidu.
+  if (purchaseIds.length > 0) {
+    await db
+      .update(invoiceJob)
+      .set({
+        email: anonEmail,
+        invoiceEmail: null,
+        companyName: null,
+        companyIco: null,
+        companyDic: null,
+        companyAddress: null,
+        companyCity: null,
+        companyZip: null,
+        contactName: null,
+      })
+      .where(inArray(invoiceJob.purchaseId, purchaseIds));
+  }
+
   const affected = await db
     .update(purchase)
     .set({
       userId: null,
       email: anonEmail,
+      invoiceEmail: null,
       companyName: null,
       companyIco: null,
       companyDic: null,

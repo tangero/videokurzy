@@ -50,6 +50,10 @@ export interface BackfillResult {
  * `force` přepublikuje i už publikované týdny (přegeneruje koncept z aktuálního
  * digestu a promotuje ho). Bez `force` se publikovaný týden přeskočí.
  *
+ * `excludeNewest` ponechá NEJNOVĚJŠÍ týden ve feedu beze změny (nepublikuje ho).
+ * Použití: zacelení starších mezer (např. chybějící Week 25), když nejnovější
+ * týden je záměrně koncept čekající na schvalovací tok — ten se publikovat nesmí.
+ *
  * Selhání JEDNOHO týdne nezhatí ostatní — zaznamená se jako `error` a pokračuje
  * se dál (chceme doplnit co nejvíc, ne spadnout na prvním problému).
  */
@@ -57,18 +61,34 @@ export async function backfillRecentWeeks(
   db: Db,
   env: PipelineEnv,
   now: Date,
-  opts: { weeks?: number; force?: boolean } = {},
+  opts: { weeks?: number; force?: boolean; excludeNewest?: boolean } = {},
   fetchers: Fetchers = defaultFetchers()
 ): Promise<BackfillResult> {
   const weeks = Math.max(1, Math.min(opts.weeks ?? 4, 12));
   const force = opts.force ?? false;
+  const excludeNewest = opts.excludeNewest ?? false;
 
   const outcomes = await detectRecent(db, fetchers, now, weeks);
   const entries: BackfillEntry[] = [];
 
-  for (const outcome of outcomes) {
+  for (let i = 0; i < outcomes.length; i++) {
+    const outcome = outcomes[i];
     if (outcome.kind === "empty") continue;
     const { itemId, sourceId } = outcome;
+
+    // Nejnovější týden (první v pořadí, nejnovější první) ponecháme beze změny —
+    // typicky je to koncept ve schvalovacím toku, který se nesmí předčasně
+    // publikovat. Zacelujeme jen starší mezery.
+    if (excludeNewest && i === 0) {
+      entries.push({
+        sourceId,
+        itemId,
+        weekLabel: null,
+        result: "skipped",
+        note: "nejnovější týden — ponecháno beze změny",
+      });
+      continue;
+    }
 
     try {
       const [row] = await db

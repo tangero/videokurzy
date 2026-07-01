@@ -23,6 +23,7 @@ import { ccNewsRoutes } from "./routes/cc-news";
 import partnerRoutes from "./routes/partner-api";
 import profileRoutes from "./routes/profile";
 import { handleQueue, handleDlq } from "./queue";
+import { handleInvoiceQueue, handleInvoiceDlq } from "./invoice-queue";
 import { handleScheduled } from "./scheduled";
 import { PrivacyPage } from "./views/privacy";
 import { TermsPage } from "./views/terms";
@@ -152,11 +153,26 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  // Jeden queue() export obsluhuje obě fronty — rozliš podle názvu.
-  // DLQ má vlastní handler (alert + ack, žádný retry).
-  queue: (batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext) =>
-    batch.queue.endsWith("-dlq")
-      ? handleDlq(batch as Parameters<typeof handleDlq>[0], env)
-      : handleQueue(batch as Parameters<typeof handleQueue>[0], env),
+  // Jeden queue() export obsluhuje všechny fronty — rozliš podle konkrétního
+  // názvu (ne suffixu), ať invoice zprávy nespadnou do webhook handleru.
+  queue: (batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext) => {
+    switch (batch.queue) {
+      case "videokurzy-invoices":
+        return handleInvoiceQueue(batch as Parameters<typeof handleInvoiceQueue>[0], env);
+      case "videokurzy-invoices-dlq":
+        return handleInvoiceDlq(batch as Parameters<typeof handleInvoiceDlq>[0], env);
+      case "videokurzy-webhooks":
+        return handleQueue(batch as Parameters<typeof handleQueue>[0], env);
+      case "videokurzy-webhooks-dlq":
+        return handleDlq(batch as Parameters<typeof handleDlq>[0], env);
+      default:
+        // Neznámá fronta — NEsměrovat do webhook handleru (invoice {jobId} zprávy
+        // by tam propadly jako neznámý typ a tiše se ACKly). Retry, ať se na chybu
+        // přijde a zpráva nezmizí.
+        console.error(`[queue] neznámá fronta '${batch.queue}' — retry všech zpráv`);
+        for (const message of batch.messages) message.retry();
+        return;
+    }
+  },
   scheduled: handleScheduled,
 };

@@ -8,12 +8,14 @@ import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas"
 import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
-import { detectLatest, defaultFetchers } from "./lib/cc-news/detect";
+import { detectRecent, defaultFetchers } from "./lib/cc-news/detect";
 import { enqueueCcNewsItem } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
-import { exportPurchaseInvoice } from "./lib/fakturoid";
 import { reportPurchase, bankDateToConversionInstant } from "./lib/conversions";
+import { createAndEnqueueInvoiceJob } from "./invoice-queue";
+import { shouldInvoice, purchaseToBillingSnapshot, paidOnToTimestamp } from "./lib/invoicing/jobs";
+import { reconcileInvoiceJobs } from "./lib/invoicing/reconcile";
 import {
   ACCESS_DURATION_DAYS,
   FIO_LOOKBACK_DAYS,
@@ -42,6 +44,18 @@ export async function handleScheduled(
 ): Promise<void> {
   const db = drizzle(env.DB);
   const now = new Date();
+
+  // Fakturační reconcile běží na vlastním 15min cronu — záchranná síť outboxu.
+  // Denní (0 3) maintenance se sem NEpouští, aby neběžela 96×/den.
+  if (event.cron === "*/15 * * * *") {
+    try {
+      const r = await reconcileInvoiceJobs(db, env, now);
+      console.log(`[cron] invoice reconcile: enqueued=${r.enqueued}, scanned=${r.scanned}`);
+    } catch (err) {
+      console.error("[cron] reconcileInvoiceJobs failed:", err);
+    }
+    return;
+  }
 
   try {
     // Jeden scan proti oběma bankám (FIO i Creditas) — viz scanBankPayments.
@@ -86,21 +100,32 @@ export async function handleScheduled(
     console.error("[cron] syncVideoStats failed:", err);
   }
 
-  // Detekce nového whats-new digestu Claude Code (služba „Novinky v CC", W-003).
-  // Idempotentní detekce + zápis draftu; při new/changed zařadí zprávu do fronty
-  // pro navazující redakční zpracování (W-004). Nic se zde neodesílá ani
-  // nepublikuje — fronta jen předá řízení dál.
+  // Detekce nových whats-new digestů Claude Code (služba „Novinky v CC", W-003).
+  // Zpracováváme POSLEDNÍ N týdnů, ne jen nejnovější: feed publikuje týdny po
+  // párech (dva <item> sdílejí pubDate), takže `detectLatest` (jen první položka)
+  // tiše zahodil starší z dvojice — vznikla mezera (chyběl např. Week 25).
+  // `detectRecent` je idempotentní (nezměněné týdny = no-op), takže okno N zacelí
+  // i dohnané týdny, aniž by cokoli duplikovalo. Při new/changed zařadí každý
+  // dotčený týden do fronty pro redakční zpracování (W-004). Nic se zde neodesílá
+  // ani nepublikuje — fronta jen předá řízení dál.
   try {
-    const outcome = await detectLatest(db, defaultFetchers(), now);
-    console.log(`[cron] cc-news detect: ${outcome.kind}` +
-      (outcome.kind === "empty" ? "" : ` sourceId=${outcome.sourceId}`));
-    if (outcome.kind === "new" || outcome.kind === "changed") {
-      await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);
+    const outcomes = await detectRecent(db, defaultFetchers(), now, CC_NEWS_DETECT_WEEKS);
+    for (const outcome of outcomes) {
+      console.log(`[cron] cc-news detect: ${outcome.kind}` +
+        (outcome.kind === "empty" ? "" : ` sourceId=${outcome.sourceId}`));
+      if (outcome.kind === "new" || outcome.kind === "changed") {
+        await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);
+      }
     }
   } catch (err) {
     console.error("[cron] cc-news detect failed:", err);
   }
 }
+
+// Kolik posledních týdnů whats-new cron prověřuje na každý běh. Okno > 1 zacelí
+// mezery z dvojic týdnů sdílejících pubDate; idempotence zajistí, že už viděné
+// týdny jsou no-op. 3 je bezpečná rezerva (typicky se publikují dva najednou).
+const CC_NEWS_DETECT_WEEKS = 3;
 
 /**
  * Spáruje došlé bankovní platby s pending převodovými objednávkami — proti
@@ -197,7 +222,10 @@ export async function scanBankPayments(
     bank: "fio" | "creditas";
     transactionId: string;
     amountPaid: number;
-    transactionDate: string; // datum bankovní transakce — čas konverze (R6)
+    transactionDate: string | null; // datum bankovní transakce — čas konverze (R6)
+    // Datum bankovní transakce (připsání) — účetní datum faktury, ne čas cronu.
+    // null = banka datum neuvedla → fakturace půjde do estimated/manual review.
+    paidOnIso: string | null;
   }> = [];
 
   for (const p of pending) {
@@ -217,6 +245,7 @@ export async function scanBankPayments(
         transactionId: String(r.transaction.id),
         amountPaid: r.transaction.amount,
         transactionDate: r.transaction.date,
+        paidOnIso: r.transaction.date,
       });
       return true;
     };
@@ -230,6 +259,7 @@ export async function scanBankPayments(
         transactionId: r.transaction.id,
         amountPaid: r.transaction.amount,
         transactionDate: r.transaction.date,
+        paidOnIso: r.transaction.date,
       });
       return true;
     };
@@ -250,6 +280,7 @@ export async function scanBankPayments(
         transactionId: m.transactionId,
         amountPaid: m.amountPaid,
         transactionDate: m.transactionDate,
+        paidOnIso: m.paidOnIso,
       });
       matched++;
     } catch (err) {
@@ -289,7 +320,8 @@ async function activateMatchedPurchase(
     bank: "fio" | "creditas";
     transactionId: string;
     amountPaid: number;
-    transactionDate: string; // datum bankovní transakce — čas konverze (R6)
+    transactionDate: string | null; // datum bankovní transakce — čas konverze (R6)
+    paidOnIso?: string | null; // datum připsání — účetní datum faktury
   },
 ): Promise<void> {
   const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
@@ -331,44 +363,28 @@ async function activateMatchedPurchase(
     ),
   }).catch((err) => console.error(`[cron] email send failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
 
-  // Vystavit fakturu ve Fakturoidu. Awaitujeme úmyslně — fire-and-forget by
-  // worker po skončení handleru zabil a fakturoidInvoiceId by se neuložil,
-  // i když by Fakturoid stihl fakturu vytvořit (orphan invoice).
-  const domain = p.type === "organization" ? p.email.split("@")[1] : null;
-  try {
-    const res = await exportPurchaseInvoice(
-      env,
-      {
-        email: p.email,
-        type: p.type as "individual" | "organization",
-        domain,
-        // Fakturuj skutečně přijatou bankovní částku, ne nakonfigurované
-        // očekávání — banka mohla spárovat přesnou, ale jinak vyjádřenou částku.
-        amount: match.amountPaid,
-        variableSymbol: p.variableSymbol!,
-        companyName: p.companyName,
-        companyIco: p.companyIco,
-        companyDic: p.companyDic,
-        companyAddress: p.companyAddress,
-        companyCity: p.companyCity,
-        companyZip: p.companyZip,
-        contactName: p.contactName,
-      },
-      { sendEmail: true },
-    );
-    if (res.ok && res.invoiceId) {
-      await db
-        .update(purchase)
-        .set({
-          fakturoidInvoiceId: res.invoiceId,
-          fakturoidSubjectId: res.subjectId ?? null,
-        })
-        .where(eq(purchase.id, p.id));
-    } else if (!res.ok) {
-      console.error(`[cron] Fakturoid for purchase ${p.id} failed:`, res.error);
-    }
-  } catch (err) {
-    console.error(`[cron] Fakturoid for purchase ${p.id} threw:`, err);
+  // Fakturace přes outbox — založ invoice_job + zařaď. I při výpadku enqueue
+  // řádek v DB zůstane a reconcile cron ho doručí (žádná osiřelá faktura).
+  // Fakturuj skutečně přijatou bankovní částku (match.amountPaid), ne očekávání.
+  if (shouldInvoice({ kind: p.kind, amountPaid: match.amountPaid })) {
+    // Účetní datum = datum bankovní transakce (připsání), NE čas běhu cronu.
+    // FIO vrací "YYYY-MM-DD+TZ", Creditas ISO — vytáhneme jen datum a kotvíme na
+    // poledne UTC (po převodu do TZ Praha zůstává stejný den). Když datum chybí /
+    // je nečitelné → fallback na teď s confidence='estimated' (job pak nepošle
+    // fakturu automaticky, ale jde do needs_manual_review).
+    const dateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(match.paidOnIso ?? "");
+    const paidAt = dateMatch ? paidOnToTimestamp(dateMatch[1]) : new Date();
+    await createAndEnqueueInvoiceJob(db, env, {
+      purchaseId: p.id,
+      jobKind: "initial_purchase",
+      paymentSource: match.bank, // 'fio' | 'creditas'
+      sourceEventId: match.transactionId,
+      amount: match.amountPaid,
+      paidAt,
+      paidAtSource: "bank_api",
+      paidAtConfidence: dateMatch ? "exact" : "estimated",
+      billing: purchaseToBillingSnapshot(p),
+    });
   }
 
   // Report konverze do reklamních platforem. Idempotentní (per-provider claim),

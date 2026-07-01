@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ccNewsItem } from "../../src/db/schema";
 import { prepareDraftAndApproval } from "../../src/lib/cc-news/draft";
 
-const NOW = new Date("2026-06-21T12:00:00.000Z");
+// Reálné „teď" — endpoint /approve ověřuje token proti Date.now() workeru
+// (miniflare isolate, nelze injektovat). Fixní datum by po 7denním TTL tokenu
+// způsobilo clock-dependent selhání (token „expiruje"). Hodnota NOW nevstupuje
+// do žádné asserce (kontrolují se jen status kódy + publikace).
+const NOW = new Date();
 
 describe("GET /internal/cc-news/approve (R4 — lidský HMAC link)", () => {
   beforeEach(async () => {

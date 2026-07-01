@@ -89,7 +89,9 @@ export function captureSignals(
  * začátek toho dne v Europe/Prague. Akceptuje `YYYY-MM-DD` i ISO s časem.
  * Pro převody je tohle čas konverze (R6); Stripe/manual mají přesný čas zvlášť.
  */
-export function bankDateToConversionInstant(dateStr: string): Date {
+export function bankDateToConversionInstant(dateStr: string | null | undefined): Date {
+  // Banka datum neuvedla → čas konverze fallbackem na teď.
+  if (!dateStr) return new Date();
   // Vezmi jen datovou část (FIO/Creditas vrací buď "2026-06-28" nebo ISO).
   const datePart = dateStr.slice(0, 10);
   // Europe/Prague je UTC+1 (zimní) / UTC+2 (letní). Začátek dne v Praze =

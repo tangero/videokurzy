@@ -161,6 +161,8 @@ interface BillingData {
   companyCity: string | null;
   companyZip: string | null;
   contactName: string | null;
+  // Volitelný oddělený fakturační e-mail. Když chybí, faktura jde na e-mail nákupu.
+  invoiceEmail: string | null;
 }
 
 function parseBilling(form: FormData): BillingData | null {
@@ -173,6 +175,7 @@ function parseBilling(form: FormData): BillingData | null {
     const v = String(form.get(k) ?? "").trim();
     return v.length > 0 ? v : null;
   };
+  const invoiceEmailRaw = String(form.get("invoiceEmail") ?? "").toLowerCase().trim();
   return {
     companyName: pick("companyName"),
     companyIco: ico,
@@ -181,6 +184,7 @@ function parseBilling(form: FormData): BillingData | null {
     companyCity: pick("companyCity"),
     companyZip: pick("companyZip"),
     contactName: pick("contactName"),
+    invoiceEmail: invoiceEmailRaw || null,
   };
 }
 
@@ -211,6 +215,11 @@ function signalsToStripeMetadata(s: ConversionSignals): Record<string, string> {
   return md;
 }
 
+/** Validní jen prázdný nebo skutečný e-mail. Vrací false pro vyplněný, ale chybný. */
+function invoiceEmailValid(b: BillingData | null): boolean {
+  return !b?.invoiceEmail || b.invoiceEmail.includes("@");
+}
+
 // Stripe metadata má 50 klíčů, 500 znaků na hodnotu, 40 znaků na klíč.
 // Firemní pole zploštíme s prefixem `b_` a oříznem dlouhých hodnot.
 function billingToStripeMetadata(b: BillingData | null): Record<string, string> {
@@ -224,6 +233,7 @@ function billingToStripeMetadata(b: BillingData | null): Record<string, string> 
   set("b_city", b.companyCity);
   set("b_zip", b.companyZip);
   set("b_contact", b.contactName);
+  set("b_email", b.invoiceEmail);
   return out;
 }
 
@@ -251,11 +261,16 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const billing = parseBilling(form);
   const signals = captureSignalsFromForm(c, form);
 
-  if (!email || !email.includes("@")) {
+  const emailError = !email || !email.includes("@")
+    ? "Zadejte platný email."
+    : !invoiceEmailValid(billing)
+      ? "Zadejte platný fakturační email (nebo pole nechte prázdné)."
+      : null;
+  if (emailError) {
     const db = drizzle(c.env.DB);
     const invite = inviteToken ? await resolveInviteDiscount(db, inviteToken) : null;
     const view = await checkoutSelectView(db, "individual", {
-      error: "Zadejte platný email.",
+      error: emailError,
       prefillEmail: email,
       prefillCode: promoCode,
       prefillCompany: billingToPrefill(billing),
@@ -325,6 +340,7 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   };
 
   if (!email || !email.includes("@")) return renderError("Zadejte platný email.");
+  if (!invoiceEmailValid(billing)) return renderError("Zadejte platný fakturační email (nebo pole nechte prázdné).");
   if (!domainRaw || !domainRaw.includes(".")) return renderError("Zadejte platnou firemní doménu (např. firma.cz).");
   if (isFreemailDomain(domainRaw)) return renderError(FREEMAIL_REJECTION_MESSAGE);
 
@@ -352,6 +368,7 @@ function billingToPrefill(b: BillingData | null) {
     companyCity: b.companyCity ?? undefined,
     companyZip: b.companyZip ?? undefined,
     contactName: b.contactName ?? undefined,
+    invoiceEmail: b.invoiceEmail ?? undefined,
   };
 }
 
@@ -585,6 +602,7 @@ async function startFioCheckout(
         companyCity: billing?.companyCity ?? null,
         companyZip: billing?.companyZip ?? null,
         contactName: billing?.contactName ?? null,
+        invoiceEmail: billing?.invoiceEmail ?? null,
         proformaNumber,
         proformaIssuedAt,
         accessToken,
@@ -864,7 +882,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   const expectedAmount = expectedPaymentAmount(p.amountPaid, fullExpected, p.discountPercent ?? 0);
 
   // Načti transakce z banky, na kterou byla objednávka vystavena, a spáruj.
-  let matchedTx: { id: string; amount: number; date: string } | null = null;
+  let matchedTx: { id: string; amount: number; date: string | null } | null = null;
   if (bank === "creditas") {
     const creRes = await fetchCreditasTransactions(
       c.env.CREDITAS_API_TOKEN ?? "dev",
