@@ -85,6 +85,28 @@ export const CheckoutSelect: FC<{
           {inviteToken && (
             <input type="hidden" name="inviteToken" value={inviteToken} />
           )}
+          {/* Click ID z reklamy (capture na vstupu, R5). Naplní je skript níže
+              z URL query nebo z cookie uložené při příchodu na web. */}
+          <input type="hidden" name="gclid" id="f_gclid" value="" />
+          <input type="hidden" name="gbraid" id="f_gbraid" value="" />
+          <input type="hidden" name="wbraid" id="f_wbraid" value="" />
+          <input type="hidden" name="fbclid" id="f_fbclid" value="" />
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(function(){
+  function qs(n){return new URLSearchParams(location.search).get(n);}
+  function ck(n){var m=document.cookie.match(new RegExp('(?:^|;\\\\s*)'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null;}
+  // Capture na vstupu: když click ID přijde v URL, ulož do cookie (90 dní), ať
+  // přežije přechod na checkout. Do hidden fieldu dej URL hodnotu nebo cookie.
+  ['gclid','gbraid','wbraid','fbclid'].forEach(function(k){
+    var v=qs(k);
+    if(v){document.cookie=k+'='+encodeURIComponent(v)+';path=/;max-age=7776000;SameSite=Lax;Secure';}
+    var el=document.getElementById('f_'+k);
+    if(el){el.value=v||ck(k)||'';}
+  });
+})();`,
+            }}
+          />
           <div>
             <label for="email" class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
             <input
@@ -292,6 +314,16 @@ export const CheckoutSelect: FC<{
               </div>
             </details>
           )}
+
+          {/* Marketingový souhlas pro server-side měření konverzí (Meta/Google/Seznam).
+              Opt-in (nezaškrtnuto), nepovinný — bez něj se konverze nereportuje. */}
+          <label class="flex items-start gap-2 text-sm text-gray-600 mb-4">
+            <input type="checkbox" name="marketingConsent" value="1" class="mt-1" />
+            <span>
+              Souhlasím s měřením konverzí a marketingem (Meta, Google, Seznam).
+              Nepovinné, lze kdykoliv odvolat. Viz <a href="/privacy" class="underline">Zásady ochrany osobních údajů</a>.
+            </span>
+          </label>
 
           <button
             type="submit"

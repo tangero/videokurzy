@@ -6,6 +6,8 @@ import Stripe from "stripe";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { purchase, organization, siteConfig } from "../db/schema";
+import { reportPurchase, bankDateToConversionInstant, captureSignals, type ConversionSignals } from "../lib/conversions";
+import { sklikConversionSnippetFor } from "../lib/analytics-snippet";
 import { lookupByIco, lookupByName } from "../lib/ares";
 import { generateProformaHtml } from "../lib/proforma";
 import { nextProformaNumber } from "../lib/proforma-sequence";
@@ -186,6 +188,33 @@ function parseBilling(form: FormData): BillingData | null {
   };
 }
 
+// Konverzní signály z checkout formuláře + requestu (fáze 3). consentMarketing
+// je explicitní checkbox; click ID přicházejí z hidden fieldů (capture na vstupu
+// landing/GET → hidden field). Zbytek (IP/UA/cookie) řeší captureSignals z requestu.
+function captureSignalsFromForm(c: AppContext, form: FormData): ConversionSignals {
+  return captureSignals(c.req, {
+    consentCheckbox: form.get("marketingConsent") === "1",
+    fbclid: String(form.get("fbclid") ?? "").trim() || null,
+    gclid: String(form.get("gclid") ?? "").trim() || null,
+    gbraid: String(form.get("gbraid") ?? "").trim() || null,
+    wbraid: String(form.get("wbraid") ?? "").trim() || null,
+  });
+}
+
+// Konverzní signály → Stripe metadata (vrátí se ve webhooku). Klíče krátké kvůli
+// limitu 50/40/500. marketingConsent jako "1"/"0".
+function signalsToStripeMetadata(s: ConversionSignals): Record<string, string> {
+  const md: Record<string, string> = { mkt_consent: s.marketingConsent ? "1" : "0" };
+  if (s.fbc) md.fbc = s.fbc.slice(0, 500);
+  if (s.fbp) md.fbp = s.fbp.slice(0, 500);
+  if (s.gclid) md.gclid = s.gclid.slice(0, 500);
+  if (s.gbraid) md.gbraid = s.gbraid.slice(0, 500);
+  if (s.wbraid) md.wbraid = s.wbraid.slice(0, 500);
+  if (s.clientIp) md.cip = s.clientIp.slice(0, 100);
+  if (s.userAgent) md.cua = s.userAgent.slice(0, 500);
+  return md;
+}
+
 /** Validní jen prázdný nebo skutečný e-mail. Vrací false pro vyplněný, ale chybný. */
 function invoiceEmailValid(b: BillingData | null): boolean {
   return !b?.invoiceEmail || b.invoiceEmail.includes("@");
@@ -230,6 +259,7 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const promoCode = String(form.get("promoCode") ?? "").trim();
   const inviteToken = String(form.get("inviteToken") ?? "").trim() || null;
   const billing = parseBilling(form);
+  const signals = captureSignalsFromForm(c, form);
 
   const emailError = !email || !email.includes("@")
     ? "Zadejte platný email."
@@ -258,10 +288,10 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const discount = await resolveCheckoutDiscount(db, settings, promoCode || null, inviteToken);
   const finalPrice = discount ? applyDiscount(prices.individual, discount.percent) : prices.individual;
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount, billing);
+    return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount, billing, signals);
   } else if (paymentMethod === "fio") {
     const bank = await getActiveBank(db);
-    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount, billing, bank);
+    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount, billing, bank, signals);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -291,6 +321,7 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const inviteToken = String(form.get("inviteToken") ?? "").trim() || null;
 
   const billing = parseBilling(form);
+  const signals = captureSignalsFromForm(c, form);
   const db = drizzle(c.env.DB);
   const renderError = async (msg: string) => {
     const invite = inviteToken ? await resolveInviteDiscount(db, inviteToken) : null;
@@ -318,10 +349,10 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const discount = await resolveCheckoutDiscount(db, settings, promoCode || null, inviteToken);
   const finalPrice = discount ? applyDiscount(prices.organization, discount.percent) : prices.organization;
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount, billing);
+    return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount, billing, signals);
   } else if (paymentMethod === "fio") {
     const bank = await getActiveBank(db);
-    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount, billing, bank);
+    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount, billing, bank, signals);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -417,6 +448,7 @@ async function startStripeCheckout(
   price: number,
   discount: AppliedDiscount | null,
   billing: BillingData | null,
+  signals: ConversionSignals,
 ) {
   const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
   const isOrg = type === "organization";
@@ -461,6 +493,7 @@ async function startStripeCheckout(
         ? { inviteToken: discount.code.replace(/^invite:/, "") }
         : {}),
       ...billingToStripeMetadata(billing),
+      ...signalsToStripeMetadata(signals),
     },
   });
 
@@ -479,6 +512,7 @@ async function startFioCheckout(
   discount: AppliedDiscount | null,
   billing: BillingData | null,
   bank: TransferBank,
+  signals: ConversionSignals,
 ) {
   const db = drizzle(c.env.DB);
   const dueDays = extendedDeadline ? FIO_EXTENDED_DUE_DAYS : FIO_DEFAULT_DUE_DAYS;
@@ -572,6 +606,16 @@ async function startFioCheckout(
         proformaNumber,
         proformaIssuedAt,
         accessToken,
+        // Konverzní signály zachycené při objednávce (fáze 3). Konverze se
+        // reportuje až po spárování platby (cron/verify), kdy se přidá i čas.
+        marketingConsent: signals.marketingConsent,
+        fbc: signals.fbc,
+        fbp: signals.fbp,
+        gclid: signals.gclid,
+        gbraid: signals.gbraid,
+        wbraid: signals.wbraid,
+        clientIp: signals.clientIp,
+        userAgent: signals.userAgent,
       });
       vs = candidate;
       break;
@@ -738,6 +782,15 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
     domain = emailDomain(p.email);
   }
 
+  // Sklik conversionHit „při objednávce" — i pro zatím nezaplacené převody
+  // (rozhodnutí provozovatele). Dedup přes sessionStorage na VS (pay stránka se
+  // zobrazuje opakovaně). E-mail se hashuje server-side pro identity matching.
+  const sklikConv = await sklikConversionSnippetFor(c.env, {
+    value: price,
+    orderId: p.variableSymbol!,
+    email: p.email,
+  });
+
   return c.html(
     <Layout title={p.proformaNumber ? `Zálohový doklad ${p.proformaNumber}` : "Platba bankovním převodem"}>
       <PaymentDetails
@@ -771,6 +824,7 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
         companyZip={p.companyZip}
         contactName={p.contactName}
       />
+      {sklikConv && <div dangerouslySetInnerHTML={{ __html: sklikConv }} />}
     </Layout>
   );
 });
@@ -828,7 +882,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   const expectedAmount = expectedPaymentAmount(p.amountPaid, fullExpected, p.discountPercent ?? 0);
 
   // Načti transakce z banky, na kterou byla objednávka vystavena, a spáruj.
-  let matchedTx: { id: string; amount: number } | null = null;
+  let matchedTx: { id: string; amount: number; date: string | null } | null = null;
   if (bank === "creditas") {
     const creRes = await fetchCreditasTransactions(
       c.env.CREDITAS_API_TOKEN ?? "dev",
@@ -839,7 +893,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
       return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
     }
     const m = matchCreditasPayment(creRes.transactions, p.variableSymbol!, expectedAmount);
-    if (m.found && m.transaction) matchedTx = { id: m.transaction.id, amount: m.transaction.amount };
+    if (m.found && m.transaction) matchedTx = { id: m.transaction.id, amount: m.transaction.amount, date: m.transaction.date };
   } else {
     const fioRes = await fetchFioTransactions(
       c.env.FIO_API_TOKEN,
@@ -853,7 +907,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
       return c.html(<VerifyError message="Dočasně nelze ověřit. Zkuste to za chvíli." />);
     }
     const m = matchPayment(fioRes.transactions, p.variableSymbol!, expectedAmount);
-    if (m.found && m.transaction) matchedTx = { id: String(m.transaction.id), amount: m.transaction.amount };
+    if (m.found && m.transaction) matchedTx = { id: String(m.transaction.id), amount: m.transaction.amount, date: m.transaction.date };
   }
 
   if (!matchedTx) {
@@ -873,6 +927,16 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   if (!activated) {
     return c.html(<VerifySuccess email={p.email} />);
   }
+
+  // Čas konverze = den bankovní transakce (R6). Uložíme na row a reportujeme
+  // konverzi. activated=true zajišťuje, že se to stane jen při reálné aktivaci
+  // (refresh stránky druhý report nevyvolá); reportPurchase je navíc idempotentní.
+  const conversionOccurredAt = bankDateToConversionInstant(matchedTx.date);
+  await db.update(purchase).set({ conversionOccurredAt }).where(eq(purchase.id, p.id));
+  await reportPurchase(db, c.env, p.id, {
+    valueOverride: matchedTx.amount,
+    conversionOccurredAt,
+  });
 
   // Invite token (uložený v discountCode jako "invite:<token>") se spotřebuje
   // až teď, po napárování platby a aktivaci nákupu.

@@ -12,6 +12,7 @@ import { detectRecent, defaultFetchers } from "./lib/cc-news/detect";
 import { enqueueCcNewsItem } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
+import { reportPurchase, bankDateToConversionInstant } from "./lib/conversions";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
 import { shouldInvoice, purchaseToBillingSnapshot, paidOnToTimestamp } from "./lib/invoicing/jobs";
 import { reconcileInvoiceJobs } from "./lib/invoicing/reconcile";
@@ -221,6 +222,7 @@ export async function scanBankPayments(
     bank: "fio" | "creditas";
     transactionId: string;
     amountPaid: number;
+    transactionDate: string | null; // datum bankovní transakce — čas konverze (R6)
     // Datum bankovní transakce (připsání) — účetní datum faktury, ne čas cronu.
     // null = banka datum neuvedla → fakturace půjde do estimated/manual review.
     paidOnIso: string | null;
@@ -242,6 +244,7 @@ export async function scanBankPayments(
         bank: "fio",
         transactionId: String(r.transaction.id),
         amountPaid: r.transaction.amount,
+        transactionDate: r.transaction.date,
         paidOnIso: r.transaction.date,
       });
       return true;
@@ -255,6 +258,7 @@ export async function scanBankPayments(
         bank: "creditas",
         transactionId: r.transaction.id,
         amountPaid: r.transaction.amount,
+        transactionDate: r.transaction.date,
         paidOnIso: r.transaction.date,
       });
       return true;
@@ -275,6 +279,7 @@ export async function scanBankPayments(
         bank: m.bank,
         transactionId: m.transactionId,
         amountPaid: m.amountPaid,
+        transactionDate: m.transactionDate,
         paidOnIso: m.paidOnIso,
       });
       matched++;
@@ -311,7 +316,13 @@ async function activateMatchedPurchase(
   db: ReturnType<typeof drizzle>,
   env: Env,
   p: typeof purchase.$inferSelect,
-  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number; paidOnIso?: string | null },
+  match: {
+    bank: "fio" | "creditas";
+    transactionId: string;
+    amountPaid: number;
+    transactionDate: string | null; // datum bankovní transakce — čas konverze (R6)
+    paidOnIso?: string | null; // datum připsání — účetní datum faktury
+  },
 ): Promise<void> {
   const newExpiresAt = new Date(Date.now() + ACCESS_DURATION_DAYS * 86400 * 1000);
   const txColumn =
@@ -319,12 +330,17 @@ async function activateMatchedPurchase(
       ? { creditasTransactionId: match.transactionId }
       : { fioTransactionId: match.transactionId };
 
+  // Čas konverze = den bankovní transakce (začátek dne v Europe/Prague). Uložíme
+  // ho PŘED reportem konverze, ať reportPurchase čte autoritativní hodnotu z row.
+  const conversionOccurredAt = bankDateToConversionInstant(match.transactionDate);
+
   await db
     .update(purchase)
     .set({
       status: "active",
       expiresAt: newExpiresAt,
       amountPaid: match.amountPaid,
+      conversionOccurredAt,
       ...txColumn,
     })
     .where(eq(purchase.id, p.id));
@@ -370,6 +386,14 @@ async function activateMatchedPurchase(
       billing: purchaseToBillingSnapshot(p),
     });
   }
+
+  // Report konverze do reklamních platforem. Idempotentní (per-provider claim),
+  // best-effort — reportPurchase nikdy nehází, takže aktivaci/fakturaci neohrozí.
+  // Hodnotu i čas konverze už máme uložené na row; předáme je explicitně.
+  await reportPurchase(db, env, p.id, {
+    valueOverride: match.amountPaid,
+    conversionOccurredAt,
+  });
 }
 
 /**

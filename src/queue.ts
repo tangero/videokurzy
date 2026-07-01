@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
 import { consumeInviteToken } from "./lib/discount";
+import { reportPurchase } from "./lib/conversions";
 import { invalidateAccessCache } from "./lib/access";
 import { maskEmail } from "./lib/errors";
 import { escapeHtml } from "./lib/markdown";
@@ -237,6 +238,21 @@ function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
   };
 }
 
+// Konverzní signály ze Stripe session metadata (zapsané v checkoutu
+// signalsToStripeMetadata) → na purchase, ať je reportPurchase má pro CAPI (R5).
+function extractSignals(metadata: Record<string, string>) {
+  return {
+    marketingConsent: metadata.mkt_consent === "1",
+    fbc: metadata.fbc ?? null,
+    fbp: metadata.fbp ?? null,
+    gclid: metadata.gclid ?? null,
+    gbraid: metadata.gbraid ?? null,
+    wbraid: metadata.wbraid ?? null,
+    clientIp: metadata.cip ?? null,
+    userAgent: metadata.cua ?? null,
+  };
+}
+
 /**
  * Založí fakturační outbox úlohu pro Stripe checkout nákup + zařadí do fronty.
  * purchaseId dohledá podle stripePaymentId (insert výše je onConflictDoNothing
@@ -293,6 +309,7 @@ async function handleCheckoutCompleted(
   const discountPercent = Math.max(0, Math.min(100, parseInt(metadata.discountPercent ?? "0", 10) || 0));
   const discountCode = metadata.discountCode || null;
   const billing = extractBilling(metadata);
+  const signals = extractSignals(metadata);
 
   // Pokud uživatel s tímto emailem už existuje (přihlásil se přes magic link
   // dřív, než webhook dorazil), navaž purchase rovnou na jeho userId.
@@ -326,6 +343,7 @@ async function handleCheckoutCompleted(
         discountCode,
         amountPaid: paidAmountCzk,
         ...billing,
+        ...signals,
       })
       .onConflictDoNothing();
 
@@ -381,6 +399,7 @@ async function handleCheckoutCompleted(
         discountCode,
         amountPaid: paidAmountCzk,
         ...billing,
+        ...signals,
       })
       .onConflictDoNothing();
 
@@ -402,19 +421,33 @@ async function handleCheckoutCompleted(
     });
   }
 
-  // Invite token spotřebujeme až po aktivaci nákupu. purchase.id dohledáme podle
-  // stripePaymentId (insert je onConflictDoNothing bez returning). Idempotentní —
+  // purchase.id dohledáme podle stripePaymentId (insert je onConflictDoNothing
+  // bez returning). Použijeme ho pro invite token i pro report konverze.
+  const [createdPurchase] = await db
+    .select({ id: purchase.id })
+    .from(purchase)
+    .where(eq(purchase.stripePaymentId, sessionId))
+    .limit(1);
+
+  // Invite token spotřebujeme až po aktivaci nákupu. Idempotentní —
   // duplicitní webhook token znovu nespálí.
   const inviteToken = metadata.inviteToken;
-  if (inviteToken) {
-    const [createdPurchase] = await db
-      .select({ id: purchase.id })
-      .from(purchase)
-      .where(eq(purchase.stripePaymentId, sessionId))
-      .limit(1);
-    if (createdPurchase) {
-      await consumeInviteToken(db, inviteToken, createdPurchase.id);
-    }
+  if (inviteToken && createdPurchase) {
+    await consumeInviteToken(db, inviteToken, createdPurchase.id);
+  }
+
+  // Čas konverze pro Stripe = teď (checkout je instantní platba). Uložíme ho na
+  // row PŘED reportem a pak reportujeme konverzi. Idempotentní, best-effort.
+  if (createdPurchase && paidAmountCzk > 0) {
+    const conversionOccurredAt = new Date();
+    await db
+      .update(purchase)
+      .set({ conversionOccurredAt })
+      .where(eq(purchase.id, createdPurchase.id));
+    await reportPurchase(db, env, createdPurchase.id, {
+      valueOverride: paidAmountCzk,
+      conversionOccurredAt,
+    });
   }
 }
 

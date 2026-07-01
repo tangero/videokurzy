@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import type { Env, Variables } from "./types";
 import { authMiddleware } from "./middleware/auth";
 import { wantsJson, AppError, logServerError } from "./lib/errors";
+import { analyticsSnippet } from "./lib/analytics-snippet";
 import { ErrorPage } from "./views/error";
 import { authRoutes } from "./routes/auth";
 import { landingRoutes } from "./routes/landing";
@@ -37,7 +38,19 @@ app.use("*", async (c, next) => {
   await next();
   const ct = c.res.headers.get("content-type") ?? "";
   if (!ct.includes("text/html")) return;
-  const body = await c.res.text();
+  let body = await c.res.text();
+
+  // Consent lišta + marketingové pixely se vkládají centrálně před </body> všech
+  // HTML stránek (pixely se načtou jen po souhlasu — řeší inline loader). Tím se
+  // nemusí měnit ~45 call sites <Layout>. Snippet je prázdný, dokud nejsou
+  // nakonfigurované pixel IDs (env), takže lokálně/v testech se nevkládá nic.
+  const snippet = analyticsSnippet(c.env);
+  if (snippet) {
+    body = body.includes("</body>")
+      ? body.replace("</body>", `${snippet}</body>`)
+      : body + snippet;
+  }
+
   const finalBody = body.startsWith("<!DOCTYPE") ? body : "<!DOCTYPE html>" + body;
   c.res = new Response(finalBody, {
     status: c.res.status,
