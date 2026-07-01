@@ -72,13 +72,13 @@ describe("captureSignals — zachycení match signálů (fáze 3)", () => {
     return { header: (n: string) => headers[n] };
   }
 
-  it("marketingConsent z checkboxu i z cookie (stačí jedno)", () => {
+  it("marketingConsent je vždy true (souhlas dán vždy, lišta odstraněna)", () => {
     const s1 = captureSignals(reqWith({}), { consentCheckbox: true });
     expect(s1.marketingConsent).toBe(true);
-    const s2 = captureSignals(reqWith({ Cookie: "vk_consent=1" }), { consentCheckbox: false });
+    const s2 = captureSignals(reqWith({ Cookie: "vk_consent=0" }), { consentCheckbox: false });
     expect(s2.marketingConsent).toBe(true);
-    const s3 = captureSignals(reqWith({ Cookie: "vk_consent=0" }), { consentCheckbox: false });
-    expect(s3.marketingConsent).toBe(false);
+    const s3 = captureSignals(reqWith({}), { consentCheckbox: false });
+    expect(s3.marketingConsent).toBe(true);
   });
 
   it("fbc se skládá z fbclid do formátu fb.1.<ms>.<fbclid> (ne raw)", () => {

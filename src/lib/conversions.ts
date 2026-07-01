@@ -50,8 +50,8 @@ function cookieValue(cookieHeader: string | undefined, name: string): string | n
 /**
  * Vytáhne konverzní signály z requestu. `clickIds` se předávají zvlášť, protože
  * je checkout zná z formuláře / hidden fieldů (capture na vstupu, ne ze static GET).
- * marketingConsent = explicitní checkbox v checkoutu (server-side report) NEBO
- * cookie souhlas z lišty — stačí jedno, obojí je projevený souhlas.
+ * marketingConsent je vždy true — souhlas je dán vždy (consent lišta odstraněna
+ * na pokyn provozovatele); `consentCheckbox` se proto nezohledňuje.
  */
 export function captureSignals(
   req: { header(name: string): string | undefined },
@@ -64,7 +64,6 @@ export function captureSignals(
   },
 ): ConversionSignals {
   const cookieHeader = req.header("Cookie");
-  const cookieConsent = cookieValue(cookieHeader, "vk_consent") === "1";
   const existingFbp = cookieValue(cookieHeader, "_fbp"); // jen pokud už pixel cookie vytvořil
 
   // fbc skládáme z fbclid do serverového formátu fb.1.<ms>.<fbclid> (NE raw fbclid).
@@ -74,7 +73,7 @@ export function captureSignals(
   else fbc = cookieValue(cookieHeader, "_fbc"); // nebo z existující cookie
 
   return {
-    marketingConsent: opts.consentCheckbox || cookieConsent,
+    marketingConsent: true,
     fbc,
     fbp: existingFbp,
     gclid: opts.gclid ?? null,

@@ -11,27 +11,28 @@ describe("analyticsSnippet", () => {
     expect(analyticsSnippet(envWith({}))).toBe("");
   });
 
-  it("s Meta pixel ID obsahuje lištu i loader pixelu", () => {
+  it("s Meta pixel ID obsahuje loader pixelu, ale žádnou consent lištu", () => {
     const html = analyticsSnippet(envWith({ META_PIXEL_ID: "123456" }));
-    expect(html).toContain("vk-consent-bar");
-    expect(html).toContain("vk-consent-accept");
+    expect(html).not.toContain("vk-consent-bar");
+    expect(html).not.toContain("vk-consent-accept");
     expect(html).toContain("123456");
     expect(html).toContain("fbevents.js");
   });
 
-  it("NEhlásí falešný souhlas — default consent je revoke/denied, ne grant", () => {
+  it("souhlas se hlásí napevno jako granted (lišta odstraněna, souhlas dán vždy)", () => {
     const html = analyticsSnippet(envWith({ META_PIXEL_ID: "1", GTAG_ID: "G-X", SKLIK_RETARGETING_ID: "9" }));
-    // Meta: revoke ve větvi bez souhlasu
-    expect(html).toContain("'revoke'");
-    // Google Consent Mode v2 default se odvíjí od granted() (denied dokud nesouhlas)
-    expect(html).toContain("'denied'");
-    // grant/granted se objevuje jen v grantLoaded (po kliknutí), ne jako napevno init
-    expect(html).toContain("grantLoaded");
+    // Meta: grant napevno
+    expect(html).toContain("window.fbq('consent', 'grant')");
+    // Google Consent Mode v2 default granted
+    expect(html).toContain("'granted'");
+    // žádné revoke/denied ani odvolatelná volba
+    expect(html).not.toContain("'revoke'");
+    expect(html).not.toContain("'denied'");
   });
 
-  it("Sklik retargeting consent param je dynamický (granted()?1:0), ne napevno 1", () => {
+  it("Sklik retargeting consent param je napevno 1", () => {
     const html = analyticsSnippet(envWith({ SKLIK_RETARGETING_ID: "42" }));
-    expect(html).toContain("consent: granted() ? 1 : 0");
+    expect(html).toContain("consent: 1");
     expect(html).toContain("rc.js");
   });
 });
@@ -51,7 +52,7 @@ describe("sklikConversionSnippet", () => {
     expect(html).toContain("conversionHit");
     expect(html).toContain("Number(\"7\")");
     expect(html).toContain("value: 2990");
-    expect(html).toContain("consent: consent()"); // ne napevno 1
+    expect(html).toContain("consent: 1"); // souhlas dán vždy
   });
 
   it("dedup přes sessionStorage keyovaný na orderId (opakované zobrazení pay stránky)", () => {
