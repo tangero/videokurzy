@@ -2230,11 +2230,11 @@ admin.get("/admin/newsletter", async (c) => {
   const { slugFromPath } = await import("./cc-news");
   const { draftKvKey, publishedKvKey } = await import("../lib/cc-news/draft");
   const { AdminNewsletterPage } = await import("../views/admin-newsletter");
+  const { sortNewsItems } = await import("../lib/cc-news/sort");
 
-  const rows = await db
-    .select()
-    .from(ccNewsItem)
-    .orderBy(desc(ccNewsItem.createdAt));
+  // Řadíme podle verze softwaru → týdne (NE podle createdAt: vydání se dodělávají
+  // zpětně, takže Week 25 vytvořený po Week 26 by jinak vyskočil nad něj).
+  const rows = sortNewsItems(await db.select().from(ccNewsItem));
 
   const items = rows.map((r) => ({
     id: r.id,
