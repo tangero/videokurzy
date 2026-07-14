@@ -534,11 +534,13 @@ export function AdminLessonForm({
   courseId,
   moduleId,
   lesson: les,
+  modules,
   saved,
 }: {
   courseId: number;
   moduleId: number;
   lesson?: Lesson;
+  modules?: { id: number; title: string }[];
   saved?: boolean;
 }) {
   const isEdit = !!les;
@@ -632,6 +634,21 @@ export function AdminLessonForm({
             <span class="text-gray-500 text-sm">sek</span>
           </div>
         </div>
+        {modules && modules.length > 0 && (
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Modul</label>
+            <select
+              name="moduleId"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            >
+              {modules.map((m) => (
+                <option value={String(m.id)} selected={m.id === moduleId}>
+                  {m.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <AdminField
           label="Pořadí"
           name="sortOrder"

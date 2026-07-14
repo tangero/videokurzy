@@ -2927,6 +2927,12 @@ admin.get("/admin/lessons/:id/edit", async (c) => {
 
   if (!row) return c.text("Not found", 404);
 
+  const modules = await db
+    .select({ id: module.id, title: module.title })
+    .from(module)
+    .where(eq(module.courseId, row.courseId))
+    .orderBy(module.sortOrder);
+
   const saved = c.req.query("saved") === "1";
   return c.html(
     <Layout title="Upravit epizodu" user={currentUser}>
@@ -2934,6 +2940,7 @@ admin.get("/admin/lessons/:id/edit", async (c) => {
         courseId={row.courseId}
         moduleId={row.lesson.moduleId}
         lesson={row.lesson}
+        modules={modules}
         saved={saved}
       />
     </Layout>
@@ -2966,9 +2973,35 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
   const moments = String(body.momentsJson ?? "[]").trim() || "[]";
   const bodyMarkdown = String(body.bodyMarkdown ?? "").trim();
 
+  // Přesun mezi moduly: přijmi jen modul ze stejného kurzu, jinak nech beze změny.
+  let moduleId: number | undefined;
+  if (body.moduleId !== undefined) {
+    const requested = parseInt(String(body.moduleId), 10);
+    if (!Number.isNaN(requested)) {
+      const [target] = await db
+        .select({ id: module.id })
+        .from(module)
+        .where(and(eq(module.id, requested), eq(module.courseId, row.courseId)))
+        .limit(1);
+      if (!target) return c.text("Neplatný modul", 400);
+      moduleId = requested;
+    }
+  }
+
   await db
     .update(lesson)
-    .set({ title, slug, bunnyVideoId, durationSeconds, sortOrder, isFree, chapters, moments, bodyMarkdown })
+    .set({
+      title,
+      slug,
+      bunnyVideoId,
+      durationSeconds,
+      sortOrder,
+      isFree,
+      chapters,
+      moments,
+      bodyMarkdown,
+      ...(moduleId !== undefined ? { moduleId } : {}),
+    })
     .where(eq(lesson.id, id));
 
   await c.env.KV.delete("cache:catalog");
