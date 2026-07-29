@@ -75,8 +75,15 @@ async function getPrices(db: ReturnType<typeof drizzle>) {
   };
 }
 
+// Cloudflare KV odmítá expirationTtl < 60 s ("Invalid expiration_ttl … must be
+// at least 60") a hodí 400, což celý verify endpoint shodí na 500. Prodleva
+// mezi ověřeními zůstává FIO_RATE_LIMIT_MS (35 s) — tu hlídá porovnání
+// uloženého timestampu, ne expirace klíče. TTL je jen úklid, takže ho můžeme
+// beze škody protáhnout na minimum, které KV akceptuje.
+const KV_MIN_EXPIRATION_TTL_SECONDS = 60;
+
 export function fioRateLimitTtlSeconds(): number {
-  return Math.ceil(FIO_RATE_LIMIT_MS / 1000);
+  return Math.max(KV_MIN_EXPIRATION_TTL_SECONDS, Math.ceil(FIO_RATE_LIMIT_MS / 1000));
 }
 
 /**
