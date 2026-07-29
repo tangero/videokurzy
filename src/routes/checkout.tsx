@@ -795,7 +795,7 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
     <Layout title={p.proformaNumber ? `Zálohový doklad ${p.proformaNumber}` : "Platba bankovním převodem"}>
       <PaymentDetails
         variableSymbol={p.variableSymbol!}
-        proformaRef={p.accessToken ?? p.variableSymbol!}
+        payRef={p.accessToken ?? p.variableSymbol!}
         amount={price}
         account={bank.account}
         iban={bank.iban}
@@ -832,7 +832,9 @@ checkoutRoutes.get("/checkout/pay/:vs", async (c) => {
 // ─── Verify endpoint (htmx) ──────────────────────────────────────
 
 checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
-  const vs = c.req.param("vs");
+  // Parametr se historicky jmenuje :vs, ale nese stejnou referenci jako
+  // pay/proforma stránky — nehádatelný accessToken, u starých objednávek VS.
+  const ref = c.req.param("vs");
   const origin = c.req.header("Origin");
   const requestOrigin = new URL(c.req.url).origin;
   const isHtmx = c.req.header("HX-Request") === "true";
@@ -845,7 +847,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
 
   const db = drizzle(c.env.DB);
 
-  const rateLimitKey = `fio_rate_limit:${vs}`;
+  const rateLimitKey = `fio_rate_limit:${ref}`;
   const lastCheck = await c.env.KV.get(rateLimitKey);
   if (lastCheck) {
     const waitMs = FIO_RATE_LIMIT_MS - (Date.now() - Number(lastCheck));
@@ -857,16 +859,18 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     expirationTtl: fioRateLimitTtlSeconds(),
   });
 
-  const rows = await db
-    .select()
-    .from(purchase)
-    .where(eq(purchase.variableSymbol, vs))
-    .limit(1);
+  // Stejný lookup jako pay/proforma: token větev je nehádatelná, legacy VS
+  // podléhá per-IP limitu, aby nešel VS prostor enumerovat a číst z odpovědí
+  // PII kupujícího (oprava IDOR).
+  const found = await findPurchaseByPayRef(c, db, ref);
 
-  if (rows.length === 0) {
+  if (found === "rate_limited") {
+    return c.html(<VerifyRateLimit waitSeconds={60} />);
+  }
+  if (!found) {
     return c.html(<VerifyError message="Objednávka nenalezena." />);
   }
-  const p = rows[0];
+  const p = found;
 
   if (p.status === "active") {
     return c.html(<VerifySuccess email={p.email} />);
