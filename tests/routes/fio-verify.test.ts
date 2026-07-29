@@ -33,8 +33,21 @@ describe("POST /api/fio/verify/:vs", () => {
     expect(res.status).toBe(403);
   });
 
-  it("uses a rate-limit TTL derived from FIO_RATE_LIMIT_MS", () => {
-    expect(fioRateLimitTtlSecondsForTest()).toBe(35);
+  it("uses a rate-limit TTL that KV accepts (min 60s)", () => {
+    // KV vrací 400 na expirationTtl < 60 → verify endpoint padal na 500.
+    expect(fioRateLimitTtlSecondsForTest()).toBeGreaterThanOrEqual(60);
+  });
+
+  it("does not 500 on the KV rate-limit write", async () => {
+    // Regrese: expirationTtl 35 s KV odmítal (400), výjimka probublala do
+    // globálního handleru a uživatel místo výsledku ověření dostal 500.
+    const res = await SELF.fetch("https://test.local/api/fio/verify/33990103", {
+      method: "POST",
+      headers: { "HX-Request": "true", "CF-Connecting-IP": "1.2.3.4" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Objednávka nenalezena.");
   });
 
   it("activates a pending purchase only once", async () => {
