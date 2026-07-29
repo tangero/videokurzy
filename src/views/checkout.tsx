@@ -359,9 +359,9 @@ export const CheckoutSelect: FC<{
 
 export interface PaymentDetailsProps {
   variableSymbol: string;
-  // Nehádatelný token pro odkaz na proforma stránku (oprava IDOR). Fallback
-  // na VS jen u starých objednávek bez tokenu.
-  proformaRef: string;
+  // Nehádatelný token pro odkazy na proforma stránku a verify endpoint
+  // (oprava IDOR). Fallback na VS jen u starých objednávek bez tokenu.
+  payRef: string;
   amount: number;
   account: string;
   iban: string;
@@ -495,7 +495,7 @@ export const PaymentDetails: FC<PaymentDetailsProps> = (p) => {
           <div id="verify-result"></div>
           <div class="flex flex-col sm:flex-row gap-3">
             <button
-              hx-post={`/api/fio/verify/${p.variableSymbol}`}
+              hx-post={`/api/fio/verify/${p.payRef}`}
               hx-target="#verify-result"
               hx-swap="innerHTML"
               class="flex-1 bg-emerald-700 text-white font-semibold px-6 py-3 rounded-lg hover:bg-emerald-800 transition-colors min-h-[44px]"
@@ -504,7 +504,7 @@ export const PaymentDetails: FC<PaymentDetailsProps> = (p) => {
             </button>
             {p.proformaNumber && (
               <a
-                href={`/checkout/proforma/${p.proformaRef}`}
+                href={`/checkout/proforma/${p.payRef}`}
                 target="_blank"
                 rel="noopener"
                 class="flex-1 text-center bg-white border border-gray-300 text-gray-900 font-semibold px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors min-h-[44px]"
