@@ -49,7 +49,7 @@ import {
   type AppliedDiscount,
 } from "../lib/discount";
 import { generateQRSvg } from "../lib/qr";
-import { sendEmail, fioPendingHtml, purchaseConfirmedHtml, adminNewOrgHtml } from "../lib/email";
+import { sendEmail, fioPendingHtml, purchaseConfirmedHtml, isConsumerPurchase, adminNewOrgHtml } from "../lib/email";
 import { Layout } from "../views/layout";
 import {
   CheckoutSelect,
@@ -1009,7 +1009,11 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     sendEmail(c.env, {
       to: p.email,
       subject: "Platba přijata — přihlaste se do kurzu",
-      html: purchaseConfirmedHtml(`${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`, p.type as "individual" | "organization"),
+      html: purchaseConfirmedHtml(
+        `${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
+        p.type as "individual" | "organization",
+        isConsumerPurchase(p),
+      ),
     })
   );
 

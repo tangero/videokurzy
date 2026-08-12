@@ -10,7 +10,7 @@ import { maskEmail } from "./lib/errors";
 import { escapeHtml } from "./lib/markdown";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
 import { purchaseToBillingSnapshot } from "./lib/invoicing/jobs";
-import { sendEmail } from "./lib/email";
+import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase } from "./lib/email";
 import { ADMIN_EMAILS } from "./config/admin";
 import type { Env } from "./types";
 
@@ -375,6 +375,20 @@ async function handleCheckoutCompleted(
       { type: "individual", paymentMethod: "stripe" }
     );
 
+    // Potvrzení nákupu s poučením o odstoupení. Resend automation výše je
+    // marketingová sekvence, ne splnění § 1824a — poučení musí odejít z naší
+    // šablony, stejně jako u FIO větve. Bez tohohle e-mailu by Stripe zákazník
+    // poučení na trvalém nosiči nedostal vůbec.
+    await sendEmail(env, {
+      to: customerEmail.toLowerCase(),
+      subject: "Platba přijata — přihlaste se do kurzu",
+      html: purchaseConfirmedHtml(
+        `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(customerEmail.toLowerCase())}`,
+        "individual",
+        isConsumerPurchase(billing),
+      ),
+    });
+
     await enqueueCheckoutInvoice(db, env, {
       sessionId,
       email: customerEmail.toLowerCase(),
@@ -431,6 +445,19 @@ async function handleCheckoutCompleted(
       customerEmail.toLowerCase(),
       { type: "organization", domain, paymentMethod: "stripe" }
     );
+
+    // Potvrzení nákupu (viz komentář u B2C větve). Poučení o odstoupení se
+    // přiloží jen tehdy, kupuje-li zákazník jako spotřebitel — u firemní
+    // licence na IČO mu § 1829 nesvědčí.
+    await sendEmail(env, {
+      to: customerEmail.toLowerCase(),
+      subject: "Platba přijata — přihlaste se do kurzu",
+      html: purchaseConfirmedHtml(
+        `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(customerEmail.toLowerCase())}`,
+        "organization",
+        isConsumerPurchase(billing),
+      ),
+    });
 
     await enqueueCheckoutInvoice(db, env, {
       sessionId,

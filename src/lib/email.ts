@@ -120,7 +120,18 @@ export function fioPendingHtml(
 }
 
 /** Po potvrzení platby — magic link k přihlášení. */
-export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "organization"): string {
+/**
+ * Potvrzení nákupu. `isConsumer` rozhoduje, zda se přiloží poučení o odstoupení —
+ * NEODVOZUJ ho z `type`: to je typ licence, ne postavení kupujícího. Jednotlivec
+ * nakupující na IČO je podnikatel a spotřebitelské poučení mu nepřísluší,
+ * zatímco individuální licence bez IČO je spotřebitelský nákup. Volající proto
+ * předává příznak odvozený z toho, zda objednávka nese firemní údaje.
+ */
+export function purchaseConfirmedHtml(
+  loginUrl: string,
+  type: "individual" | "organization",
+  isConsumer: boolean,
+): string {
   const typeLabel = type === "organization" ? "firemní licence" : "roční přístup";
   return emailWrapper(`
     <p style="font-size: 16px; line-height: 1.5;">Platba přijata — ${typeLabel} je aktivní!</p>
@@ -129,7 +140,17 @@ export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "or
     <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
       Dotazy? Odpovězte na tento email — píše vám Andrea Maloveczká.
     </p>
-    ${type === "individual" ? withdrawalNoticeBlock() : ""}`);
+    ${isConsumer ? withdrawalNoticeBlock() : ""}`);
+}
+
+/**
+ * Kupuje zákazník jako spotřebitel? Rozhoduje, zda objednávka nese IČO — nákup
+ * na firmu není spotřebitelská smlouva a § 1829 se na něj nevztahuje. Shodné
+ * kritérium používá čl. 4 obchodních podmínek ("rozhoduje postavení kupujícího,
+ * ne typ licence").
+ */
+export function isConsumerPurchase(p: { companyIco?: string | null }): boolean {
+  return !p.companyIco;
 }
 
 /**
