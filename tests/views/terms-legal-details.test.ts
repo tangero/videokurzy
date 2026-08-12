@@ -39,8 +39,9 @@ describe("obchodní podmínky — právní náležitosti", () => {
 
   it("obsahuje vzorový formulář pro odstoupení", async () => {
     const html = await terms();
-    // § 1820 odst. 1 písm. f) obč. zák. + nařízení vlády č. 363/2013 Sb.:
-    // poučení o odstoupení musí zahrnovat vzorový formulář.
+    // § 1820 odst. 1 písm. f) obč. zák. + nařízení vlády č. 29/2023 Sb.
+    // (nahradilo zrušené 363/2013 Sb. k 18. 2. 2023): poučení o odstoupení
+    // musí zahrnovat vzorový formulář.
     expect(html).toContain('id="formular-odstoupeni"');
     expect(html).toMatch(/Vzorový formulář/i);
     expect(html).toMatch(/odstupuji od smlouvy/i);

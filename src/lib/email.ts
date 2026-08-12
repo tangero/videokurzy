@@ -128,7 +128,48 @@ export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "or
     ${primaryButton(loginUrl, "Přihlásit se do kurzu")}
     <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
       Dotazy? Odpovězte na tento email — píše vám Andrea Maloveczká.
-    </p>`);
+    </p>
+    ${type === "individual" ? withdrawalNoticeBlock() : ""}`);
+}
+
+/**
+ * Poučení o právu na odstoupení + vzorový formulář, přikládané k potvrzení
+ * nákupu. § 1824a odst. 1 obč. zák. vyžaduje předání na TRVALÉM NOSIČI — web
+ * s podmínkami ho nesplňuje, protože ho lze kdykoli změnit; e-mail ano.
+ * Vzorový formulář předepisuje nařízení vlády č. 29/2023 Sb. (nahradilo zrušené
+ * 363/2013 Sb. k 18. 2. 2023).
+ *
+ * Jen pro B2C: § 1829 svědčí spotřebiteli, ne firmě nakupující na IČO.
+ */
+function withdrawalNoticeBlock(): string {
+  return `
+    <hr style="border: none; border-top: 1px solid ${DIVIDER}; margin: 32px 0;">
+    <h2 style="font-size: 15px; font-weight: 600; margin: 0 0 8px;">Poučení o právu na odstoupení od smlouvy</h2>
+    <p style="font-size: 13px; color: #4b5563; line-height: 1.6; margin: 0 0 8px;">
+      Máte právo odstoupit od smlouvy do 14 dnů ode dne jejího uzavření, a to bez
+      udání důvodu. Toto právo vám zůstává i poté, co jste si kurzy zpřístupnil(a)
+      nebo zhlédl(a) — zákonnou výjimku pro digitální obsah neuplatňujeme.
+    </p>
+    <p style="font-size: 13px; color: #4b5563; line-height: 1.6; margin: 0 0 8px;">
+      Odstoupení stačí odeslat před uplynutím lhůty e-mailem na
+      <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a> nebo poštou
+      na adresu Patrick Zandl, U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará
+      Boleslav. Postačí jakékoli jednoznačné prohlášení; formulář níže je jen
+      pomůcka a jeho použití není povinné. Peníze vrátíme do 14 dnů od doručení
+      odstoupení stejným způsobem, jakým jsme je přijali.
+    </p>
+    <div style="font-size: 13px; color: #4b5563; line-height: 1.7; background: #f9fafb; border-left: 3px solid ${DIVIDER}; padding: 12px 16px; margin: 12px 0;">
+      <strong>Vzorový formulář pro odstoupení od smlouvy</strong><br><br>
+      Adresát: Patrick Zandl, U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará Boleslav, patrick@vibecoding.cz<br><br>
+      Oznamuji, že tímto odstupuji od smlouvy o poskytnutí přístupu k videokurzům na kurzy.vibecoding.cz.<br><br>
+      Datum objednání: …<br>
+      Jméno a příjmení spotřebitele: …<br>
+      Adresa spotřebitele: …<br>
+      E-mail použitý při objednávce: …<br>
+      Variabilní symbol nebo číslo dokladu: …<br>
+      Podpis spotřebitele (pouze pokud je formulář zasílán v listinné podobě): …<br>
+      Datum: …
+    </div>`;
 }
 
 /**
