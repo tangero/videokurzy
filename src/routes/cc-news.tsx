@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { and, desc, eq } from "drizzle-orm";
 import { approveItem, articleRepoPath, draftKvKey, publishedKvKey } from "../lib/cc-news/draft";
+import { fixDocLinksInMarkdown } from "../lib/cc-news/editor";
 import { ccNewsItem } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { renderMarkdown, escapeHtml } from "../lib/markdown";
@@ -215,7 +216,7 @@ ccNewsRoutes.get("/novinky-cc/:slug", async (c) => {
     <CcNewsArticlePage
       user={{ name: user.name ?? null, email: user.email }}
       title={title ?? row.weekLabel ?? "Novinky v Claude Code"}
-      articleHtml={renderMarkdown(stripFrontMatter(markdown))}
+      articleHtml={renderMarkdown(fixDocLinksInMarkdown(stripFrontMatter(markdown)))}
     />,
   );
 });
@@ -237,7 +238,7 @@ ccNewsRoutes.get("/internal/cc-news/draft/:id", async (c) => {
     pageShell(
       "Náhled konceptu — Novinky v Claude Code",
       `<p style="color:#b45309"><strong>Koncept (zatím nepublikováno).</strong> Úpravy se dělají na GitHubu; po schválení se publikuje.</p>` +
-        renderMarkdown(stripFrontMatter(draft))
+        renderMarkdown(fixDocLinksInMarkdown(stripFrontMatter(draft)))
     )
   );
 });

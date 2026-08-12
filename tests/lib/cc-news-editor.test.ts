@@ -6,6 +6,8 @@ import {
   renderArticle,
   buildEditorSystemPrompt,
   stripWrappingFence,
+  normalizeDocUrl,
+  fixDocLinksInMarkdown,
   type DigestFeature,
 } from "../../src/lib/cc-news/editor";
 
@@ -199,5 +201,44 @@ describe("cc-news editor — renderArticle (D-1 LLM flag)", () => {
     expect(sp).toMatch(/vykání/);
     expect(sp).toMatch(/Pomlčky s mezerami/);
     expect(sp).toMatch(/safe mode/);
+  });
+});
+
+// Zdroj (Mintlify export na code.claude.com) posílá v digestu href se zdvojeným
+// prefixem `/docs/docs/en/…`, který na webu končí 404. Normalizujeme.
+describe("normalizeDocUrl / fixDocLinksInMarkdown", () => {
+  it("odstraní zdvojený /docs/ z relativního href", () => {
+    expect(normalizeDocUrl("/docs/docs/en/permission-modes#eliminate-prompts-with-auto-mode")).toBe(
+      "https://code.claude.com/docs/en/permission-modes#eliminate-prompts-with-auto-mode"
+    );
+  });
+
+  it("nechá správný relativní href beze změny", () => {
+    expect(normalizeDocUrl("/docs/en/sub-agents#x")).toBe("https://code.claude.com/docs/en/sub-agents#x");
+  });
+
+  it("opraví i absolutní URL a jiné domény nechá být", () => {
+    expect(normalizeDocUrl("https://code.claude.com/docs/docs/en/worktrees")).toBe(
+      "https://code.claude.com/docs/en/worktrees"
+    );
+    expect(normalizeDocUrl("https://claude.ai/admin-settings/cloud-environments")).toBe(
+      "https://claude.ai/admin-settings/cloud-environments"
+    );
+  });
+
+  it("opraví odkazy v hotovém markdownu (starší články v KV)", () => {
+    const md =
+      "text [a](https://code.claude.com/docs/docs/en/sandboxing#mask-credential-files) a " +
+      "[b](https://code.claude.com/docs/en/ultraplan)";
+    expect(fixDocLinksInMarkdown(md)).toBe(
+      "text [a](https://code.claude.com/docs/en/sandboxing#mask-credential-files) a " +
+        "[b](https://code.claude.com/docs/en/ultraplan)"
+    );
+  });
+
+  it("je idempotentní", () => {
+    const md = "[a](https://code.claude.com/docs/docs/en/x)";
+    const once = fixDocLinksInMarkdown(md);
+    expect(fixDocLinksInMarkdown(once)).toBe(once);
   });
 });

@@ -2431,6 +2431,37 @@ admin.post("/admin/api/cc-news/article-body", async (c) => {
   return c.json({ ok: true });
 });
 
+// Jednorázová oprava odkazů dokumentace ve VŠECH vydáních: zdroj na
+// code.claude.com posílá v digestu href se zdvojeným prefixem
+// (`/docs/docs/en/…`), takže starší články mají v KV nefunkční odkazy.
+// Render je opravuje za běhu (fixDocLinksInMarkdown), tímhle je opravíme
+// i v úložišti, ať jsou data čistá. Idempotentní.
+admin.post("/admin/api/cc-news/fix-doc-links", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { ccNewsItem } = await import("../db/schema");
+  const { draftKvKey, publishedKvKey } = await import("../lib/cc-news/draft");
+  const { fixDocLinksInMarkdown } = await import("../lib/cc-news/editor");
+
+  const rows = await db.select({ id: ccNewsItem.id, weekLabel: ccNewsItem.weekLabel }).from(ccNewsItem);
+  const fixed: Array<{ id: string; weekLabel: string | null; keys: string[] }> = [];
+
+  for (const row of rows) {
+    const keys: string[] = [];
+    for (const key of [publishedKvKey(row.id), draftKvKey(row.id)]) {
+      const md = await c.env.KV.get(key);
+      if (md === null) continue;
+      const next = fixDocLinksInMarkdown(md);
+      if (next !== md) {
+        await c.env.KV.put(key, next);
+        keys.push(key);
+      }
+    }
+    if (keys.length > 0) fixed.push({ id: row.id, weekLabel: row.weekLabel, keys });
+  }
+
+  return c.json({ ok: true, scanned: rows.length, fixed });
+});
+
 // Náhled TĚLA článku tak, jak ho uvidí čtenář na /novinky-cc/:slug (stejný
 // render jako veřejná stránka). Needitující, jen vyrenderuje dodaný markdown.
 admin.post("/admin/api/cc-news/article-preview", async (c) => {

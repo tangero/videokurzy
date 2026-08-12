@@ -27,6 +27,28 @@ export interface ParsedDigest {
   minorWins: string[];      // drobnosti („Other wins")
 }
 
+const DOC_BASE = "https://code.claude.com";
+
+/**
+ * Absolutní URL dokumentace z href v digestu. Zdroj (Mintlify export na
+ * code.claude.com) posílá odkazy s zdvojeným prefixem `/docs/docs/en/…`,
+ * který na webu vede na 404 — normalizujeme na `/docs/en/…`. Platí i pro
+ * plné URL, kde se stejná chyba objevuje.
+ */
+export function normalizeDocUrl(href: string): string {
+  const fixed = href.replace(/(?:\/docs)+\/docs\/en\//, "/docs/en/");
+  return fixed.startsWith("http") ? fixed : `${DOC_BASE}${fixed}`;
+}
+
+/**
+ * Opraví zdvojený `/docs/docs/` v už hotovém markdownu (starší články uložené
+ * v KV vznikly před normalizací a mají v odkazech chybu ze zdroje). Aplikuje se
+ * při renderu, takže nevyžaduje přepis KV.
+ */
+export function fixDocLinksInMarkdown(md: string): string {
+  return md.replace(/code\.claude\.com(?:\/docs)+\/docs\/en\//g, "code.claude.com/docs/en/");
+}
+
 const stripTags = (s: string): string =>
   s.replace(/<[^>]+>/g, "").replace(/`([^`]+)`/g, "$1").replace(/\s+/g, " ").trim();
 
@@ -108,7 +130,7 @@ function htmlItemToMarkdown(html: string): string {
     /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
     (_m, href, text) => {
       const label = stripTags(text);
-      const url = href.startsWith("http") ? href : `${DOC_BASE}${href}`;
+      const url = normalizeDocUrl(href);
       return label ? `[${label}](${url})` : "";
     }
   );
@@ -136,10 +158,8 @@ export function orderByWeight(features: DigestFeature[]): DigestFeature[] {
     .map((x) => x.f);
 }
 
-const DOC_BASE = "https://code.claude.com";
-
 const docUrl = (link: string | null): string | null =>
-  link ? (link.startsWith("http") ? link : `${DOC_BASE}${link}`) : null;
+  link ? normalizeDocUrl(link) : null;
 
 /**
  * Deterministická KOSTRA článku dle redakcni-pravidla.md. Sestaví validní
@@ -250,7 +270,8 @@ export async function renderArticle(
   const system = buildEditorSystemPrompt();
   const llm = opts.llm ?? defaultLlm(env);
   const refined = await llm(system, skeleton);
-  return { markdown: stripWrappingFence(refined) + "\n", usedLlm: true };
+  // Pojistka: LLM odkazy opisuje, ať se do výstupu nedostane zdvojený /docs/.
+  return { markdown: fixDocLinksInMarkdown(stripWrappingFence(refined)) + "\n", usedLlm: true };
 }
 
 /** Systémový prompt nesoucí redakční + jazyková pravidla pro LLM vrstvu. */

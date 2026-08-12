@@ -16,6 +16,7 @@ import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { purchase, organization, user, newsletterSuppression, ccNewsItem } from "../../db/schema";
 import { maskEmail } from "../errors";
+import { fixDocLinksInMarkdown } from "./editor";
 
 type Db = ReturnType<typeof drizzle>;
 
@@ -371,8 +372,10 @@ export async function sendCcNewsNewsletterForItem(
 
   // Obsah z publikované verze (rozesíláme jen to, co je živé na webu).
   const { publishedKvKey } = await import("./draft");
-  const articleMarkdown = await env.KV.get(publishedKvKey(itemId));
-  if (!articleMarkdown) return { skipped: true, reason: "no-content" };
+  const publishedMarkdown = await env.KV.get(publishedKvKey(itemId));
+  if (!publishedMarkdown) return { skipped: true, reason: "no-content" };
+  // Starší články v KV mají v odkazech zdvojený `/docs/docs/` ze zdroje.
+  const articleMarkdown = fixDocLinksInMarkdown(publishedMarkdown);
 
   // Atomický zámek (přeskoč při force). 0 změněných řádků = už rozesláno/běží.
   if (!opts.force) {
