@@ -120,7 +120,18 @@ export function fioPendingHtml(
 }
 
 /** Po potvrzení platby — magic link k přihlášení. */
-export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "organization"): string {
+/**
+ * Potvrzení nákupu. `isConsumer` rozhoduje, zda se přiloží poučení o odstoupení —
+ * NEODVOZUJ ho z `type`: to je typ licence, ne postavení kupujícího. Jednotlivec
+ * nakupující na IČO je podnikatel a spotřebitelské poučení mu nepřísluší,
+ * zatímco individuální licence bez IČO je spotřebitelský nákup. Volající proto
+ * předává příznak odvozený z toho, zda objednávka nese firemní údaje.
+ */
+export function purchaseConfirmedHtml(
+  loginUrl: string,
+  type: "individual" | "organization",
+  isConsumer: boolean,
+): string {
   const typeLabel = type === "organization" ? "firemní licence" : "roční přístup";
   return emailWrapper(`
     <p style="font-size: 16px; line-height: 1.5;">Platba přijata — ${typeLabel} je aktivní!</p>
@@ -128,7 +139,58 @@ export function purchaseConfirmedHtml(loginUrl: string, type: "individual" | "or
     ${primaryButton(loginUrl, "Přihlásit se do kurzu")}
     <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
       Dotazy? Odpovězte na tento email — píše vám Andrea Maloveczká.
-    </p>`);
+    </p>
+    ${isConsumer ? withdrawalNoticeBlock() : ""}`);
+}
+
+/**
+ * Kupuje zákazník jako spotřebitel? Rozhoduje, zda objednávka nese IČO — nákup
+ * na firmu není spotřebitelská smlouva a § 1829 se na něj nevztahuje. Shodné
+ * kritérium používá čl. 4 obchodních podmínek ("rozhoduje postavení kupujícího,
+ * ne typ licence").
+ */
+export function isConsumerPurchase(p: { companyIco?: string | null }): boolean {
+  return !p.companyIco;
+}
+
+/**
+ * Poučení o právu na odstoupení + vzorový formulář, přikládané k potvrzení
+ * nákupu. § 1824a odst. 1 obč. zák. vyžaduje předání na TRVALÉM NOSIČI — web
+ * s podmínkami ho nesplňuje, protože ho lze kdykoli změnit; e-mail ano.
+ * Vzorový formulář předepisuje nařízení vlády č. 29/2023 Sb. (nahradilo zrušené
+ * 363/2013 Sb. k 18. 2. 2023).
+ *
+ * Jen pro B2C: § 1829 svědčí spotřebiteli, ne firmě nakupující na IČO.
+ */
+function withdrawalNoticeBlock(): string {
+  return `
+    <hr style="border: none; border-top: 1px solid ${DIVIDER}; margin: 32px 0;">
+    <h2 style="font-size: 15px; font-weight: 600; margin: 0 0 8px;">Poučení o právu na odstoupení od smlouvy</h2>
+    <p style="font-size: 13px; color: #4b5563; line-height: 1.6; margin: 0 0 8px;">
+      Máte právo odstoupit od smlouvy do 14 dnů ode dne jejího uzavření, a to bez
+      udání důvodu. Toto právo vám zůstává i poté, co jste si kurzy zpřístupnil(a)
+      nebo zhlédl(a) — zákonnou výjimku pro digitální obsah neuplatňujeme.
+    </p>
+    <p style="font-size: 13px; color: #4b5563; line-height: 1.6; margin: 0 0 8px;">
+      Odstoupení stačí odeslat před uplynutím lhůty e-mailem na
+      <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a> nebo poštou
+      na adresu Patrick Zandl, U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará
+      Boleslav. Postačí jakékoli jednoznačné prohlášení; formulář níže je jen
+      pomůcka a jeho použití není povinné. Peníze vrátíme do 14 dnů od doručení
+      odstoupení stejným způsobem, jakým jsme je přijali.
+    </p>
+    <div style="font-size: 13px; color: #4b5563; line-height: 1.7; background: #f9fafb; border-left: 3px solid ${DIVIDER}; padding: 12px 16px; margin: 12px 0;">
+      <strong>Vzorový formulář pro odstoupení od smlouvy</strong><br><br>
+      Adresát: Patrick Zandl, U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará Boleslav, patrick@vibecoding.cz<br><br>
+      Oznamuji, že tímto odstupuji od smlouvy o poskytnutí přístupu k videokurzům na kurzy.vibecoding.cz.<br><br>
+      Datum objednání: …<br>
+      Jméno a příjmení spotřebitele: …<br>
+      Adresa spotřebitele: …<br>
+      E-mail použitý při objednávce: …<br>
+      Variabilní symbol nebo číslo dokladu: …<br>
+      Podpis spotřebitele (pouze pokud je formulář zasílán v listinné podobě): …<br>
+      Datum: …
+    </div>`;
 }
 
 /**

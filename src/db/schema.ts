@@ -135,6 +135,22 @@ export const purchase = sqliteTable("purchase", {
   // Souhlas s marketingem v okamžiku checkoutu. Konverze se reportuje jen při true
   // (právní základ pro CAPI/Offline Conversions = souhlas, ne plnění smlouvy).
   marketingConsent: integer("marketingConsent", { mode: "boolean" }).notNull().default(false),
+  // Výslovný souhlas se zpřístupněním digitálního obsahu před uplynutím 14denní
+  // lhůty pro odstoupení + potvrzení poučení o zániku tohoto práva
+  // (§ 1837 písm. l) obč. zák.). Povinné pole checkoutu — bez něj objednávka
+  // neprojde, takže u nových nákupů je vždy true. DŮKAZNÍ ZÁZNAM: nepřepisovat.
+  // Staré objednávky (před m0033) mají false + NULL čas — tam souhlas nebyl
+  // vybrán a právo na odstoupení jim zůstává v plném rozsahu.
+  immediateAccessConsent: integer("immediateAccessConsent", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  // Čas udělení souhlasu výše. Nullable jen kvůli starým objednávkám.
+  immediateAccessConsentAt: integer("immediateAccessConsentAt", { mode: "timestamp" }),
+  // Kdy odešla onboardingová Resend automation událost (`purchase.completed`).
+  // Drží idempotenci napříč retry: sendResendEvent sám žádnou nemá, a odvozovat
+  // ji z toho, zda insert vrátil řádek, znamená zaměnit „nákup byl vložen" za
+  // „událost byla doručena" — po selhání události by ji retry už nikdy neposlal.
+  onboardingEventSentAt: integer("onboardingEventSentAt", { mode: "timestamp" }),
   // Match signály zachycené v checkoutu (lepší atribuce). Vše nullable.
   // fbc = serverový formát fb.1.<ms>.<fbclid> (NE raw fbclid), fbp jen z existující cookie.
   fbc: text("fbc"),

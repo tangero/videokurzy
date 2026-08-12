@@ -315,6 +315,42 @@ export const CheckoutSelect: FC<{
             </details>
           )}
 
+          {/* Výslovná žádost o zpřístupnění obsahu před uplynutím 14denní lhůty.
+              ZÁMĚRNĚ NETVRDÍ ztrátu práva na odstoupení: to by muselo být
+              dobrovolné (§ 1837 písm. l), kdežto tenhle checkbox je podmínkou
+              nákupu — vynucené vzdání se práva je napadnutelné. Podmínky (čl. 4)
+              proto právo na odstoupení přiznávají v plném rozsahu a tenhle
+              souhlas se drží jen jako doklad, že si zákazník okamžitý přístup
+              vyžádal. `required` hlídá prohlížeč, server validuje znovu v routě.
+
+              B2B varianta o 14denní lhůtě MLČÍ — a to v CELÉ větě, včetně úvodní
+              části: § 1829 svědčí jen spotřebiteli, firemní licence se kupuje na
+              IČO. I zmínka „před uplynutím 14denní lhůty pro odstoupení" tvrdí
+              firmě, že taková lhůta existuje. Proto se větví celá formulace, ne
+              jen její druhá polovina. */}
+          <label class="flex items-start gap-2 text-sm text-gray-700 mb-3">
+            <input type="checkbox" name="immediateAccessConsent" value="1" required class="mt-1" />
+            <span>
+              {isOrg ? (
+                <>
+                  Žádám o zpřístupnění kurzů ihned po zaplacení. Na vrácení peněz
+                  se vztahuje naše{" "}
+                  <a href="/terms#refund" class="underline">garance</a>; kupujete-li
+                  jako spotřebitel, máte navíc práva podle{" "}
+                  <a href="/terms#odstoupeni" class="underline">článku 4 obchodních podmínek</a>.
+                </>
+              ) : (
+                <>
+                  Žádám o zpřístupnění kurzů ihned po zaplacení, tedy před uplynutím
+                  14denní lhůty pro odstoupení od smlouvy. Právo odstoupit od smlouvy
+                  do 14 dnů mi zůstává — viz{" "}
+                  <a href="/terms#odstoupeni" class="underline">článek 4 obchodních podmínek</a>{" "}
+                  a naše <a href="/terms#refund" class="underline">garance vrácení peněz</a>.
+                </>
+              )}
+            </span>
+          </label>
+
           {/* Marketingový souhlas pro server-side měření konverzí (Meta/Google/Seznam).
               Opt-in (nezaškrtnuto), nepovinný — bez něj se konverze nereportuje. */}
           <label class="flex items-start gap-2 text-sm text-gray-600 mb-4">

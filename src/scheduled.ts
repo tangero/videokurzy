@@ -5,7 +5,7 @@ import { sendRenewalReminders } from "./lib/renewal-reminders";
 import { sendPaymentReminders } from "./lib/payment-reminders";
 import { fetchFioTransactions, fioProxyFromEnv, matchPayment } from "./lib/fio";
 import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas";
-import { sendEmail, purchaseConfirmedHtml, paymentCancelledHtml } from "./lib/email";
+import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase, paymentCancelledHtml } from "./lib/email";
 import { sendResendEvent } from "./lib/resend";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
 import { detectRecent, defaultFetchers } from "./lib/cc-news/detect";
@@ -360,6 +360,7 @@ async function activateMatchedPurchase(
     html: purchaseConfirmedHtml(
       `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
       p.type as "individual" | "organization",
+      isConsumerPurchase(p),
     ),
   }).catch((err) => console.error(`[cron] email send failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
 

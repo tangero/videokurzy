@@ -34,6 +34,13 @@ describe("queue message dispatch", () => {
   });
 
   it("consumes invite token after Stripe activation", async () => {
+    // Potvrzovací e-mail je od opravy § 1824a povinný krok handleru: jeho
+    // selhání shodí zprávu do retry. Bez namockovaného Resendu (401) by test
+    // padal na tom, co neověřuje.
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+
     const db = drizzle(env.DB);
     await env.DB.exec("DELETE FROM discount_invite");
     await env.DB.exec("DELETE FROM purchase");
@@ -80,6 +87,7 @@ describe("queue message dispatch", () => {
       .from(purchase)
       .where(eq(purchase.stripePaymentId, "cs_test_invite_1"));
     expect(row.usedByPurchaseId).toBe(p.id);
+    fetchSpy.mockRestore();
   });
 });
 

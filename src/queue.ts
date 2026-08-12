@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
@@ -10,7 +10,7 @@ import { maskEmail } from "./lib/errors";
 import { escapeHtml } from "./lib/markdown";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
 import { purchaseToBillingSnapshot } from "./lib/invoicing/jobs";
-import { sendEmail } from "./lib/email";
+import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase } from "./lib/email";
 import { ADMIN_EMAILS } from "./config/admin";
 import type { Env } from "./types";
 
@@ -240,6 +240,125 @@ function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
 
 // Konverzní signály ze Stripe session metadata (zapsané v checkoutu
 // signalsToStripeMetadata) → na purchase, ať je reportPurchase má pro CAPI (R5).
+/**
+ * Souhlas se zpřístupněním digitálního obsahu (§ 1837 písm. l) ze Stripe metadat,
+ * kam ho zapsal checkout (`ia_consent_at`, unix sekundy). Checkbox je v checkoutu
+ * povinný, takže nová session ho má vždy — chybí jen u sessions vytvořených před
+ * nasazením a u automatických obnov předplatného, kde Stripe metadata nepřenáší.
+ * Tam vracíme false/null: souhlas prokazatelně nemáme, tak si ho nevymýšlíme.
+ */
+function extractImmediateAccessConsent(metadata: Record<string, string>) {
+  const raw = Number(metadata.ia_consent_at);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return { immediateAccessConsent: false, immediateAccessConsentAt: null };
+  }
+  return {
+    immediateAccessConsent: true,
+    immediateAccessConsentAt: new Date(raw * 1000),
+  };
+}
+
+/**
+ * Odešle onboardingovou automation událost NEJVÝŠE JEDNOU na nákup.
+ *
+ * Idempotenci drží sloupec `purchase.onboardingEventSentAt` — `sendResendEvent`
+ * žádnou nemá a odvozovat ji z toho, zda insert vrátil řádek, je chyba: to
+ * zaměňuje „nákup byl vložen" za „událost byla doručena". Když insert projde
+ * a odeslání selže, retry už řádek nevloží a onboarding by se neodeslal nikdy.
+ *
+ * Idempotenci drží ATOMICKÝ CLAIM před odesláním: `UPDATE … WHERE
+ * onboardingEventSentAt IS NULL` uspěje právě jednou, takže ani dvě souběžně
+ * doručené kopie téhož webhooku událost nepošlou dvakrát. Pouhé přečtení
+ * sloupce před odesláním by nestačilo — obě kopie by viděly NULL a obě
+ * odeslaly.
+ *
+ * Když odeslání selže, claim se VRÁTÍ (čas zpět na NULL) a funkce vyhodí
+ * chybu, aby `handleQueue` zprávu retryoval. Bez toho by se selhání jen
+ * zalogovalo, zpráva by se ackla a onboarding by zmizel — přesně ta ztráta,
+ * kterou má sloupec řešit.
+ *
+ * Zbytkové riziko: crash mezi odesláním a jeho vyhodnocením nechá claim
+ * zapsaný a událost se už nepošle. Opačná volba (claim až po odeslání) by
+ * naopak riskovala duplicitní onboarding při každém retry; u marketingové
+ * sekvence je jednou neodeslaná událost menší zlo než opakované.
+ */
+async function sendOnboardingEventOnce(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  opts: { purchaseId: number; email: string; payload: Record<string, unknown> },
+): Promise<void> {
+  // Claim: uspěje právě jeden běh. Prázdný výsledek = událost už odeslal
+  // (nebo právě odesílá) někdo jiný.
+  const claimed = await db
+    .update(purchase)
+    .set({ onboardingEventSentAt: new Date() })
+    .where(
+      and(eq(purchase.id, opts.purchaseId), isNull(purchase.onboardingEventSentAt)),
+    )
+    .returning({ id: purchase.id });
+  if (claimed.length === 0) return;
+
+  const outcome = await sendResendEvent(
+    env.RESEND_API_KEY,
+    "purchase.completed",
+    opts.email,
+    opts.payload,
+  );
+
+  if (outcome === "failed") {
+    // Server odmítl → událost prokazatelně nevznikla. Vrať claim, ať ji další
+    // pokus doručí, a eskaluj na retry zprávy; jinak by se selhání jen
+    // zalogovalo a onboarding by se ztratil.
+    await db
+      .update(purchase)
+      .set({ onboardingEventSentAt: null })
+      .where(eq(purchase.id, opts.purchaseId));
+    throw new Error(
+      `onboarding event failed for purchase ${opts.purchaseId} (${maskEmail(opts.email)})`,
+    );
+  }
+
+  if (outcome === "unknown") {
+    // Timeout / přerušené spojení: událost mohla proběhnout. Claim NEVRACÍME —
+    // opakování by znamenalo druhý onboarding, což je horší než jeden možná
+    // chybějící. Zůstává v logu k dohledání.
+    console.error(
+      `[queue] onboarding event outcome unknown for purchase ${opts.purchaseId} (${maskEmail(opts.email)}) — neopakuje se`,
+    );
+  }
+}
+
+/**
+ * Odešle potvrzení nákupu a při selhání VYHODÍ chybu, aby ji handleQueue
+ * převedl na `message.retry()`.
+ *
+ * `sendEmail` chybu polyká a vrací false — samotné `await sendEmail(...)` by
+ * tedy proběhlo „úspěšně" i při výpadku Resendu, zpráva by se ackla a poučení
+ * o odstoupení podle § 1824a by zmizelo nenávratně. Retry je bezpečný: inserty
+ * výše jsou `onConflictDoNothing` a fakturační job je idempotentní, takže
+ * opakování nevytvoří duplicity. Po 3 pokusech zpráva padne do DLQ, která
+ * pošle alert adminovi — poučení se pak dá doručit ručně.
+ */
+async function sendPurchaseConfirmationOrThrow(
+  env: Env,
+  opts: { email: string; type: "individual" | "organization"; isConsumer: boolean },
+): Promise<void> {
+  const ok = await sendEmail(env, {
+    to: opts.email,
+    subject: "Platba přijata — přihlaste se do kurzu",
+    html: purchaseConfirmedHtml(
+      `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(opts.email)}`,
+      opts.type,
+      opts.isConsumer,
+    ),
+  });
+  if (!ok) {
+    throw new Error(
+      `purchase confirmation email failed for ${maskEmail(opts.email)} (${opts.type})`,
+    );
+  }
+}
+
 function extractSignals(metadata: Record<string, string>) {
   return {
     marketingConsent: metadata.mkt_consent === "1",
@@ -310,6 +429,7 @@ async function handleCheckoutCompleted(
   const discountCode = metadata.discountCode || null;
   const billing = extractBilling(metadata);
   const signals = extractSignals(metadata);
+  const iaConsent = extractImmediateAccessConsent(metadata);
 
   // Pokud uživatel s tímto emailem už existuje (přihlásil se přes magic link
   // dřív, než webhook dorazil), navaž purchase rovnou na jeho userId.
@@ -328,7 +448,7 @@ async function handleCheckoutCompleted(
   if (metadata.type === "individual") {
     // Idempotent insert — UNIQUE on stripePaymentId
     // Platform-wide access, no courseId needed
-    await db
+    const inserted = await db
       .insert(purchase)
       .values({
         email: customerEmail.toLowerCase(),
@@ -344,16 +464,26 @@ async function handleCheckoutCompleted(
         amountPaid: paidAmountCzk,
         ...billing,
         ...signals,
+        ...iaConsent,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: purchase.id });
 
-    // Fire Resend automation event for purchase onboarding sequence
-    await sendResendEvent(
-      env.RESEND_API_KEY,
-      "purchase.completed",
-      customerEmail.toLowerCase(),
-      { type: "individual", paymentMethod: "stripe" }
-    );
+    // Onboardingová sekvence nejvýše jednou na nákup — viz sendOnboardingEventOnce.
+    const [b2cRow] = inserted.length > 0
+      ? inserted
+      : await db
+          .select({ id: purchase.id })
+          .from(purchase)
+          .where(eq(purchase.stripePaymentId, sessionId))
+          .limit(1);
+    if (b2cRow) {
+      await sendOnboardingEventOnce(db, env, {
+        purchaseId: b2cRow.id,
+        email: customerEmail.toLowerCase(),
+        payload: { type: "individual", paymentMethod: "stripe" },
+      });
+    }
 
     await enqueueCheckoutInvoice(db, env, {
       sessionId,
@@ -363,6 +493,7 @@ async function handleCheckoutCompleted(
       billing,
       eventCreated,
     });
+
   } else if (metadata.type === "organization") {
     const customFields = data.custom_fields as
       | Array<{ key: string; text?: { value: string } }>
@@ -384,7 +515,7 @@ async function handleCheckoutCompleted(
       .onConflictDoNothing();
 
     // Tracking purchase row pro slot counter a analytics. UNIQUE na stripePaymentId.
-    await db
+    const insertedOrg = await db
       .insert(purchase)
       .values({
         email: customerEmail.toLowerCase(),
@@ -400,16 +531,27 @@ async function handleCheckoutCompleted(
         amountPaid: paidAmountCzk,
         ...billing,
         ...signals,
+        ...iaConsent,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: purchase.id });
 
-    // Fire Resend automation event for B2B onboarding sequence
-    await sendResendEvent(
-      env.RESEND_API_KEY,
-      "purchase.completed",
-      customerEmail.toLowerCase(),
-      { type: "organization", domain, paymentMethod: "stripe" }
-    );
+    // Onboardingová sekvence nejvýše jednou na nákup — viz sendOnboardingEventOnce.
+    const [b2bRow] = insertedOrg.length > 0
+      ? insertedOrg
+      : await db
+          .select({ id: purchase.id })
+          .from(purchase)
+          .where(eq(purchase.stripePaymentId, sessionId))
+          .limit(1);
+    if (b2bRow) {
+      await sendOnboardingEventOnce(db, env, {
+        purchaseId: b2bRow.id,
+        email: customerEmail.toLowerCase(),
+        payload: { type: "organization", domain, paymentMethod: "stripe" },
+      });
+    }
+
 
     await enqueueCheckoutInvoice(db, env, {
       sessionId,
@@ -449,6 +591,19 @@ async function handleCheckoutCompleted(
       conversionOccurredAt,
     });
   }
+
+  // Potvrzení nákupu s poučením o odstoupení posíláme jako POSLEDNÍ krok.
+  // Resend automation výše je marketingová sekvence, ne splnění § 1824a —
+  // poučení musí odejít z naší šablony, stejně jako u FIO větve. Selhání
+  // vyhodí chybu → handleQueue zprávu retryuje, takže se poučení neztratí;
+  // všechny předchozí kroky jsou idempotentní, takže je retry bezpečně
+  // zopakuje. Poslední v pořadí proto, aby retry kvůli e-mailu nezdržoval
+  // aktivaci přístupu ani fakturaci.
+  await sendPurchaseConfirmationOrThrow(env, {
+    email: customerEmail.toLowerCase(),
+    type: metadata.type === "organization" ? "organization" : "individual",
+    isConsumer: isConsumerPurchase(billing),
+  });
 }
 
 async function handleSubscriptionDeleted(

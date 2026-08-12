@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import type { Env, Variables } from "../types";
 import { purchase } from "../db/schema";
 import { ACCESS_DURATION_DAYS } from "../config/payment";
-import { sendEmail, purchaseConfirmedHtml } from "../lib/email";
+import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase } from "../lib/email";
 import { Layout } from "../views/layout";
 
 const devRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -50,7 +50,11 @@ async function devMarkPaid(c: DevContext) {
     sendEmail(c.env, {
       to: p.email,
       subject: "Platba přijata — přihlaste se do kurzu (DEV)",
-      html: purchaseConfirmedHtml(`${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`, p.type as "individual" | "organization"),
+      html: purchaseConfirmedHtml(
+        `${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
+        p.type as "individual" | "organization",
+        isConsumerPurchase(p),
+      ),
     })
   );
 
