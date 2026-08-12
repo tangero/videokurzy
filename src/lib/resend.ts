@@ -5,12 +5,22 @@
  * se nikdy nespustí (Runs zůstanou na 0).
  * @see https://resend.com/docs/api-reference/events/send-event
  */
+/**
+ * Výsledek pokusu o odeslání události.
+ *
+ * `"failed"` a `"unknown"` se musí rozlišovat: u `"failed"` server odpověděl
+ * chybou, takže událost prokazatelně neprošla a je bezpečné ji poslat znovu.
+ * U `"unknown"` (timeout, přerušené spojení) se požadavek mohl doručit a jen
+ * se ztratila odpověď — opakování by pak znamenalo druhý onboarding.
+ */
+export type ResendEventOutcome = "sent" | "failed" | "unknown";
+
 export async function sendResendEvent(
   apiKey: string,
   event: string,
   email: string,
   payload?: Record<string, unknown>
-): Promise<boolean> {
+): Promise<ResendEventOutcome> {
   try {
     const res = await fetch("https://api.resend.com/events/send", {
       method: "POST",
@@ -22,12 +32,16 @@ export async function sendResendEvent(
     });
     if (!res.ok) {
       console.error(`Resend event '${event}' failed: ${res.status}`);
-      return false;
+      // 5xx a 429 mohou znamenat, že událost přesto proběhla (proxy/timeout na
+      // straně serveru), takže je bereme jako neurčité; 4xx je jednoznačné
+      // odmítnutí (validace, autentizace) a událost prokazatelně nevznikla.
+      return res.status >= 500 || res.status === 429 ? "unknown" : "failed";
     }
-    return true;
+    return "sent";
   } catch (err) {
+    // Síťová chyba: nevíme, jestli požadavek dorazil.
     console.error(`Resend event '${event}' error:`, err);
-    return false;
+    return "unknown";
   }
 }
 

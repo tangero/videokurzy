@@ -298,21 +298,32 @@ async function sendOnboardingEventOnce(
     .returning({ id: purchase.id });
   if (claimed.length === 0) return;
 
-  const ok = await sendResendEvent(
+  const outcome = await sendResendEvent(
     env.RESEND_API_KEY,
     "purchase.completed",
     opts.email,
     opts.payload,
   );
-  if (!ok) {
-    // Vrať claim, ať další pokus událost doručí, a eskaluj na retry zprávy —
-    // jinak by se selhání jen zalogovalo a onboarding by se ztratil.
+
+  if (outcome === "failed") {
+    // Server odmítl → událost prokazatelně nevznikla. Vrať claim, ať ji další
+    // pokus doručí, a eskaluj na retry zprávy; jinak by se selhání jen
+    // zalogovalo a onboarding by se ztratil.
     await db
       .update(purchase)
       .set({ onboardingEventSentAt: null })
       .where(eq(purchase.id, opts.purchaseId));
     throw new Error(
       `onboarding event failed for purchase ${opts.purchaseId} (${maskEmail(opts.email)})`,
+    );
+  }
+
+  if (outcome === "unknown") {
+    // Timeout / přerušené spojení: událost mohla proběhnout. Claim NEVRACÍME —
+    // opakování by znamenalo druhý onboarding, což je horší než jeden možná
+    // chybějící. Zůstává v logu k dohledání.
+    console.error(
+      `[queue] onboarding event outcome unknown for purchase ${opts.purchaseId} (${maskEmail(opts.email)}) — neopakuje se`,
     );
   }
 }

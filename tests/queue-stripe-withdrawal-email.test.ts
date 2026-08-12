@@ -119,7 +119,7 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
 
   it("doručí onboarding při retry, když poprvé selhal i s e-mailem", async () => {
     // Scénář, který guard navázaný na insert řešit neuměl: insert projde,
-    // odeslání události selže (sendResendEvent chybu polyká) a e-mail selže
+    // odeslání události selže (400 = prokazatelné odmítnutí) a e-mail selže
     // taky → retry. Při něm už řádek existuje, takže guard „vložil se řádek?"
     // by událost přeskočil navždy. Idempotenci proto drží onboardingEventSentAt.
     const events: string[] = [];
@@ -127,7 +127,7 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (url.includes("resend.com/events/send")) {
-        if (failAll) return new Response("boom", { status: 500 });
+        if (failAll) return new Response("bad request", { status: 400 });
         events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
         return new Response("{}", { status: 200 });
       }
@@ -158,7 +158,7 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (url.includes("resend.com/events/send")) {
-        if (failEvent) return new Response("boom", { status: 500 });
+        if (failEvent) return new Response("bad request", { status: 400 });
         events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
       }
       return new Response("{}", { status: 200 }); // e-mail projde vždy
@@ -195,6 +195,55 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
       runCheckout({ type: "individual" }, email),
     ]);
 
+    expect(events).toEqual(["purchase.completed"]);
+  });
+
+  it("při neurčitém výsledku onboarding neopakuje", async () => {
+    // Timeout / přerušené spojení: událost se mohla doručit a jen se ztratila
+    // odpověď. Opakování by znamenalo druhý onboarding, takže claim zůstává.
+    const events: string[] = [];
+    let networkError = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/events/send")) {
+        if (networkError) throw new TypeError("network error");
+        events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const email = "stripe-neurcity@example.cz";
+    const first = await runCheckout({ type: "individual" }, email);
+    // Zpráva projde — neurčitý výsledek NENÍ důvod k retry.
+    expect(first.ack).toHaveBeenCalledOnce();
+    expect(first.retry).not.toHaveBeenCalled();
+
+    // Další doručení téže zprávy už událost nepošle (claim zůstal zapsaný).
+    networkError = false;
+    await runCheckout({ type: "individual" }, email);
+    expect(events).toEqual([]);
+  });
+
+  it("po 5xx onboarding zopakuje (server odpověděl, událost nevznikla)", async () => {
+    // 5xx bereme jako neurčité — server mohl událost přesto zpracovat.
+    // 4xx je naopak jednoznačné odmítnutí, tam je opakování bezpečné.
+    const events: string[] = [];
+    let reject = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/events/send")) {
+        if (reject) return new Response("bad request", { status: 400 });
+        events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const email = "stripe-odmitnuto@example.cz";
+    const first = await runCheckout({ type: "individual" }, email);
+    expect(first.retry).toHaveBeenCalledOnce();
+
+    reject = false;
+    await runCheckout({ type: "individual" }, email);
     expect(events).toEqual(["purchase.completed"]);
   });
 
