@@ -37,6 +37,19 @@ describe("obchodní podmínky — právní náležitosti", () => {
     expect(html).not.toMatch(/platformu pro řešení sporů on-?line/i);
   });
 
+  it("obsahuje vzorový formulář pro odstoupení", async () => {
+    const html = await terms();
+    // § 1820 odst. 1 písm. f) obč. zák. + nařízení vlády č. 363/2013 Sb.:
+    // poučení o odstoupení musí zahrnovat vzorový formulář.
+    expect(html).toContain('id="formular-odstoupeni"');
+    expect(html).toMatch(/Vzorový formulář/i);
+    expect(html).toMatch(/odstupuji od smlouvy/i);
+    // Adresát musí být identifikovatelný přímo z formuláře.
+    expect(html).toMatch(/Adresát/);
+    // Použití formuláře je dobrovolné — to musí být uvedeno.
+    expect(html).toMatch(/není povinné/i);
+  });
+
   it("má kotvy, na které odkazuje checkout", async () => {
     const html = await terms();
     expect(html).toContain('id="odstoupeni"');

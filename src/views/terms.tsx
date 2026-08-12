@@ -102,12 +102,40 @@ export const TermsPage: FC = () => (
         nebo zhlédl.
       </p>
       <p>
-        Odstoupení lze zaslat e-mailem na{" "}
-        <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a>.
+        Lhůta běží ode dne uzavření smlouvy. Pro dodržení lhůty stačí odstoupení
+        odeslat před jejím uplynutím. Odstoupení lze zaslat e-mailem na{" "}
+        <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a> nebo
+        poštou na adresu sídla uvedenou výše — postačí jakékoli jednoznačné
+        prohlášení, formulář níže je jen pomůcka.
+      </p>
+      <p>
         Uhrazená částka bude vrácena do 14 dnů od doručení odstoupení, a to
         stejným způsobem, jakým byla přijata. Po vrácení peněz je přístup
         deaktivován.
       </p>
+
+      <h3 id="formular-odstoupeni">Vzorový formulář pro odstoupení od smlouvy</h3>
+      <p>
+        (Vyplňte a odešlete tento formulář jen v případě, že chcete odstoupit od
+        smlouvy. Použití formuláře není povinné.)
+      </p>
+      <blockquote class="border-l-4 border-gray-300 bg-gray-50 pl-4 pr-4 py-3 my-4 text-sm">
+        <p>
+          Adresát: Patrick Zandl, U Přelízky 1126/6, 250 01 Brandýs nad
+          Labem-Stará Boleslav, e-mail: patrick@vibecoding.cz
+        </p>
+        <p>
+          Oznamuji, že tímto odstupuji od smlouvy o poskytnutí přístupu k
+          videokurzům na kurzy.vibecoding.cz.
+        </p>
+        <p>Datum objednání: …</p>
+        <p>Jméno a příjmení spotřebitele: …</p>
+        <p>Adresa spotřebitele: …</p>
+        <p>E-mail použitý při objednávce: …</p>
+        <p>Variabilní symbol nebo číslo dokladu: …</p>
+        <p>Podpis spotřebitele (pouze pokud je formulář zasílán v listinné podobě): …</p>
+        <p>Datum: …</p>
+      </blockquote>
       <p>
         Vedle tohoto zákonného práva nabízíme dobrovolnou garanci vrácení peněz
         podle článku 5. Ta se uplatní i tam, kam zákonné právo nedosáhne —
