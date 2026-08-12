@@ -266,26 +266,37 @@ function extractImmediateAccessConsent(metadata: Record<string, string>) {
  * zaměňuje „nákup byl vložen" za „událost byla doručena". Když insert projde
  * a odeslání selže, retry už řádek nevloží a onboarding by se neodeslal nikdy.
  *
- * Zápis času je atomický (`WHERE onboardingEventSentAt IS NULL`) a probíhá až
- * PO úspěšném odeslání: kdyby se claimovalo dopředu, selhání by čas zapsalo
- * a retry by událost přeskočil — tedy přesně ta ztráta, kterou má sloupec
- * řešit. Při selhání se čas nezapíše a další pokus událost doručí.
+ * Idempotenci drží ATOMICKÝ CLAIM před odesláním: `UPDATE … WHERE
+ * onboardingEventSentAt IS NULL` uspěje právě jednou, takže ani dvě souběžně
+ * doručené kopie téhož webhooku událost nepošlou dvakrát. Pouhé přečtení
+ * sloupce před odesláním by nestačilo — obě kopie by viděly NULL a obě
+ * odeslaly.
  *
- * Zbývá teoretické okno mezi odesláním a zápisem času (crash mezi nimi → při
- * retry se událost pošle podruhé). Duplicitní onboarding je přijatelnější než
- * žádný, takže ho neřešíme dvoufázovým commitem.
+ * Když odeslání selže, claim se VRÁTÍ (čas zpět na NULL) a funkce vyhodí
+ * chybu, aby `handleQueue` zprávu retryoval. Bez toho by se selhání jen
+ * zalogovalo, zpráva by se ackla a onboarding by zmizel — přesně ta ztráta,
+ * kterou má sloupec řešit.
+ *
+ * Zbytkové riziko: crash mezi odesláním a jeho vyhodnocením nechá claim
+ * zapsaný a událost se už nepošle. Opačná volba (claim až po odeslání) by
+ * naopak riskovala duplicitní onboarding při každém retry; u marketingové
+ * sekvence je jednou neodeslaná událost menší zlo než opakované.
  */
 async function sendOnboardingEventOnce(
   db: ReturnType<typeof drizzle>,
   env: Env,
   opts: { purchaseId: number; email: string; payload: Record<string, unknown> },
 ): Promise<void> {
-  const [row] = await db
-    .select({ sentAt: purchase.onboardingEventSentAt })
-    .from(purchase)
-    .where(eq(purchase.id, opts.purchaseId))
-    .limit(1);
-  if (!row || row.sentAt) return;
+  // Claim: uspěje právě jeden běh. Prázdný výsledek = událost už odeslal
+  // (nebo právě odesílá) někdo jiný.
+  const claimed = await db
+    .update(purchase)
+    .set({ onboardingEventSentAt: new Date() })
+    .where(
+      and(eq(purchase.id, opts.purchaseId), isNull(purchase.onboardingEventSentAt)),
+    )
+    .returning({ id: purchase.id });
+  if (claimed.length === 0) return;
 
   const ok = await sendResendEvent(
     env.RESEND_API_KEY,
@@ -294,20 +305,16 @@ async function sendOnboardingEventOnce(
     opts.payload,
   );
   if (!ok) {
-    // Čas nezapisujeme — další pokus (retry zprávy) událost doručí.
-    console.error(
-      `[queue] onboarding event failed for purchase ${opts.purchaseId} (${maskEmail(opts.email)}) — zkusí se znovu při retry`,
+    // Vrať claim, ať další pokus událost doručí, a eskaluj na retry zprávy —
+    // jinak by se selhání jen zalogovalo a onboarding by se ztratil.
+    await db
+      .update(purchase)
+      .set({ onboardingEventSentAt: null })
+      .where(eq(purchase.id, opts.purchaseId));
+    throw new Error(
+      `onboarding event failed for purchase ${opts.purchaseId} (${maskEmail(opts.email)})`,
     );
-    return;
   }
-
-  // Atomicky: souběžné doručení téhož webhooku událost nepošle dvakrát.
-  await db
-    .update(purchase)
-    .set({ onboardingEventSentAt: new Date() })
-    .where(
-      and(eq(purchase.id, opts.purchaseId), isNull(purchase.onboardingEventSentAt)),
-    );
 }
 
 /**

@@ -149,6 +149,55 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
     expect(events).toEqual(["purchase.completed"]);
   });
 
+  it("selhání onboardingu eskaluje na retry, i když e-mail projde", async () => {
+    // Dřív se selhání jen zalogovalo a funkce se vrátila: pokud potvrzovací
+    // e-mail prošel, zpráva se ackla a onboarding zmizel. Retry musí nastat
+    // kvůli samotné události, ne jen jako vedlejší efekt selhání e-mailu.
+    const events: string[] = [];
+    let failEvent = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/events/send")) {
+        if (failEvent) return new Response("boom", { status: 500 });
+        events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
+      }
+      return new Response("{}", { status: 200 }); // e-mail projde vždy
+    });
+
+    const email = "stripe-onboarding-eskalace@example.cz";
+    const first = await runCheckout({ type: "individual" }, email);
+    expect(first.retry).toHaveBeenCalledOnce();
+    expect(first.ack).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+
+    // Claim se musel vrátit, jinak by retry událost přeskočil.
+    failEvent = false;
+    const second = await runCheckout({ type: "individual" }, email);
+    expect(second.ack).toHaveBeenCalledOnce();
+    expect(events).toEqual(["purchase.completed"]);
+  });
+
+  it("souběžné doručení téhož webhooku pošle onboarding jen jednou", async () => {
+    // Claim musí být atomický UPDATE. Kdyby se stav jen ČETL před odesláním,
+    // obě souběžné kopie by viděly NULL a obě událost odeslaly.
+    const events: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/events/send")) {
+        events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const email = "stripe-soubeh@example.cz";
+    await Promise.all([
+      runCheckout({ type: "individual" }, email),
+      runCheckout({ type: "individual" }, email),
+    ]);
+
+    expect(events).toEqual(["purchase.completed"]);
+  });
+
   it("nepřiloží poučení, když je nákup na IČO", async () => {
     const sent = captureEmails();
     await runCheckout(
