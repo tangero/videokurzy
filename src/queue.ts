@@ -258,6 +258,37 @@ function extractImmediateAccessConsent(metadata: Record<string, string>) {
   };
 }
 
+/**
+ * Odešle potvrzení nákupu a při selhání VYHODÍ chybu, aby ji handleQueue
+ * převedl na `message.retry()`.
+ *
+ * `sendEmail` chybu polyká a vrací false — samotné `await sendEmail(...)` by
+ * tedy proběhlo „úspěšně" i při výpadku Resendu, zpráva by se ackla a poučení
+ * o odstoupení podle § 1824a by zmizelo nenávratně. Retry je bezpečný: inserty
+ * výše jsou `onConflictDoNothing` a fakturační job je idempotentní, takže
+ * opakování nevytvoří duplicity. Po 3 pokusech zpráva padne do DLQ, která
+ * pošle alert adminovi — poučení se pak dá doručit ručně.
+ */
+async function sendPurchaseConfirmationOrThrow(
+  env: Env,
+  opts: { email: string; type: "individual" | "organization"; isConsumer: boolean },
+): Promise<void> {
+  const ok = await sendEmail(env, {
+    to: opts.email,
+    subject: "Platba přijata — přihlaste se do kurzu",
+    html: purchaseConfirmedHtml(
+      `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(opts.email)}`,
+      opts.type,
+      opts.isConsumer,
+    ),
+  });
+  if (!ok) {
+    throw new Error(
+      `purchase confirmation email failed for ${maskEmail(opts.email)} (${opts.type})`,
+    );
+  }
+}
+
 function extractSignals(metadata: Record<string, string>) {
   return {
     marketingConsent: metadata.mkt_consent === "1",
@@ -375,20 +406,6 @@ async function handleCheckoutCompleted(
       { type: "individual", paymentMethod: "stripe" }
     );
 
-    // Potvrzení nákupu s poučením o odstoupení. Resend automation výše je
-    // marketingová sekvence, ne splnění § 1824a — poučení musí odejít z naší
-    // šablony, stejně jako u FIO větve. Bez tohohle e-mailu by Stripe zákazník
-    // poučení na trvalém nosiči nedostal vůbec.
-    await sendEmail(env, {
-      to: customerEmail.toLowerCase(),
-      subject: "Platba přijata — přihlaste se do kurzu",
-      html: purchaseConfirmedHtml(
-        `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(customerEmail.toLowerCase())}`,
-        "individual",
-        isConsumerPurchase(billing),
-      ),
-    });
-
     await enqueueCheckoutInvoice(db, env, {
       sessionId,
       email: customerEmail.toLowerCase(),
@@ -397,6 +414,7 @@ async function handleCheckoutCompleted(
       billing,
       eventCreated,
     });
+
   } else if (metadata.type === "organization") {
     const customFields = data.custom_fields as
       | Array<{ key: string; text?: { value: string } }>
@@ -446,18 +464,6 @@ async function handleCheckoutCompleted(
       { type: "organization", domain, paymentMethod: "stripe" }
     );
 
-    // Potvrzení nákupu (viz komentář u B2C větve). Poučení o odstoupení se
-    // přiloží jen tehdy, kupuje-li zákazník jako spotřebitel — u firemní
-    // licence na IČO mu § 1829 nesvědčí.
-    await sendEmail(env, {
-      to: customerEmail.toLowerCase(),
-      subject: "Platba přijata — přihlaste se do kurzu",
-      html: purchaseConfirmedHtml(
-        `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(customerEmail.toLowerCase())}`,
-        "organization",
-        isConsumerPurchase(billing),
-      ),
-    });
 
     await enqueueCheckoutInvoice(db, env, {
       sessionId,
@@ -497,6 +503,19 @@ async function handleCheckoutCompleted(
       conversionOccurredAt,
     });
   }
+
+  // Potvrzení nákupu s poučením o odstoupení posíláme jako POSLEDNÍ krok.
+  // Resend automation výše je marketingová sekvence, ne splnění § 1824a —
+  // poučení musí odejít z naší šablony, stejně jako u FIO větve. Selhání
+  // vyhodí chybu → handleQueue zprávu retryuje, takže se poučení neztratí;
+  // všechny předchozí kroky jsou idempotentní, takže je retry bezpečně
+  // zopakuje. Poslední v pořadí proto, aby retry kvůli e-mailu nezdržoval
+  // aktivaci přístupu ani fakturaci.
+  await sendPurchaseConfirmationOrThrow(env, {
+    email: customerEmail.toLowerCase(),
+    type: metadata.type === "organization" ? "organization" : "individual",
+    isConsumer: isConsumerPurchase(billing),
+  });
 }
 
 async function handleSubscriptionDeleted(

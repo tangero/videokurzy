@@ -26,6 +26,8 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
   }
 
   async function runCheckout(metadata: Record<string, string>, email: string) {
+    const ack = vi.fn();
+    const retry = vi.fn();
     await handleQueue(
       {
         queue: "videokurzy-webhooks",
@@ -41,13 +43,14 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
               },
             },
             attempts: 1,
-            ack: vi.fn(),
-            retry: vi.fn(),
+            ack,
+            retry,
           },
         ],
       } as never,
       env as never,
     );
+    return { ack, retry };
   }
 
   it("pošle spotřebiteli potvrzení včetně poučení a formuláře", async () => {
@@ -58,6 +61,26 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
     expect(confirmation).toBeDefined();
     expect(confirmation!.html).toMatch(/Poučení o právu na odstoupení/i);
     expect(confirmation!.html).toMatch(/Vzorový formulář/i);
+  });
+
+  it("při selhání Resendu zprávu retryuje, místo aby poučení zahodil", async () => {
+    // sendEmail chybu polyká a vrací false — bez explicitní kontroly by se
+    // zpráva ackla a poučení podle § 1824a by zmizelo nenávratně.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/emails")) {
+        return new Response("rate limited", { status: 429 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const { ack, retry } = await runCheckout(
+      { type: "individual" },
+      "stripe-resend-vypadek@example.cz",
+    );
+
+    expect(retry).toHaveBeenCalledOnce();
+    expect(ack).not.toHaveBeenCalled();
   });
 
   it("nepřiloží poučení, když je nákup na IČO", async () => {
