@@ -1009,7 +1009,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     sendEmail(c.env, {
       to: p.email,
       subject: "Platba přijata — přihlaste se do kurzu",
-      html: purchaseConfirmedHtml(
+      html: await purchaseConfirmedHtml(
         `${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
         p.type as "individual" | "organization",
         isConsumerPurchase(p),

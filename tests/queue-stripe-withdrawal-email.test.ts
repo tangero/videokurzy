@@ -283,7 +283,14 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
 
     const confirmation = sent.find((e) => e.subject.includes("Platba přijata"));
     expect(confirmation).toBeDefined();
-    expect(confirmation!.html).not.toMatch(/Poučení o právu na odstoupení/i);
-    expect(confirmation!.html).not.toMatch(/Vzorový formulář/i);
+    // Jen tělo zprávy: přiložené VOP obsahují čl. 4 i vzorový formulář, takže
+    // hledat je v celém e-mailu by falešně selhalo. VOP se přikládají všem
+    // (§ 1824a), poučení jen spotřebitelům (§ 1829).
+    const i = confirmation!.html.indexOf("Znění účinné ke dni");
+    const body = i > 0 ? confirmation!.html.slice(0, i) : confirmation!.html;
+    expect(body).not.toMatch(/Poučení o právu na odstoupení/i);
+    expect(body).not.toMatch(/Vzorový formulář/i);
+    // VOP tam ale být MUSÍ, i u firemního nákupu.
+    expect(confirmation!.html).toContain("Znění účinné ke dni");
   });
 });

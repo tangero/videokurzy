@@ -346,7 +346,7 @@ async function sendPurchaseConfirmationOrThrow(
   const ok = await sendEmail(env, {
     to: opts.email,
     subject: "Platba přijata — přihlaste se do kurzu",
-    html: purchaseConfirmedHtml(
+    html: await purchaseConfirmedHtml(
       `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(opts.email)}`,
       opts.type,
       opts.isConsumer,

@@ -1,11 +1,21 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 
-export const TermsPage: FC = () => (
-  <Layout title="Obchodní podmínky">
-    <div class="max-w-3xl mx-auto px-4 py-12 prose">
+/**
+ * Datum účinnosti aktuálního znění. Uvádí se na stránce i v potvrzovacím
+ * e-mailu, aby bylo doložitelné, které znění zákazník dostal.
+ */
+export const TERMS_EFFECTIVE_DATE = "12. 8. 2026";
+
+/**
+ * Samotný text podmínek, bez stránkového obalu. Sdílí ho `/terms` i potvrzovací
+ * e-mail (§ 1824a odst. 1 vyžaduje předání VOP na trvalém nosiči) — jediný zdroj
+ * zabraňuje tomu, aby se znění na webu rozešlo se zněním v e-mailu.
+ */
+export const TermsContent: FC = () => (
+  <>
       <h1>Obchodní podmínky</h1>
-      <p>Poslední aktualizace: 12. 8. 2026</p>
+      <p>Poslední aktualizace: {TERMS_EFFECTIVE_DATE}</p>
       <p>
         Provozovatel: <strong>Patrick Zandl</strong>, IČO 43943420,
         se sídlem U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará Boleslav.
@@ -258,6 +268,13 @@ export const TermsPage: FC = () => (
         <br />
         Web: <a href="https://vibecoding.cz" target="_blank" rel="noreferrer">vibecoding.cz</a>
       </p>
+  </>
+);
+
+export const TermsPage: FC = () => (
+  <Layout title="Obchodní podmínky">
+    <div class="max-w-3xl mx-auto px-4 py-12 prose">
+      <TermsContent />
     </div>
   </Layout>
 );

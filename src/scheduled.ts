@@ -357,7 +357,7 @@ async function activateMatchedPurchase(
   sendEmail(env, {
     to: p.email,
     subject: "Platba přijata — přihlaste se do kurzu",
-    html: purchaseConfirmedHtml(
+    html: await purchaseConfirmedHtml(
       `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
       p.type as "individual" | "organization",
       isConsumerPurchase(p),

@@ -3,6 +3,7 @@
 
 import { EMAIL_FROM, EMAIL_REPLY_TO } from "../config/admin";
 import type { Env } from "../types";
+import { TermsContent, TERMS_EFFECTIVE_DATE } from "../views/terms";
 
 // Brand barvy pro emailové šablony. Inline CSS je nutnost (klienti CSS ignorují),
 // ale konstanty drží konzistenci, ať změna brand barvy je jednomístná.
@@ -127,12 +128,15 @@ export function fioPendingHtml(
  * zatímco individuální licence bez IČO je spotřebitelský nákup. Volající proto
  * předává příznak odvozený z toho, zda objednávka nese firemní údaje.
  */
-export function purchaseConfirmedHtml(
+export async function purchaseConfirmedHtml(
   loginUrl: string,
   type: "individual" | "organization",
   isConsumer: boolean,
-): string {
+): Promise<string> {
   const typeLabel = type === "organization" ? "firemní licence" : "roční přístup";
+  // VOP přikládáme VŽDY, i firemnímu kupujícímu: § 1824a se váže na uzavření
+  // smlouvy, ne na postavení spotřebitele. `isConsumer` řídí jen poučení výše.
+  const terms = await termsBlock();
   return emailWrapper(`
     <p style="font-size: 16px; line-height: 1.5;">Platba přijata — ${typeLabel} je aktivní!</p>
     <p style="font-size: 16px; line-height: 1.5;">Přístup ke všem kurzům máte na 12 měsíců.</p>
@@ -140,7 +144,8 @@ export function purchaseConfirmedHtml(
     <p style="font-size: 14px; color: #4b5563; line-height: 1.5;">
       Dotazy? Odpovězte na tento email — píše vám Andrea Maloveczká.
     </p>
-    ${isConsumer ? withdrawalNoticeBlock() : ""}`);
+    ${isConsumer ? withdrawalNoticeBlock() : ""}
+    ${terms}`);
 }
 
 /**
@@ -151,6 +156,44 @@ export function purchaseConfirmedHtml(
  */
 export function isConsumerPurchase(p: { companyIco?: string | null }): boolean {
   return !p.companyIco;
+}
+
+/**
+ * Plné znění obchodních podmínek pro vložení do potvrzovacího e-mailu.
+ *
+ * § 1824a odst. 1 obč. zák. vyžaduje potvrzení smlouvy **včetně VOP** na trvalém
+ * nosiči, a to u KAŽDÉ spotřebitelské smlouvy uzavřené distančně — nezávisle na
+ * tom, zda u ní vzniká právo na odstoupení. Odkaz na web nestačí, protože web lze
+ * kdykoli změnit; e-mail zůstává zákazníkovi v podobě, kterou nezměníme.
+ *
+ * Text se renderuje ze sdílené `TermsContent`, takže se znění v e-mailu nemůže
+ * rozejít se zněním na `/terms`. Stránkové třídy (Tailwind) v e-mailu neplatí,
+ * proto se doplní inline styly pro nadpisy, odstavce a tabulku.
+ */
+async function termsBlock(): Promise<string> {
+  const raw = String(await TermsContent({}));
+  const styled = raw
+    // <h1> stránky je duplicitní k nadpisu sekce v e-mailu — zahodíme ho.
+    .replace(/<h1[^>]*>.*?<\/h1>/s, "")
+    .replace(/<h2/g, `<h2 style="font-size: 14px; font-weight: 600; margin: 20px 0 6px;"`)
+    .replace(/<h3/g, `<h3 style="font-size: 13px; font-weight: 600; margin: 14px 0 4px;"`)
+    .replace(/<p>/g, `<p style="font-size: 12px; line-height: 1.6; margin: 0 0 8px;">`)
+    .replace(/<li>/g, `<li style="font-size: 12px; line-height: 1.6;">`)
+    .replace(/<table>/g, `<table style="font-size: 12px; border-collapse: collapse; width: 100%;">`)
+    .replace(/<t([dh])>/g, `<t$1 style="border: 1px solid ${DIVIDER}; padding: 6px 8px; text-align: left;">`)
+    .replace(
+      /<blockquote/g,
+      `<blockquote style="border-left: 3px solid ${DIVIDER}; background: #f9fafb; padding: 10px 14px; margin: 12px 0; font-size: 12px; line-height: 1.7;"`,
+    );
+
+  return `
+    <hr style="border: none; border-top: 1px solid ${DIVIDER}; margin: 32px 0;">
+    <h2 style="font-size: 15px; font-weight: 600; margin: 0 0 4px;">Obchodní podmínky</h2>
+    <p style="font-size: 12px; color: ${TEXT_MUTED}; margin: 0 0 12px;">
+      Znění účinné ke dni ${TERMS_EFFECTIVE_DATE}, které se vztahuje na vaši objednávku.
+      Přikládáme je v souladu s § 1824a odst. 1 občanského zákoníku.
+    </p>
+    <div style="color: ${TEXT_MUTED};">${styled}</div>`;
 }
 
 /**
