@@ -204,11 +204,17 @@ export const TermsPage: FC = () => (
         K mimosoudnímu řešení spotřebitelských sporů je příslušná{" "}
         <strong>Česká obchodní inspekce</strong>, se sídlem Gorazdova 1969/24,
         120 00 Praha 2, internetová adresa{" "}
-        <a href="https://adr.coi.cz" target="_blank" rel="noreferrer">adr.coi.cz</a>.
-        Spotřebitel může využít rovněž platformu pro řešení sporů on-line na
-        adrese{" "}
-        <a href="https://ec.europa.eu/consumers/odr" target="_blank" rel="noreferrer">
-          ec.europa.eu/consumers/odr
+        <a href="https://coi.gov.cz/informace-o-adr/" target="_blank" rel="noreferrer">
+          coi.gov.cz
+        </a>.
+        Seznam subjektů mimosoudního řešení sporů v členských státech EU vede
+        Evropská komise na adrese{" "}
+        <a
+          href="https://consumer-redress.ec.europa.eu/list-alternative-dispute-resolution-adr-bodies_en"
+          target="_blank"
+          rel="noreferrer"
+        >
+          consumer-redress.ec.europa.eu
         </a>.
       </p>
 
