@@ -5,10 +5,14 @@ export const TermsPage: FC = () => (
   <Layout title="Obchodní podmínky">
     <div class="max-w-3xl mx-auto px-4 py-12 prose">
       <h1>Obchodní podmínky</h1>
-      <p>Poslední aktualizace: 19. 4. 2026</p>
+      <p>Poslední aktualizace: 12. 8. 2026</p>
       <p>
-        Provozovatel: <strong>Patrick Zandl</strong>, IČO 66192751,
-        sídlem Praha. Kontakt: <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a>
+        Provozovatel: <strong>Patrick Zandl</strong>, IČO 43943420,
+        se sídlem U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará Boleslav.
+        Provozovatel není plátcem DPH.
+        <br />
+        Kontakt: <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a>,
+        tel. <a href="tel:+420777677077">+420 777 677 077</a>
       </p>
 
       <h2>1. Předmět smlouvy</h2>
@@ -78,7 +82,49 @@ export const TermsPage: FC = () => (
         s platebními údaji.
       </p>
 
-      <h2>4. Vrácení peněz (refund)</h2>
+      <h2 id="odstoupeni">4. Odstoupení od smlouvy (spotřebitel)</h2>
+      <p>
+        Spotřebitel má podle § 1829 občanského zákoníku právo odstoupit od
+        smlouvy uzavřené distančním způsobem do <strong>14 dnů</strong> bez
+        udání důvodu.
+      </p>
+      <p>
+        Přístup ke kurzům je digitálním obsahem dodávaným bez hmotného nosiče.
+        Aktivuje se bezprostředně po přijetí platby, tedy zpravidla před
+        uplynutím 14denní lhůty; při objednávce nás o to zákazník výslovně žádá.
+      </p>
+      <p>
+        Zákon sice umožňuje, aby v takovém případě právo na odstoupení zaniklo
+        (§ 1837 písm. l) obč. zák.), <strong>my ho však neuplatňujeme</strong> —
+        okamžité zpřístupnění je u nás podmínkou nákupu, a vzdání se práva proto
+        nemůže být svobodnou volbou zákazníka. Právo odstoupit do 14 dnů tak
+        spotřebiteli zůstává v plném rozsahu i poté, co si obsah zpřístupnil
+        nebo zhlédl.
+      </p>
+      <p>
+        Odstoupení lze zaslat e-mailem na{" "}
+        <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a>.
+        Uhrazená částka bude vrácena do 14 dnů od doručení odstoupení, a to
+        stejným způsobem, jakým byla přijata. Po vrácení peněz je přístup
+        deaktivován.
+      </p>
+      <p>
+        Vedle tohoto zákonného práva nabízíme dobrovolnou garanci vrácení peněz
+        podle článku 5. Ta se uplatní i tam, kam zákonné právo nedosáhne —
+        typicky u firemních (B2B) licencí, kde odstoupení podle § 1829
+        spotřebiteli nepřísluší. Spotřebitel si může vybrat; podmínky garance
+        jeho zákonné právo na odstoupení nijak neomezují.
+      </p>
+
+      <h2 id="refund">5. Vrácení peněz (refund)</h2>
+
+      <p>
+        Následující tabulka popisuje naši <strong>dobrovolnou garanci</strong>,
+        nikoli zákonné právo na odstoupení podle článku 4. Podmínka rozsahu
+        zhlédnutého obsahu se vztahuje pouze na garanci — vůči spotřebiteli,
+        který ve 14denní lhůtě odstoupí podle § 1829, se neuplatní a nárok na
+        vrácení peněz mu zůstává i při zhlédnutí 50 % a více epizod.
+      </p>
 
       <table>
         <thead>
@@ -114,7 +160,7 @@ export const TermsPage: FC = () => (
         okamžitě deaktivován.
       </p>
 
-      <h2>5. Obnova přístupu</h2>
+      <h2>6. Obnova přístupu</h2>
       <p>
         Přístup aktivovaný kartou přes Stripe se obnovuje automaticky jako
         roční předplatné. Zákazník obdrží upozornění e-mailem před každým
@@ -127,7 +173,7 @@ export const TermsPage: FC = () => (
         1 týden a 1 den před expirací) a musí provést novou objednávku.
       </p>
 
-      <h2>6. Dostupnost a obsah platformy</h2>
+      <h2>7. Dostupnost a obsah platformy</h2>
       <p>
         Usilujeme o maximální dostupnost platformy, nezaručujeme však 100%
         uptime. Obsah kurzů (epizody, moduly) může být průběžně aktualizován
@@ -135,7 +181,7 @@ export const TermsPage: FC = () => (
         obsahu dostupného v době platnosti přístupu.
       </p>
 
-      <h2>7. Duševní vlastnictví</h2>
+      <h2>8. Duševní vlastnictví</h2>
       <p>
         Veškerý obsah platformy (videa, texty, materiály) je duševním
         vlastnictvím Patricka Zandla. Licence opravňuje výhradně k osobnímu
@@ -143,24 +189,38 @@ export const TermsPage: FC = () => (
         písemného souhlasu je zakázáno.
       </p>
 
-      <h2>8. Ochrana osobních údajů</h2>
+      <h2>9. Ochrana osobních údajů</h2>
       <p>
         Zpracování osobních údajů se řídí{" "}
         <a href="/privacy">Zásadami ochrany osobních údajů</a>.
       </p>
 
-      <h2>9. Rozhodné právo</h2>
+      <h2>10. Rozhodné právo</h2>
       <p>
         Tyto podmínky se řídí právem České republiky. Případné spory budou
-        řešeny příslušnými soudy ČR. Spotřebitel má právo obrátit se na
-        Českou obchodní inspekci (coi.cz) v případě mimosoudního řešení sporu.
+        řešeny příslušnými soudy ČR.
+      </p>
+      <p>
+        K mimosoudnímu řešení spotřebitelských sporů je příslušná{" "}
+        <strong>Česká obchodní inspekce</strong>, se sídlem Gorazdova 1969/24,
+        120 00 Praha 2, internetová adresa{" "}
+        <a href="https://adr.coi.cz" target="_blank" rel="noreferrer">adr.coi.cz</a>.
+        Spotřebitel může využít rovněž platformu pro řešení sporů on-line na
+        adrese{" "}
+        <a href="https://ec.europa.eu/consumers/odr" target="_blank" rel="noreferrer">
+          ec.europa.eu/consumers/odr
+        </a>.
       </p>
 
-      <h2>10. Kontakt</h2>
+      <h2>11. Kontakt</h2>
       <p>
-        <strong>Patrick Zandl</strong>
+        <strong>Patrick Zandl</strong>, IČO 43943420
+        <br />
+        U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará Boleslav
         <br />
         Email: <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a>
+        <br />
+        Telefon: <a href="tel:+420777677077">+420 777 677 077</a>
         <br />
         Web: <a href="https://vibecoding.cz" target="_blank" rel="noreferrer">vibecoding.cz</a>
       </p>

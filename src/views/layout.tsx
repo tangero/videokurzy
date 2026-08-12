@@ -149,12 +149,13 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
             <a href="https://vibecoding.cz" target="_blank" rel="noreferrer">
               vibecoding.cz
             </a>
-            {" "}&mdash; projekt Patricka Zandla
+            {" "}&mdash; Patrick Zandl, IČO 43943420
           </div>
           <div class="footer-links">
             <a href="/privacy">ochrana osobních údajů</a>
             <a href="/terms">obchodní podmínky</a>
-            <a href="mailto:patrick@vibecoding.cz">kontakt</a>
+            <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a>
+            <a href="tel:+420777677077">+420 777 677 077</a>
           </div>
         </div>
       </footer>

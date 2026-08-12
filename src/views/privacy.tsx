@@ -9,8 +9,12 @@ export const PrivacyPage: FC = () => (
 
       <h2>1. Správce údajů</h2>
       <p>
-        Správcem osobních údajů je Patrick Zandl, provozovatel webu vibecoding.cz
-        a kurzy.vibecoding.cz.
+        Správcem osobních údajů je <strong>Patrick Zandl</strong>, IČO 43943420,
+        se sídlem U Přelízky 1126/6, 250 01 Brandýs nad Labem-Stará Boleslav,
+        provozovatel webu vibecoding.cz a kurzy.vibecoding.cz.
+        <br />
+        Kontakt: <a href="mailto:patrick@vibecoding.cz">patrick@vibecoding.cz</a>,
+        tel. <a href="tel:+420777677077">+420 777 677 077</a>
       </p>
 
       <h2>2. Jaké údaje zpracováváme</h2>

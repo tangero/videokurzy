@@ -240,6 +240,24 @@ function extractBilling(metadata: Record<string, string>): BillingFromMetadata {
 
 // Konverzní signály ze Stripe session metadata (zapsané v checkoutu
 // signalsToStripeMetadata) → na purchase, ať je reportPurchase má pro CAPI (R5).
+/**
+ * Souhlas se zpřístupněním digitálního obsahu (§ 1837 písm. l) ze Stripe metadat,
+ * kam ho zapsal checkout (`ia_consent_at`, unix sekundy). Checkbox je v checkoutu
+ * povinný, takže nová session ho má vždy — chybí jen u sessions vytvořených před
+ * nasazením a u automatických obnov předplatného, kde Stripe metadata nepřenáší.
+ * Tam vracíme false/null: souhlas prokazatelně nemáme, tak si ho nevymýšlíme.
+ */
+function extractImmediateAccessConsent(metadata: Record<string, string>) {
+  const raw = Number(metadata.ia_consent_at);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return { immediateAccessConsent: false, immediateAccessConsentAt: null };
+  }
+  return {
+    immediateAccessConsent: true,
+    immediateAccessConsentAt: new Date(raw * 1000),
+  };
+}
+
 function extractSignals(metadata: Record<string, string>) {
   return {
     marketingConsent: metadata.mkt_consent === "1",
@@ -310,6 +328,7 @@ async function handleCheckoutCompleted(
   const discountCode = metadata.discountCode || null;
   const billing = extractBilling(metadata);
   const signals = extractSignals(metadata);
+  const iaConsent = extractImmediateAccessConsent(metadata);
 
   // Pokud uživatel s tímto emailem už existuje (přihlásil se přes magic link
   // dřív, než webhook dorazil), navaž purchase rovnou na jeho userId.
@@ -344,6 +363,7 @@ async function handleCheckoutCompleted(
         amountPaid: paidAmountCzk,
         ...billing,
         ...signals,
+        ...iaConsent,
       })
       .onConflictDoNothing();
 
@@ -400,6 +420,7 @@ async function handleCheckoutCompleted(
         amountPaid: paidAmountCzk,
         ...billing,
         ...signals,
+        ...iaConsent,
       })
       .onConflictDoNothing();
 

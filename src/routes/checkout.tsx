@@ -268,11 +268,16 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const billing = parseBilling(form);
   const signals = captureSignalsFromForm(c, form);
 
+  // Povinný souhlas se zpřístupněním obsahu — `required` v HTML hlídá jen
+  // prohlížeč, server musí validovat znovu (přímý POST, vypnutý JS).
+  const immediateAccessConsent = form.get("immediateAccessConsent") === "1";
   const emailError = !email || !email.includes("@")
     ? "Zadejte platný email."
     : !invoiceEmailValid(billing)
       ? "Zadejte platný fakturační email (nebo pole nechte prázdné)."
-      : null;
+      : !immediateAccessConsent
+        ? "Pro dokončení objednávky potvrďte souhlas se zpřístupněním kurzů ihned po zaplacení."
+        : null;
   if (emailError) {
     const db = drizzle(c.env.DB);
     const invite = inviteToken ? await resolveInviteDiscount(db, inviteToken) : null;
@@ -294,11 +299,12 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   const settings = await getDiscountSettings(db);
   const discount = await resolveCheckoutDiscount(db, settings, promoCode || null, inviteToken);
   const finalPrice = discount ? applyDiscount(prices.individual, discount.percent) : prices.individual;
+  const consentAt = new Date();
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount, billing, signals);
+    return await startStripeCheckout(c, "individual", email, undefined, finalPrice, discount, billing, signals, consentAt);
   } else if (paymentMethod === "fio") {
     const bank = await getActiveBank(db);
-    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount, billing, bank, signals);
+    return await startFioCheckout(c, "individual", email, undefined, extendedDeadline, finalPrice, discount, billing, bank, signals, consentAt);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -348,6 +354,10 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
 
   if (!email || !email.includes("@")) return renderError("Zadejte platný email.");
   if (!invoiceEmailValid(billing)) return renderError("Zadejte platný fakturační email (nebo pole nechte prázdné).");
+  // Povinný souhlas se zpřístupněním obsahu — HTML `required` platí jen v prohlížeči.
+  if (form.get("immediateAccessConsent") !== "1") {
+    return renderError("Pro dokončení objednávky potvrďte souhlas se zpřístupněním kurzů ihned po zaplacení.");
+  }
   if (!domainRaw || !domainRaw.includes(".")) return renderError("Zadejte platnou firemní doménu (např. firma.cz).");
   if (isFreemailDomain(domainRaw)) return renderError(FREEMAIL_REJECTION_MESSAGE);
 
@@ -355,11 +365,12 @@ checkoutRoutes.post("/checkout/organization", async (c) => {
   const settings = await getDiscountSettings(db);
   const discount = await resolveCheckoutDiscount(db, settings, promoCode || null, inviteToken);
   const finalPrice = discount ? applyDiscount(prices.organization, discount.percent) : prices.organization;
+  const consentAt = new Date();
   if (paymentMethod === "stripe") {
-    return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount, billing, signals);
+    return await startStripeCheckout(c, "organization", email, domainRaw, finalPrice, discount, billing, signals, consentAt);
   } else if (paymentMethod === "fio") {
     const bank = await getActiveBank(db);
-    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount, billing, bank, signals);
+    return await startFioCheckout(c, "organization", email, domainRaw, extendedDeadline, finalPrice, discount, billing, bank, signals, consentAt);
   }
 
   return c.text("Neznámý způsob platby.", 400);
@@ -456,6 +467,9 @@ async function startStripeCheckout(
   discount: AppliedDiscount | null,
   billing: BillingData | null,
   signals: ConversionSignals,
+  // Čas výslovného souhlasu se zpřístupněním obsahu (§ 1837 písm. l). Putuje
+  // přes Stripe metadata do webhooku, kde teprve vzniká purchase řádek.
+  immediateAccessConsentAt: Date,
 ) {
   const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
   const isOrg = type === "organization";
@@ -501,6 +515,9 @@ async function startStripeCheckout(
         : {}),
       ...billingToStripeMetadata(billing),
       ...signalsToStripeMetadata(signals),
+      // Souhlas se zpřístupněním obsahu — checkbox je povinný, sem se dostaneme
+      // jen po jeho zaškrtnutí. Unix sekundy kvůli limitu délky metadat.
+      ia_consent_at: String(Math.floor(immediateAccessConsentAt.getTime() / 1000)),
     },
   });
 
@@ -520,6 +537,8 @@ async function startFioCheckout(
   billing: BillingData | null,
   bank: TransferBank,
   signals: ConversionSignals,
+  // Čas výslovného souhlasu se zpřístupněním obsahu (§ 1837 písm. l).
+  immediateAccessConsentAt: Date,
 ) {
   const db = drizzle(c.env.DB);
   const dueDays = extendedDeadline ? FIO_EXTENDED_DUE_DAYS : FIO_DEFAULT_DUE_DAYS;
@@ -530,7 +549,12 @@ async function startFioCheckout(
   // se stále platnou splatností, přesměruj na ni místo vytváření nové. Bereme
   // libovolnou banku — uživatel má dorazit na svou existující platební stránku.
   const existingPending = await db
-    .select({ vs: purchase.variableSymbol, accessToken: purchase.accessToken })
+    .select({
+      id: purchase.id,
+      vs: purchase.variableSymbol,
+      accessToken: purchase.accessToken,
+      consent: purchase.immediateAccessConsent,
+    })
     .from(purchase)
     .where(
       and(
@@ -543,6 +567,27 @@ async function startFioCheckout(
     )
     .limit(1);
   if (existingPending.length > 0) {
+    // Souhlas doplň, pokud ho objednávka ještě nemá. Nastane u objednávek
+    // založených před migrací 0033, které jsou ve svém dedup okně (7–21 dní)
+    // pořád pending: zákazník teď checkbox zaškrtl, ale dostane redirect na
+    // starou objednávku — bez tohoto zápisu by se jeho souhlas ztratil a
+    // přístup by se aktivoval bez důkazu. Podmínka `eq(consent, false)` drží
+    // zápis idempotentní, takže **existující** souhlas se nikdy nepřepíše
+    // (důkazní záznam si musí podržet svůj původní čas).
+    if (!existingPending[0].consent) {
+      await db
+        .update(purchase)
+        .set({
+          immediateAccessConsent: true,
+          immediateAccessConsentAt,
+        })
+        .where(
+          and(
+            eq(purchase.id, existingPending[0].id),
+            eq(purchase.immediateAccessConsent, false)
+          )
+        );
+    }
     // Preferuj token (nehádatelný); na VS spadni jen u starých objednávek bez tokenu.
     const ref = existingPending[0].accessToken ?? existingPending[0].vs;
     if (ref) return c.redirect(`/checkout/pay/${ref}`, 303);
@@ -616,6 +661,10 @@ async function startFioCheckout(
         // Konverzní signály zachycené při objednávce (fáze 3). Konverze se
         // reportuje až po spárování platby (cron/verify), kdy se přidá i čas.
         marketingConsent: signals.marketingConsent,
+        // Důkaz souhlasu podle § 1837 písm. l). Dedup větev výše řeší případ,
+        // kdy se místo nové objednávky recykluje existující pending.
+        immediateAccessConsent: true,
+        immediateAccessConsentAt,
         fbc: signals.fbc,
         fbp: signals.fbp,
         gclid: signals.gclid,
