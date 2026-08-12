@@ -247,6 +247,33 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
     expect(events).toEqual(["purchase.completed"]);
   });
 
+  it("po 429 onboarding zopakuje (rate limit je odmítnutí, ne neurčitý výsledek)", async () => {
+    // Resend vrací 429 u rate_limit_exceeded i daily/monthly_quota_exceeded —
+    // ve všech případech požadavek odmítne PŘED zpracováním, takže událost
+    // prokazatelně nevznikla. Považovat 429 za neurčité by znamenalo, že se
+    // po běžném rate limitu onboarding neodešle nikdy.
+    const events: string[] = [];
+    let limited = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/events/send")) {
+        if (limited) return new Response("rate limit exceeded", { status: 429 });
+        events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const email = "stripe-rate-limit@example.cz";
+    const first = await runCheckout({ type: "individual" }, email);
+    expect(first.retry).toHaveBeenCalledOnce();
+    expect(events).toEqual([]);
+
+    limited = false;
+    const second = await runCheckout({ type: "individual" }, email);
+    expect(second.ack).toHaveBeenCalledOnce();
+    expect(events).toEqual(["purchase.completed"]);
+  });
+
   it("nepřiloží poučení, když je nákup na IČO", async () => {
     const sent = captureEmails();
     await runCheckout(

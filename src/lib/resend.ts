@@ -1,20 +1,20 @@
 /**
+ * Výsledek pokusu o odeslání události.
+ *
+ * `"failed"` a `"unknown"` se musí rozlišovat: u `"failed"` server požadavek
+ * odmítl (4xx včetně 429), takže událost prokazatelně nevznikla a je bezpečné
+ * ji poslat znovu. U `"unknown"` (timeout, přerušené spojení, 5xx) se mohla
+ * doručit a jen se ztratila odpověď — opakování by znamenalo druhý onboarding.
+ */
+export type ResendEventOutcome = "sent" | "failed" | "unknown";
+
+/**
  * Send a Resend Automation event.
  * Uses raw fetch to match the existing pattern in auth.ts.
  * Endpoint je /events/send (ne /events) — jinak event nedorazí a automation
  * se nikdy nespustí (Runs zůstanou na 0).
  * @see https://resend.com/docs/api-reference/events/send-event
  */
-/**
- * Výsledek pokusu o odeslání události.
- *
- * `"failed"` a `"unknown"` se musí rozlišovat: u `"failed"` server odpověděl
- * chybou, takže událost prokazatelně neprošla a je bezpečné ji poslat znovu.
- * U `"unknown"` (timeout, přerušené spojení) se požadavek mohl doručit a jen
- * se ztratila odpověď — opakování by pak znamenalo druhý onboarding.
- */
-export type ResendEventOutcome = "sent" | "failed" | "unknown";
-
 export async function sendResendEvent(
   apiKey: string,
   event: string,
@@ -32,10 +32,16 @@ export async function sendResendEvent(
     });
     if (!res.ok) {
       console.error(`Resend event '${event}' failed: ${res.status}`);
-      // 5xx a 429 mohou znamenat, že událost přesto proběhla (proxy/timeout na
-      // straně serveru), takže je bereme jako neurčité; 4xx je jednoznačné
-      // odmítnutí (validace, autentizace) a událost prokazatelně nevznikla.
-      return res.status >= 500 || res.status === 429 ? "unknown" : "failed";
+      // 4xx včetně 429 = server požadavek ODMÍTL, událost prokazatelně
+      // nevznikla, takže je bezpečné ji poslat znovu. U 429 to platí pro
+      // všechny jeho varianty v Resend API (rate_limit_exceeded,
+      // daily/monthly_quota_exceeded) — odmítnutí nastane před zpracováním.
+      // Považovat 429 za neurčité by bylo škodlivé: rate limit je běžný stav
+      // a událost by se po něm už nikdy nedoslala.
+      //
+      // 5xx naopak neurčité JE — chyba může vzniknout až za bodem, kde server
+      // událost přijal, nebo v proxy po jejím zpracování.
+      return res.status >= 500 ? "unknown" : "failed";
     }
     return "sent";
   } catch (err) {
