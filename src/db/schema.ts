@@ -146,6 +146,11 @@ export const purchase = sqliteTable("purchase", {
     .default(false),
   // Čas udělení souhlasu výše. Nullable jen kvůli starým objednávkám.
   immediateAccessConsentAt: integer("immediateAccessConsentAt", { mode: "timestamp" }),
+  // Kdy odešla onboardingová Resend automation událost (`purchase.completed`).
+  // Drží idempotenci napříč retry: sendResendEvent sám žádnou nemá, a odvozovat
+  // ji z toho, zda insert vrátil řádek, znamená zaměnit „nákup byl vložen" za
+  // „událost byla doručena" — po selhání události by ji retry už nikdy neposlal.
+  onboardingEventSentAt: integer("onboardingEventSentAt", { mode: "timestamp" }),
   // Match signály zachycené v checkoutu (lepší atribuce). Vše nullable.
   // fbc = serverový formát fb.1.<ms>.<fbclid> (NE raw fbclid), fbp jen z existující cookie.
   fbc: text("fbc"),

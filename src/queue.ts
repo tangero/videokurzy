@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
@@ -259,6 +259,58 @@ function extractImmediateAccessConsent(metadata: Record<string, string>) {
 }
 
 /**
+ * Odešle onboardingovou automation událost NEJVÝŠE JEDNOU na nákup.
+ *
+ * Idempotenci drží sloupec `purchase.onboardingEventSentAt` — `sendResendEvent`
+ * žádnou nemá a odvozovat ji z toho, zda insert vrátil řádek, je chyba: to
+ * zaměňuje „nákup byl vložen" za „událost byla doručena". Když insert projde
+ * a odeslání selže, retry už řádek nevloží a onboarding by se neodeslal nikdy.
+ *
+ * Zápis času je atomický (`WHERE onboardingEventSentAt IS NULL`) a probíhá až
+ * PO úspěšném odeslání: kdyby se claimovalo dopředu, selhání by čas zapsalo
+ * a retry by událost přeskočil — tedy přesně ta ztráta, kterou má sloupec
+ * řešit. Při selhání se čas nezapíše a další pokus událost doručí.
+ *
+ * Zbývá teoretické okno mezi odesláním a zápisem času (crash mezi nimi → při
+ * retry se událost pošle podruhé). Duplicitní onboarding je přijatelnější než
+ * žádný, takže ho neřešíme dvoufázovým commitem.
+ */
+async function sendOnboardingEventOnce(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  opts: { purchaseId: number; email: string; payload: Record<string, unknown> },
+): Promise<void> {
+  const [row] = await db
+    .select({ sentAt: purchase.onboardingEventSentAt })
+    .from(purchase)
+    .where(eq(purchase.id, opts.purchaseId))
+    .limit(1);
+  if (!row || row.sentAt) return;
+
+  const ok = await sendResendEvent(
+    env.RESEND_API_KEY,
+    "purchase.completed",
+    opts.email,
+    opts.payload,
+  );
+  if (!ok) {
+    // Čas nezapisujeme — další pokus (retry zprávy) událost doručí.
+    console.error(
+      `[queue] onboarding event failed for purchase ${opts.purchaseId} (${maskEmail(opts.email)}) — zkusí se znovu při retry`,
+    );
+    return;
+  }
+
+  // Atomicky: souběžné doručení téhož webhooku událost nepošle dvakrát.
+  await db
+    .update(purchase)
+    .set({ onboardingEventSentAt: new Date() })
+    .where(
+      and(eq(purchase.id, opts.purchaseId), isNull(purchase.onboardingEventSentAt)),
+    );
+}
+
+/**
  * Odešle potvrzení nákupu a při selhání VYHODÍ chybu, aby ji handleQueue
  * převedl na `message.retry()`.
  *
@@ -399,18 +451,20 @@ async function handleCheckoutCompleted(
       .onConflictDoNothing()
       .returning({ id: purchase.id });
 
-    // Onboardingová sekvence JEN při prvním zpracování. sendResendEvent nemá
-    // idempotenci — každé volání spustí automation znovu, takže při retry
-    // (nově možný: selhání potvrzovacího e-mailu hodí chybu) by zákazník
-    // dostal onboarding vícekrát. Prázdné `returning` = řádek už existoval,
-    // tedy duplicitní webhook nebo retry.
-    if (inserted.length > 0) {
-      await sendResendEvent(
-        env.RESEND_API_KEY,
-        "purchase.completed",
-        customerEmail.toLowerCase(),
-        { type: "individual", paymentMethod: "stripe" }
-      );
+    // Onboardingová sekvence nejvýše jednou na nákup — viz sendOnboardingEventOnce.
+    const [b2cRow] = inserted.length > 0
+      ? inserted
+      : await db
+          .select({ id: purchase.id })
+          .from(purchase)
+          .where(eq(purchase.stripePaymentId, sessionId))
+          .limit(1);
+    if (b2cRow) {
+      await sendOnboardingEventOnce(db, env, {
+        purchaseId: b2cRow.id,
+        email: customerEmail.toLowerCase(),
+        payload: { type: "individual", paymentMethod: "stripe" },
+      });
     }
 
     await enqueueCheckoutInvoice(db, env, {
@@ -464,14 +518,20 @@ async function handleCheckoutCompleted(
       .onConflictDoNothing()
       .returning({ id: purchase.id });
 
-    // Onboardingová sekvence jen při prvním zpracování — viz komentář v B2C větvi.
-    if (insertedOrg.length > 0) {
-      await sendResendEvent(
-        env.RESEND_API_KEY,
-        "purchase.completed",
-        customerEmail.toLowerCase(),
-        { type: "organization", domain, paymentMethod: "stripe" }
-      );
+    // Onboardingová sekvence nejvýše jednou na nákup — viz sendOnboardingEventOnce.
+    const [b2bRow] = insertedOrg.length > 0
+      ? insertedOrg
+      : await db
+          .select({ id: purchase.id })
+          .from(purchase)
+          .where(eq(purchase.stripePaymentId, sessionId))
+          .limit(1);
+    if (b2bRow) {
+      await sendOnboardingEventOnce(db, env, {
+        purchaseId: b2bRow.id,
+        email: customerEmail.toLowerCase(),
+        payload: { type: "organization", domain, paymentMethod: "stripe" },
+      });
     }
 
 

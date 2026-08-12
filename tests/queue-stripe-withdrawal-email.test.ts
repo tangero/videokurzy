@@ -117,6 +117,38 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
     expect(events).toEqual(["purchase.completed"]);
   });
 
+  it("doručí onboarding při retry, když poprvé selhal i s e-mailem", async () => {
+    // Scénář, který guard navázaný na insert řešit neuměl: insert projde,
+    // odeslání události selže (sendResendEvent chybu polyká) a e-mail selže
+    // taky → retry. Při něm už řádek existuje, takže guard „vložil se řádek?"
+    // by událost přeskočil navždy. Idempotenci proto drží onboardingEventSentAt.
+    const events: string[] = [];
+    let failAll = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/events/send")) {
+        if (failAll) return new Response("boom", { status: 500 });
+        events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
+        return new Response("{}", { status: 200 });
+      }
+      if (url.includes("resend.com/emails") && failAll) {
+        return new Response("rate limited", { status: 429 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const email = "stripe-onboarding-selhalo@example.cz";
+    const first = await runCheckout({ type: "individual" }, email);
+    expect(first.retry).toHaveBeenCalledOnce();
+    expect(events).toEqual([]); // poprvé se nedoručilo nic
+
+    failAll = false;
+    const second = await runCheckout({ type: "individual" }, email);
+    expect(second.ack).toHaveBeenCalledOnce();
+    // Retry musí onboarding doručit — jinak by se ztratil nadobro.
+    expect(events).toEqual(["purchase.completed"]);
+  });
+
   it("nepřiloží poučení, když je nákup na IČO", async () => {
     const sent = captureEmails();
     await runCheckout(
