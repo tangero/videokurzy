@@ -378,7 +378,7 @@ async function handleCheckoutCompleted(
   if (metadata.type === "individual") {
     // Idempotent insert — UNIQUE on stripePaymentId
     // Platform-wide access, no courseId needed
-    await db
+    const inserted = await db
       .insert(purchase)
       .values({
         email: customerEmail.toLowerCase(),
@@ -396,15 +396,22 @@ async function handleCheckoutCompleted(
         ...signals,
         ...iaConsent,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: purchase.id });
 
-    // Fire Resend automation event for purchase onboarding sequence
-    await sendResendEvent(
-      env.RESEND_API_KEY,
-      "purchase.completed",
-      customerEmail.toLowerCase(),
-      { type: "individual", paymentMethod: "stripe" }
-    );
+    // Onboardingová sekvence JEN při prvním zpracování. sendResendEvent nemá
+    // idempotenci — každé volání spustí automation znovu, takže při retry
+    // (nově možný: selhání potvrzovacího e-mailu hodí chybu) by zákazník
+    // dostal onboarding vícekrát. Prázdné `returning` = řádek už existoval,
+    // tedy duplicitní webhook nebo retry.
+    if (inserted.length > 0) {
+      await sendResendEvent(
+        env.RESEND_API_KEY,
+        "purchase.completed",
+        customerEmail.toLowerCase(),
+        { type: "individual", paymentMethod: "stripe" }
+      );
+    }
 
     await enqueueCheckoutInvoice(db, env, {
       sessionId,
@@ -436,7 +443,7 @@ async function handleCheckoutCompleted(
       .onConflictDoNothing();
 
     // Tracking purchase row pro slot counter a analytics. UNIQUE na stripePaymentId.
-    await db
+    const insertedOrg = await db
       .insert(purchase)
       .values({
         email: customerEmail.toLowerCase(),
@@ -454,15 +461,18 @@ async function handleCheckoutCompleted(
         ...signals,
         ...iaConsent,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: purchase.id });
 
-    // Fire Resend automation event for B2B onboarding sequence
-    await sendResendEvent(
-      env.RESEND_API_KEY,
-      "purchase.completed",
-      customerEmail.toLowerCase(),
-      { type: "organization", domain, paymentMethod: "stripe" }
-    );
+    // Onboardingová sekvence jen při prvním zpracování — viz komentář v B2C větvi.
+    if (insertedOrg.length > 0) {
+      await sendResendEvent(
+        env.RESEND_API_KEY,
+        "purchase.completed",
+        customerEmail.toLowerCase(),
+        { type: "organization", domain, paymentMethod: "stripe" }
+      );
+    }
 
 
     await enqueueCheckoutInvoice(db, env, {

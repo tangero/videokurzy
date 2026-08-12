@@ -83,6 +83,40 @@ describe("Stripe webhook — potvrzení nákupu s poučením", () => {
     expect(ack).not.toHaveBeenCalled();
   });
 
+  it("nespustí onboardingovou automatizaci podruhé při retry", async () => {
+    // sendResendEvent nemá idempotenci — každé volání spustí sekvenci znovu.
+    // Retry (nově možný kvůli povinnému potvrzovacímu e-mailu) proto nesmí
+    // událost poslat opakovaně, jinak zákazník dostane onboarding vícekrát.
+    const events: string[] = [];
+    let failEmail = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("resend.com/events/send")) {
+        events.push(String(JSON.parse(String(init?.body ?? "{}")).event));
+        return new Response("{}", { status: 200 });
+      }
+      if (url.includes("resend.com/emails")) {
+        // První průchod: e-mail selže → retry. Druhý: projde.
+        if (failEmail) {
+          failEmail = false;
+          return new Response("rate limited", { status: 429 });
+        }
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const email = "stripe-retry-onboarding@example.cz";
+    const first = await runCheckout({ type: "individual" }, email);
+    expect(first.retry).toHaveBeenCalledOnce();
+    expect(events).toEqual(["purchase.completed"]);
+
+    // Retry doručí tutéž zprávu znovu — purchase řádek už existuje.
+    const second = await runCheckout({ type: "individual" }, email);
+    expect(second.ack).toHaveBeenCalledOnce();
+    // Automation se NESMÍ spustit podruhé.
+    expect(events).toEqual(["purchase.completed"]);
+  });
+
   it("nepřiloží poučení, když je nákup na IČO", async () => {
     const sent = captureEmails();
     await runCheckout(
