@@ -17,6 +17,28 @@
   corruption at DB level. No additional safeguard needed for single-user
   self-service flows.
 
+## Magic link a `allowedAttempts` (link scannery)
+
+Better Auth defaultuje `magicLink({ allowedAttempts: 1 })` — **první** GET na
+verify URL token spálí. Tím GETem ale často není klik uživatele, nýbrž
+automatický prefetch: Microsoft Defender Safe Links, antivirové skenery odkazů
+(ESET, Avast, Bitdefender) nebo náhled mailového klienta. Uživatel pak klikne,
+dostane `ATTEMPTS_EXCEEDED`, verify nenastaví cookie a on skončí zpátky na
+`/login` — bez jakéhokoli vysvětlení. Nahlášeno zákazníkem 2026-08-19,
+reprodukováno v `tests/routes/magic-link-verify.test.ts`.
+
+Nastaveno `allowedAttempts: 3` v `src/lib/auth.ts`. Nesnižovat zpět na 1:
+proti brute-force chrání entropie tokenu (32 náhodných znaků) a 10min
+platnost, ne tenhle counter.
+
+Druhá půlka problému byla viditelnost: verify redirectuje při chybě na
+`callbackURL` s `?error=...`, což bylo `/dashboard` → `requireAuth` uviděl
+prázdnou session a mlčky přesměroval na `/login`, čímž se `error` zahodil.
+`/login/send` proto posílá `errorCallbackURL: "/login"` a GET `/login`
+překládá kódy (`EXPIRED_TOKEN`, `ATTEMPTS_EXCEEDED`, `INVALID_TOKEN`) na české
+hlášky. Neznámý kód padá na obecnou hlášku — syrový kód se uživateli nikdy
+nevypisuje.
+
 ## Better Auth `magicLinkVerify` invalid-token behavior
 
 `auth.api.magicLinkVerify` on invalid/expired tokens throws an internal

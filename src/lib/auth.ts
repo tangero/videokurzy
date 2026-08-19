@@ -89,6 +89,15 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
           }
         },
         expiresIn: 600, // 10 minutes
+        // Better Auth defaultuje na allowedAttempts: 1, takže PRVNÍ GET na URL
+        // token spálí — a to nemusí být klik uživatele. Odkaz běžně otevřou
+        // link scannery (Microsoft Defender Safe Links, antiviry, prefetch
+        // mailového klienta) dřív, než se člověk k mailu dostane; uživateli pak
+        // verify vrátí ATTEMPTS_EXCEEDED, nenastaví cookie a on skončí zpátky
+        // na /login. Bezpečnostní dopad zvýšení je minimální: token je náhodných
+        // 32 znaků s 10min platností, proti brute-force chrání entropie a rate
+        // limit, ne tenhle counter.
+        allowedAttempts: 3,
       }),
       oidcProvider({
         // Task 13: minimální nasazení. Žádný registrovaný klient v MVP —

@@ -12,6 +12,29 @@ auth.all("/api/auth/*", async (c) => {
   return authInstance.handler(c.req.raw);
 });
 
+/**
+ * Chybové kódy, se kterými Better Auth redirectuje na errorCallbackURL
+ * (viz magicLinkVerify v better-auth/plugins/magic-link). Bez překladu by
+ * uživatel viděl jen holý přihlašovací formulář a netušil, proč ho odkaz
+ * z mailu nepřihlásil.
+ */
+const MAGIC_LINK_ERRORS: Record<string, string> = {
+  EXPIRED_TOKEN:
+    "Platnost odkazu vypršela (odkaz platí 10 minut). Nechte si prosím poslat nový.",
+  ATTEMPTS_EXCEEDED:
+    "Tento odkaz už byl použit. Nechte si prosím poslat nový.",
+  INVALID_TOKEN:
+    "Odkaz je neplatný nebo už byl použit. Nechte si prosím poslat nový.",
+};
+
+const magicLinkErrorMessage = (code: string | undefined): string | undefined => {
+  if (!code) return undefined;
+  return (
+    MAGIC_LINK_ERRORS[code] ??
+    "Přihlášení odkazem se nezdařilo. Nechte si prosím poslat nový odkaz."
+  );
+};
+
 // Login page
 auth.get("/login", (c) => {
   const user = c.get("user");
@@ -19,7 +42,8 @@ auth.get("/login", (c) => {
     return c.redirect("/dashboard");
   }
   const email = c.req.query("email") ?? "";
-  return c.html(<LoginPage prefillEmail={email} />);
+  const error = magicLinkErrorMessage(c.req.query("error"));
+  return c.html(<LoginPage prefillEmail={email} error={error} />);
 });
 
 /**
@@ -79,7 +103,12 @@ auth.post("/login/send", async (c) => {
     new Request(new URL("/api/auth/sign-in/magic-link", c.req.url).toString(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, callbackURL }),
+      // errorCallbackURL: bez něj Better Auth při neplatném/vypršelém/použitém
+      // tokenu redirectuje na callbackURL (/dashboard) s ?error=..., tam
+      // requireAuth uvidí prázdnou session a mlčky přesměruje na /login —
+      // uživatel skončí na přihlašovacím formuláři bez vysvětlení. Míříme
+      // chybu rovnou na /login, kde ji umíme zobrazit.
+      body: JSON.stringify({ email, callbackURL, errorCallbackURL: "/login" }),
     })
   );
 
