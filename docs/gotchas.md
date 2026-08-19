@@ -39,6 +39,27 @@ překládá kódy (`EXPIRED_TOKEN`, `ATTEMPTS_EXCEEDED`, `INVALID_TOKEN`) na če
 hlášky. Neznámý kód padá na obecnou hlášku — syrový kód se uživateli nikdy
 nevypisuje.
 
+### Testování verify: pozor na unhandled rejections
+
+`magicLinkVerify` signalizuje redirect přes `throw ctx.redirect(...)` — a to
+i při **úspěchu** (`magic-link/index.mjs:162-163`), ne jen na chybové větvi.
+Better Auth výjimku sám zachytí a převede na Response, ale Vitest ji stihne
+zahlédnout jako unhandled rejection a shodí běh **exit kódem 1 i při zelených
+asercích** (`Tests 7 passed` + `Errors 6 errors`).
+
+Proto v testech verify nevoláme přes `SELF.fetch` na URL s `callbackURL`, ale:
+
+1. `auth.api.magicLinkVerify({ query: { token }, asResponse: true })` **bez
+   `callbackURL`** → handler vrací `ctx.json(...)` (řádek 157), žádná výjimka.
+2. Chybové větve (vyčerpaný/neplatný token) netestovat voláním Better Auth
+   vůbec — `redirectWithError` (řádek 118) vyhazuje vždy a `errorCallbackURL`
+   fallbackuje na `callbackURL` a ten na `"/"`, takže se výjimce nedá vyhnout.
+   Místo toho ověřit `attempt` counter přímo ve `verification` tabulce; je to
+   tatáž hodnota, kterou plugin porovnává s `allowedAttempts` na řádku 129.
+
+Vzor: `tests/routes/magic-link-verify.test.ts`. Nepotlačovat globálně ve
+`vitest.config.ts` — maskovalo by to skutečné chyby jinde.
+
 ## Better Auth `magicLinkVerify` invalid-token behavior
 
 `auth.api.magicLinkVerify` on invalid/expired tokens throws an internal

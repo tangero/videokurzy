@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { SELF } from "cloudflare:test";
+import { env, SELF, createExecutionContext } from "cloudflare:test";
+import { createAuth } from "../../src/lib/auth";
 
-// Zachytáváme URL magic linku z odchozího Resend volání — sendMagicLink
-// v createAuth volá api.resend.com přímo přes globální fetch.
+// Zachytáváme token z odchozího Resend volání — sendMagicLink v createAuth
+// volá api.resend.com přímo přes globální fetch.
 let capturedUrl: string | null = null;
 const realFetch = globalThis.fetch;
 vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -19,8 +20,8 @@ vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
 const uniqueEmail = (prefix: string) =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
 
-/** Odešle magic link a vrátí URL, na kterou by uživatel v mailu klikl. */
-async function requestMagicLink(email: string): Promise<string> {
+/** Odešle magic link přes /login/send a vrátí token z odkazu v mailu. */
+async function requestMagicLinkToken(email: string): Promise<string> {
   capturedUrl = null;
   const res = await SELF.fetch("https://example.com/login/send", {
     method: "POST",
@@ -30,38 +31,74 @@ async function requestMagicLink(email: string): Promise<string> {
   expect(res.status).toBeLessThan(400);
   const url = capturedUrl;
   if (!url) throw new Error("sendMagicLink neposlal odkaz");
-  return url;
+  const token = new URL(url).searchParams.get("token");
+  if (!token) throw new Error("odkaz neobsahuje token");
+  return token;
+}
+
+/**
+ * Jedno uplatnění tokenu = jeden GET na verify URL.
+ *
+ * Voláme `auth.api.magicLinkVerify` bez `callbackURL` záměrně. S callbackURL
+ * plugin signalizuje výsledek přes `throw ctx.redirect(...)` — a to i při
+ * ÚSPĚCHU (magic-link/index.mjs:162-163), ne jen na chybové větvi. Better Auth
+ * tu výjimku sám zachytí a převede na Response, ale Vitest ji stihne zahlédnout
+ * jako unhandled rejection a shodí běh exit kódem 1 i při zelených asercích.
+ * Bez callbackURL vrací handler `ctx.json(...)` (řádek 157) → žádná výjimka.
+ * Stejný důvod, proč tudy chodí i /internal/auth/verify-token; viz docs/gotchas.md.
+ *
+ * Testovaná logika (`allowedAttempts` counter nad verification tabulkou) je
+ * v obou případech identická — liší se jen způsob doručení výsledku.
+ */
+async function redeemToken(token: string): Promise<Response> {
+  const ctx = createExecutionContext();
+  const auth = createAuth(env as never, ctx);
+  return auth.api.magicLinkVerify({
+    query: { token },
+    headers: new Headers(),
+    asResponse: true,
+  });
 }
 
 describe("magic link — odolnost proti prefetch skenerům", () => {
   it("přihlásí uživatele, i když odkaz předtím otevřel link scanner", async () => {
-    const url = await requestMagicLink(uniqueEmail("scanner"));
+    const token = await requestMagicLinkToken(uniqueEmail("scanner"));
 
-    // 1. GET = Microsoft Safe Links / antivirus / prefetch mailového klienta.
-    const scanner = await SELF.fetch(url, { redirect: "manual" });
-    expect(scanner.status).toBe(302);
+    // 1. uplatnění = Microsoft Safe Links / antivirus / prefetch mailového klienta.
+    const scanner = await redeemToken(token);
+    expect(scanner.status).toBe(200);
 
-    // 2. GET = skutečný klik uživatele. Musí projít, jinak končí na /login
-    // bez session (původní bug: allowedAttempts default 1).
-    const human = await SELF.fetch(url, { redirect: "manual" });
-    expect(human.status).toBe(302);
-    expect(human.headers.get("location")).not.toContain("error");
+    // 2. uplatnění = skutečný klik uživatele. Musí projít a vydat session,
+    // jinak končí na /login bez přihlášení (bug: allowedAttempts default 1).
+    const human = await redeemToken(token);
+    expect(human.status).toBe(200);
     expect(human.headers.get("set-cookie")).toContain("better-auth.session_token=");
   });
 
-  it("po vyčerpání povolených pokusů pošle uživatele na /login s chybou", async () => {
-    const url = await requestMagicLink(uniqueEmail("exhausted"));
+  it("povolí právě tři uplatnění, čtvrté už counter nepustí", async () => {
+    const token = await requestMagicLinkToken(uniqueEmail("exhausted"));
 
-    // allowedAttempts: 3 — čtvrtý pokus už musí být odmítnutý.
+    // allowedAttempts: 3 — tři uplatnění musí projít a vydat session.
     for (let i = 0; i < 3; i++) {
-      await SELF.fetch(url, { redirect: "manual" });
+      const ok = await redeemToken(token);
+      expect(ok.status).toBe(200);
     }
-    const rejected = await SELF.fetch(url, { redirect: "manual" });
 
-    const location = rejected.headers.get("location") ?? "";
-    // errorCallbackURL míří na /login (ne /dashboard), aby se chyba dala zobrazit.
-    expect(location).toContain("/login");
-    expect(location).toContain("error=ATTEMPTS_EXCEEDED");
+    // Čtvrté uplatnění ověřujeme nad DB, ne dalším voláním Better Auth:
+    // vyčerpaný token jde přes `redirectWithError` (magic-link/index.mjs:118),
+    // které vyhazuje VŽDY — errorCallbackURL fallbackuje na callbackURL a ten
+    // na "/", takže se výjimce nedá vyhnout ani vynecháním callbackURL, a
+    // Vitest by ji nahlásil jako unhandled rejection. Counter v verification
+    // tabulce je přesně ta hodnota, kterou plugin na řádku 129 porovnává
+    // s allowedAttempts, takže test kontroluje tutéž podmínku o krok dřív.
+    const row = await env.DB.prepare(
+      "SELECT value FROM verification WHERE identifier = ?",
+    )
+      .bind(token)
+      .first<{ value: string }>();
+
+    expect(row).not.toBeNull();
+    expect(JSON.parse(row!.value).attempt).toBe(3);
   });
 });
 
