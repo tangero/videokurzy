@@ -60,6 +60,33 @@ async function redeemToken(token: string): Promise<Response> {
   });
 }
 
+describe("POST /login/send — parametry v odeslaném odkazu", () => {
+  it("propíše errorCallbackURL=/login do verify URL v mailu", async () => {
+    capturedUrl = null;
+    const res = await SELF.fetch("https://example.com/login/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        email: uniqueEmail("params"),
+        callbackURL: "/dashboard",
+      }).toString(),
+    });
+    expect(res.status).toBeLessThan(400);
+    const url = capturedUrl;
+    if (!url) throw new Error("sendMagicLink neposlal odkaz");
+
+    // Bez errorCallbackURL by Better Auth při chybě redirectoval na
+    // callbackURL (/dashboard), tam requireAuth uvidí prázdnou session
+    // a mlčky přesměruje na /login — a ?error= se cestou zahodí. Překlad
+    // kódů níž by pak byl mrtvý kód. Ověřujeme tedy i tohle propojení,
+    // ne jen že /login umí hlášku zobrazit.
+    const params = new URL(url).searchParams;
+    expect(params.get("errorCallbackURL")).toBe("/login");
+    expect(params.get("callbackURL")).toBe("/dashboard");
+    expect(params.get("token")).toBeTruthy();
+  });
+});
+
 describe("magic link — odolnost proti prefetch skenerům", () => {
   it("přihlásí uživatele, i když odkaz předtím otevřel link scanner", async () => {
     const token = await requestMagicLinkToken(uniqueEmail("scanner"));
