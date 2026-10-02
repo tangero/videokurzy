@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import type { Env, Variables } from "../types";
 import { purchase } from "../db/schema";
 import { ACCESS_DURATION_DAYS } from "../config/payment";
+import { getPrices } from "../lib/prices";
 import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase } from "../lib/email";
 import { Layout } from "../views/layout";
 
@@ -54,6 +55,7 @@ async function devMarkPaid(c: DevContext) {
         `${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
         p.type as "individual" | "organization",
         isConsumerPurchase(p),
+        await getPrices(db),
       ),
     })
   );

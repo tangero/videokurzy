@@ -3,6 +3,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization, user } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
+import { getPrices } from "./lib/prices";
 import { consumeInviteToken } from "./lib/discount";
 import { reportPurchase } from "./lib/conversions";
 import { invalidateAccessCache } from "./lib/access";
@@ -350,6 +351,7 @@ async function sendPurchaseConfirmationOrThrow(
       `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(opts.email)}`,
       opts.type,
       opts.isConsumer,
+      await getPrices(drizzle(env.DB)),
     ),
   });
   if (!ok) {

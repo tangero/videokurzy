@@ -1,5 +1,6 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
+import { formatCzk, type Prices } from "../lib/prices";
 
 /**
  * Datum účinnosti aktuálního znění. Uvádí se na stránce i v potvrzovacím
@@ -11,8 +12,11 @@ export const TERMS_EFFECTIVE_DATE = "12. 8. 2026";
  * Samotný text podmínek, bez stránkového obalu. Sdílí ho `/terms` i potvrzovací
  * e-mail (§ 1824a odst. 1 vyžaduje předání VOP na trvalém nosiči) — jediný zdroj
  * zabraňuje tomu, aby se znění na webu rozešlo se zněním v e-mailu.
+ *
+ * Ceny se předávají zvenku (ze `site_config` přes `getPrices`), NE napevno
+ * v textu — jinak se podmínky rozejdou s ceníkem po každé změně ceny.
  */
-export const TermsContent: FC = () => (
+export const TermsContent: FC<{ prices: Prices }> = ({ prices }) => (
   <>
       <h1>Obchodní podmínky</h1>
       <p>Poslední aktualizace: {TERMS_EFFECTIVE_DATE}</p>
@@ -36,7 +40,7 @@ export const TermsContent: FC = () => (
 
       <h3>2.1 Individuální licence (B2C)</h3>
       <ul>
-        <li>Cena: <strong>2 000 Kč</strong> za rok</li>
+        <li>Cena: <strong>{formatCzk(prices.individual)}</strong> za rok</li>
         <li>Přístup ke všem kurzům na platformě pro jednoho uživatele</li>
         <li>Přístup je vázán na emailovou adresu použitou při nákupu</li>
         <li>Platnost: <strong>365 dní</strong> od aktivace</li>
@@ -45,7 +49,7 @@ export const TermsContent: FC = () => (
 
       <h3>2.2 Firemní (doménová) licence (B2B)</h3>
       <ul>
-        <li>Cena: <strong>15 000 Kč</strong> za rok</li>
+        <li>Cena: <strong>{formatCzk(prices.organization)}</strong> za rok</li>
         <li>
           Přístup ke všem kurzům pro <strong>všechny uživatele</strong> s
           emailovou adresou na zakoupené doméně (např. @vase-firma.cz)
@@ -271,10 +275,10 @@ export const TermsContent: FC = () => (
   </>
 );
 
-export const TermsPage: FC = () => (
+export const TermsPage: FC<{ prices: Prices }> = ({ prices }) => (
   <Layout title="Obchodní podmínky">
     <div class="max-w-3xl mx-auto px-4 py-12 prose">
-      <TermsContent />
+      <TermsContent prices={prices} />
     </div>
   </Layout>
 );

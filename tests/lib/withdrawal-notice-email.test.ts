@@ -7,9 +7,11 @@ import { purchaseConfirmedHtml, isConsumerPurchase } from "../../src/lib/email";
  * TRVALÉM NOSIČI. Webová stránka s podmínkami to nesplňuje — lze ji kdykoli
  * změnit. Potvrzovací e-mail o nákupu ano, proto poučení nese on.
  */
+const PRICES = { individual: 3000, organization: 20000 };
+
 describe("poučení o odstoupení na trvalém nosiči", () => {
-  const b2c = () => purchaseConfirmedHtml("https://kurzy.example/login", "individual", true);
-  const b2b = () => purchaseConfirmedHtml("https://kurzy.example/login", "organization", false);
+  const b2c = () => purchaseConfirmedHtml("https://kurzy.example/login", "individual", true, PRICES);
+  const b2b = () => purchaseConfirmedHtml("https://kurzy.example/login", "organization", false, PRICES);
 
   /**
    * Část e-mailu PŘED přiloženými VOP. Podmínky samotné obsahují článek 4
@@ -85,6 +87,7 @@ describe("poučení o odstoupení na trvalém nosiči", () => {
       "https://kurzy.example/login",
       "individual",
       isConsumerPurchase({ companyIco: "43943420" }),
+      PRICES,
     );
     const body = beforeTerms(html);
     expect(body).not.toMatch(/Poučení o právu na odstoupení/i);

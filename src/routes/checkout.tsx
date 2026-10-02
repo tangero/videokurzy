@@ -12,8 +12,6 @@ import { lookupByIco, lookupByName } from "../lib/ares";
 import { generateProformaHtml } from "../lib/proforma";
 import { nextProformaNumber } from "../lib/proforma-sequence";
 import {
-  PRICE_INDIVIDUAL,
-  PRICE_ORGANIZATION,
   FIO_DEFAULT_DUE_DAYS,
   FIO_EXTENDED_DUE_DAYS,
   FIO_RATE_LIMIT_MS,
@@ -49,6 +47,7 @@ import {
   type AppliedDiscount,
 } from "../lib/discount";
 import { generateQRSvg } from "../lib/qr";
+import { getPrices } from "../lib/prices";
 import { sendEmail, fioPendingHtml, purchaseConfirmedHtml, isConsumerPurchase, adminNewOrgHtml } from "../lib/email";
 import { Layout } from "../views/layout";
 import {
@@ -65,15 +64,6 @@ const checkoutRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
 // ─── Helpers ─────────────────────────────────────────────────────
-
-async function getPrices(db: ReturnType<typeof drizzle>) {
-  const rows = await db.select().from(siteConfig);
-  const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  return {
-    individual: parseInt(cfg.price_individual ?? String(PRICE_INDIVIDUAL), 10),
-    organization: parseInt(cfg.price_organization ?? String(PRICE_ORGANIZATION), 10),
-  };
-}
 
 // Cloudflare KV odmítá expirationTtl < 60 s ("Invalid expiration_ttl … must be
 // at least 60") a hodí 400, což celý verify endpoint shodí na 500. Prodleva
@@ -1013,6 +1003,7 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
         `${c.env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(p.email)}`,
         p.type as "individual" | "organization",
         isConsumerPurchase(p),
+        await getPrices(db),
       ),
     })
   );

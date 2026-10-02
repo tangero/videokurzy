@@ -27,6 +27,8 @@ import { handleInvoiceQueue, handleInvoiceDlq } from "./invoice-queue";
 import { handleScheduled } from "./scheduled";
 import { PrivacyPage } from "./views/privacy";
 import { TermsPage } from "./views/terms";
+import { getPrices } from "./lib/prices";
+import { drizzle } from "drizzle-orm/d1";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -82,7 +84,9 @@ app.route("/", profileRoutes);
 
 // Static pages
 app.get("/privacy", (c) => c.html(<PrivacyPage />));
-app.get("/terms", (c) => c.html(<TermsPage />));
+app.get("/terms", async (c) =>
+  c.html(<TermsPage prices={await getPrices(drizzle(c.env.DB))} />)
+);
 
 // Health check
 app.get("/health", (c) => c.json({ status: "ok", version: "0.1.0" }));

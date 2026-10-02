@@ -61,11 +61,13 @@ const TESTIMONIALS = [
   { body: "Modul o designu mi zachránil projekt. Do té doby jsem měl výstup „funguje, ale vypadá to jako test\".", name: "Lenka D.", role: "Produktová manažerka", initials: "LD" },
 ];
 
-const FAQ_ITEMS = [
+// Ceny se do FAQ vkládají z ceníku (site_config), ne napevno — jinak se text
+// rozejde s cenou po každé změně ceníku.
+const faqItems = (priceOrganization: number) => [
   { q: "Potřebuju umět programovat?", a: "Ne. Kurz je stavěný pro netechnické lidi — projektové manažery, analytiky, produkťáky. Pracujeme s přirozeným jazykem, ne se syntaxí." },
   { q: "Co když mi to nesedne?", a: "První modul (3 epizody) je zdarma — vyzkoušíte si to bez rizika. Pak máte 14 dní na refund, pokud jste prošli méně než polovinou." },
   { q: "Jak dlouho mám přístup?", a: "Jeden rok od nákupu. Obnovuje se automaticky, ale kdykoliv můžete zrušit ve Stripe Customer Portalu." },
-  { q: "Firemní licence — jak to funguje?", a: "Zaplatíte 15 000 Kč/rok a uvedete doménu (např. firma.cz). Všichni zaměstnanci s emailem na té doméně se mohou přihlásit magic linkem a mají přístup k celému obsahu." },
+  { q: "Firemní licence — jak to funguje?", a: `Zaplatíte ${fmtPrice(priceOrganization)}/rok a uvedete doménu (např. firma.cz). Všichni zaměstnanci s emailem na té doméně se mohou přihlásit magic linkem a mají přístup k celému obsahu.` },
   { q: "Dostanu fakturu?", a: "Ano, automaticky přes Stripe. Pro firmy dodáváme standardní daňový doklad v CZK." },
   { q: "Budou další kurzy?", a: "Ano. Předplatné je na celou platformu — jakmile vydáme další kurz, máte k němu přístup automaticky." },
 ];
@@ -476,7 +478,7 @@ export const LandingPage: FC<LandingProps> = ({
           </div>
         </div>
         <div class="faq">
-          {FAQ_ITEMS.map((f, i) => (
+          {faqItems(priceOrganization).map((f, i) => (
             <details open={i === 0 ? true : undefined}>
               <summary>{f.q}</summary>
               <div class="faq-body">{f.a}</div>

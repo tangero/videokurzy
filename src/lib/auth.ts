@@ -69,7 +69,7 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: "Videokurzy <kurz@vibecoding.cz>",
+              from: "Videokurzy <andrea@vibecoding.cz>",
               to: email,
               subject: "Přihlášení do kurzu",
               html: `

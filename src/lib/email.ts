@@ -4,6 +4,7 @@
 import { EMAIL_FROM, EMAIL_REPLY_TO } from "../config/admin";
 import type { Env } from "../types";
 import { TermsContent, TERMS_EFFECTIVE_DATE } from "../views/terms";
+import type { Prices } from "./prices";
 
 // Brand barvy pro emailové šablony. Inline CSS je nutnost (klienti CSS ignorují),
 // ale konstanty drží konzistenci, ať změna brand barvy je jednomístná.
@@ -127,16 +128,20 @@ export function fioPendingHtml(
  * nakupující na IČO je podnikatel a spotřebitelské poučení mu nepřísluší,
  * zatímco individuální licence bez IČO je spotřebitelský nákup. Volající proto
  * předává příznak odvozený z toho, zda objednávka nese firemní údaje.
+ *
+ * `prices` je aktuální ceník ze `site_config` (`getPrices`) — vkládá se do
+ * přiložených VOP, aby v nich nebyla zastaralá cena.
  */
 export async function purchaseConfirmedHtml(
   loginUrl: string,
   type: "individual" | "organization",
   isConsumer: boolean,
+  prices: Prices,
 ): Promise<string> {
   const typeLabel = type === "organization" ? "firemní licence" : "roční přístup";
   // VOP přikládáme VŽDY, i firemnímu kupujícímu: § 1824a se váže na uzavření
   // smlouvy, ne na postavení spotřebitele. `isConsumer` řídí jen poučení výše.
-  const terms = await termsBlock();
+  const terms = await termsBlock(prices);
   return emailWrapper(`
     <p style="font-size: 16px; line-height: 1.5;">Platba přijata — ${typeLabel} je aktivní!</p>
     <p style="font-size: 16px; line-height: 1.5;">Přístup ke všem kurzům máte na 12 měsíců.</p>
@@ -170,8 +175,8 @@ export function isConsumerPurchase(p: { companyIco?: string | null }): boolean {
  * rozejít se zněním na `/terms`. Stránkové třídy (Tailwind) v e-mailu neplatí,
  * proto se doplní inline styly pro nadpisy, odstavce a tabulku.
  */
-async function termsBlock(): Promise<string> {
-  const raw = String(await TermsContent({}));
+async function termsBlock(prices: Prices): Promise<string> {
+  const raw = String(await TermsContent({ prices }));
   const styled = raw
     // <h1> stránky je duplicitní k nadpisu sekce v e-mailu — zahodíme ho.
     .replace(/<h1[^>]*>.*?<\/h1>/s, "")

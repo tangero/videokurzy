@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Přesměruje odesílatele (from) u tří EXISTUJÍCÍCH automation šablon a znovu je
-# publikuje. Šablony hledá podle názvu, takže netvoří duplicity.
-# (templates update vytvoří nový draft → nutný publish.)
+# Synchronizuje EXISTUJÍCÍ automation šablony (A–D) s repem: nastaví odesílatele
+# (from), nahraje aktuální HTML z templates/ (vč. odhlašovacího odkazu
+# {{{RESEND_UNSUBSCRIBE_URL}}}) a znovu je publikuje. Šablony hledá podle názvu,
+# takže netvoří duplicity. (templates update vytvoří nový draft → nutný publish.)
+# Šablonu, která v Resendu neexistuje, přeskočí s varováním.
 #
 # Použití:
 #   RESEND_API_KEY=re_xxx bash scripts/resend/update-sender.sh
@@ -29,6 +31,7 @@ upd() { # id  name  subject  html-file  [extra args...]
 A=$(id_by_name "Onboarding — dokonči přihlášení")
 B=$(id_by_name "Aktivace — pusť si první lekci")
 C=$(id_by_name "Re-engagement — zasekl ses?")
+D=$(id_by_name "Re-engagement — dokoukej lekci")
 
 [ -n "$A" ] && upd "$A" "Onboarding — dokonči přihlášení" \
   "Máš zaplaceno — ještě se přihlas do kurzu" templates/onboarding-login.html
@@ -37,5 +40,11 @@ C=$(id_by_name "Re-engagement — zasekl ses?")
 [ -n "$C" ] && upd "$C" "Re-engagement — zasekl ses?" \
   "Zasekl ses? Pokračuj tam, kde jsi skončil" templates/reengagement-zasekl.html \
   --var LESSON_TITLE:string --var NEXT_LESSON_SLUG:string
+[ -n "$D" ] && upd "$D" "Re-engagement — dokoukej lekci" \
+  "Dokoukej lekci, kterou jsi začal" templates/reengagement-dokoukej.html
 
-echo "✓ Hotovo. Odesílatel změněn a šablony publikovány."
+for pair in "A:$A" "B:$B" "C:$C" "D:$D"; do
+  [ -n "${pair#*:}" ] || echo "  ⚠ šablona ${pair%%:*} v Resendu nenalezena — přeskočeno"
+done
+
+echo "✓ Hotovo. Odesílatel + HTML aktualizovány a šablony publikovány."
