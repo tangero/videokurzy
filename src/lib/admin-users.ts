@@ -3,9 +3,10 @@ import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { user, lessonWatch } from "../db/schema";
 import { purchase, progress, invoiceJob } from "../db/schema";
-import { userEmails } from "../db/identity-schema";
-import { ensureUserEmailRecord, normalizeEmail } from "./user-emails";
+import { userEmails, userIdentityAudit } from "../db/identity-schema";
+import { ensureUserEmailRecord, findUserIdByEmail, normalizeEmail } from "./user-emails";
 import { linkPurchasesToUser } from "./access";
+import { ACCESS_DURATION_DAYS } from "../config/payment";
 
 type Db = ReturnType<typeof drizzle>;
 type AdminAccess = "free" | "individual" | "organization";
@@ -575,9 +576,11 @@ export async function manuallyConfirmPayment(
   }
 
   const now = new Date();
-  // Platnost: pokud původní expiraci už máme za sebou (objednávka dlouho visela),
-  // posuneme o rok od potvrzení — jinak by uživatel dostal přístup už propadlý.
-  const expiresAt = row.expiresAt > now ? row.expiresAt : new Date(now.getTime() + 365 * DAY_MS);
+  // Platnost běží vždy od potvrzení. Původní expiraci NELZE zachovat: u pending
+  // objednávky je to splatnost převodu (dny), ne platnost kurzu — potvrzení
+  // uvnitř splatnosti by zákazníkovi dalo přístup jen do jejího konce.
+  // Stejně to počítá i automatické párování v scheduled.ts.
+  const expiresAt = new Date(now.getTime() + ACCESS_DURATION_DAYS * DAY_MS);
   const amountPaid = opts.amountPaid ?? row.amountPaid;
 
   await db
@@ -590,6 +593,136 @@ export async function manuallyConfirmPayment(
       expiresAt,
     })
     .where(eq(purchase.id, opts.purchaseId));
+}
+
+export type PurchaseTransferResult = {
+  fromEmail: string;
+  toEmail: string;
+  toUserId: string;
+  /** true = cílový účet vznikl až teď (uživatel se na novou adresu ještě nikdy nepřihlásil). */
+  createdTargetUser: boolean;
+};
+
+/**
+ * Převede nákup pod jiný e-mail. Typický případ: kurz koupený na firemní adresu,
+ * ale uživatel ho chce mít na soukromé.
+ *
+ * Nejde o přejmenování `user.email` — cílová adresa může už mít vlastní účet
+ * (UNIQUE by rename shodil) a přejmenování by navíc odtrhlo starý účet od jeho
+ * historie. Místo toho přesouváme samotný řádek `purchase` pod cílový účet,
+ * který se v případě potřeby založí.
+ *
+ * Fakturační pole (`invoiceEmail`, `fakturoidSubjectId`) i vystavené doklady
+ * zůstávají nedotčené — doklad je účetní snímek k času platby a měnit ho po
+ * vystavení nemáme.
+ */
+export async function transferPurchaseToEmail(
+  db: Db,
+  opts: {
+    fromUserId: string;
+    purchaseId: number;
+    targetEmail: string;
+    actor: string;
+  },
+): Promise<PurchaseTransferResult> {
+  const targetEmail = normalizeEmail(opts.targetEmail);
+  if (!targetEmail || !targetEmail.includes("@")) {
+    throw new Error("Zadejte platnou e-mailovou adresu.");
+  }
+
+  const row = await db
+    .select({ id: purchase.id, email: purchase.email })
+    .from(purchase)
+    .where(and(eq(purchase.id, opts.purchaseId), eq(purchase.userId, opts.fromUserId)))
+    .get();
+  if (!row) throw new Error("Objednávka nenalezena.");
+
+  const fromUser = await db
+    .select({ email: user.email })
+    .from(user)
+    .where(eq(user.id, opts.fromUserId))
+    .get();
+  if (!fromUser) throw new Error("Zdrojový uživatel nenalezen.");
+  if (normalizeEmail(fromUser.email) === targetEmail) {
+    throw new Error("Cílová adresa je stejná jako současná.");
+  }
+
+  // Cílový účet: adresa může být vedlejší adresou existujícího účtu
+  // (user_emails), nebo primární user.email bez záznamu v user_emails.
+  // Nový účet zakládáme jen tehdy, když adresu nezná ani jedno — jinak by
+  // vznikl druhý uživatel se stejnou adresou.
+  const emailRecordOwner = await findUserIdByEmail(db, targetEmail);
+  const userByEmail = emailRecordOwner
+    ? null
+    : await db
+        .select({ id: user.id })
+        .from(user)
+        .where(sql`lower(${user.email}) = ${targetEmail}`)
+        .get();
+  const existingId = emailRecordOwner ?? userByEmail?.id ?? null;
+
+  if (existingId === opts.fromUserId) {
+    throw new Error("Cílová adresa patří stejnému účtu jako současná.");
+  }
+
+  const toUserId = existingId ?? nanoid();
+  const createdTargetUser = existingId === null;
+  const now = new Date();
+
+  // Všechny zápisy v jednom batchi (D1 transakce) — při selhání nezůstane
+  // prázdný cílový účet ani převod bez auditní stopy.
+  type BatchItem = Parameters<typeof db.batch>[0][number];
+  const writes: BatchItem[] = [];
+  if (createdTargetUser) {
+    writes.push(
+      db.insert(user).values({
+        id: toUserId,
+        email: targetEmail,
+        name: "",
+        emailVerified: false,
+        role: "user",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+  if (!emailRecordOwner) {
+    writes.push(
+      db.insert(userEmails).values({
+        id: nanoid(),
+        userId: toUserId,
+        email: targetEmail,
+        verifiedAt: now,
+        isPrimary: true,
+        addedAt: now,
+        addedVia: "admin",
+      }),
+    );
+  }
+
+  // purchase.email musí jít s userId — hasAccess() páruje přes obojí a
+  // linkPurchasesToUser() by jinak nákup vrátil zpět k původní adrese.
+  const purchaseUpdate = db
+    .update(purchase)
+    .set({ userId: toUserId, email: targetEmail })
+    .where(eq(purchase.id, opts.purchaseId));
+  const auditInsert = db.insert(userIdentityAudit).values({
+    id: nanoid(),
+    userId: toUserId,
+    action: "purchase_transferred",
+    actor: opts.actor,
+    details: JSON.stringify({
+      purchaseId: opts.purchaseId,
+      fromUserId: opts.fromUserId,
+      fromEmail: fromUser.email,
+      toEmail: targetEmail,
+      createdTargetUser,
+    }),
+    createdAt: now,
+  });
+  await db.batch([purchaseUpdate, ...writes, auditInsert]);
+
+  return { fromEmail: fromUser.email, toEmail: targetEmail, toUserId, createdTargetUser };
 }
 
 export async function createAdminUsers(

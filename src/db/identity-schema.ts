@@ -46,6 +46,7 @@ export const userIdentityAudit = sqliteTable(
         "account_deleted",
         "cc_news_subscribed",
         "cc_news_unsubscribed",
+        "purchase_transferred",
       ],
     }).notNull(),
     actor: text("actor").notNull(),

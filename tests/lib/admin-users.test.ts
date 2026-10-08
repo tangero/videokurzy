@@ -10,7 +10,10 @@ import {
   createAdminUsers,
   listAdminUsers,
   anonymizeAndDeleteUser,
+  transferPurchaseToEmail,
+  manuallyConfirmPayment,
 } from "../../src/lib/admin-users";
+import { addUserEmail } from "../../src/lib/user-emails";
 
 describe("createAdminUser", () => {
   let db: ReturnType<typeof drizzle>;
@@ -363,5 +366,297 @@ describe("anonymizeAndDeleteUser", () => {
 
   it("hodí chybu pro neexistujícího uživatele", async () => {
     await expect(anonymizeAndDeleteUser(db, "neexistuje")).rejects.toThrow();
+  });
+});
+
+describe("transferPurchaseToEmail", () => {
+  let db: ReturnType<typeof drizzle>;
+
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM user_identity_audit");
+    await env.DB.exec("DELETE FROM user_emails");
+    await env.DB.exec("DELETE FROM purchase");
+    await env.DB.exec("DELETE FROM session");
+    await env.DB.exec("DELETE FROM account");
+    await env.DB.exec("DELETE FROM user");
+    db = drizzle(env.DB, { schema: { ...authSchema, ...identitySchema, ...appSchema } });
+  });
+
+  /** Založí uživatele s aktivním nákupem a vrátí obojí. */
+  async function seedBuyer(email: string) {
+    const created = await createAdminUser(db, { email, access: "individual" });
+    await db.insert(appSchema.purchase).values({
+      email,
+      userId: created.id,
+      type: "individual",
+      paymentMethod: "fio",
+      status: "active",
+      kind: "paid",
+      amountPaid: 3000,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      createdAt: new Date(),
+    });
+    const row = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.userId, created.id))
+      .get();
+    return { userId: created.id, purchaseId: row!.id };
+  }
+
+  it("přesune nákup pod existující cílový účet", async () => {
+    const { userId, purchaseId } = await seedBuyer("firma@example.cz");
+    const target = await createAdminUser(db, { email: "soukroma@example.cz" });
+
+    const result = await transferPurchaseToEmail(db, {
+      fromUserId: userId,
+      purchaseId,
+      targetEmail: "  Soukroma@Example.cz  ",
+      actor: "admin:test",
+    });
+
+    expect(result.createdTargetUser).toBe(false);
+    expect(result.toUserId).toBe(target.id);
+    expect(result.fromEmail).toBe("firma@example.cz");
+
+    // userId i email musí jít spolu — hasAccess() páruje přes obojí.
+    const moved = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.id, purchaseId))
+      .get();
+    expect(moved?.userId).toBe(target.id);
+    expect(moved?.email).toBe("soukroma@example.cz");
+  });
+
+  it("založí cílový účet, když ještě neexistuje", async () => {
+    const { userId, purchaseId } = await seedBuyer("firma2@example.cz");
+
+    const result = await transferPurchaseToEmail(db, {
+      fromUserId: userId,
+      purchaseId,
+      targetEmail: "novy@example.cz",
+      actor: "admin:test",
+    });
+
+    expect(result.createdTargetUser).toBe(true);
+    const created = await db
+      .select()
+      .from(authSchema.user)
+      .where(eq(authSchema.user.id, result.toUserId))
+      .get();
+    expect(created?.email).toBe("novy@example.cz");
+
+    // Bez záznamu v user_emails by se profil tvářil, že adresu nezná.
+    const emailRow = await db
+      .select()
+      .from(identitySchema.userEmails)
+      .where(eq(identitySchema.userEmails.email, "novy@example.cz"))
+      .get();
+    expect(emailRow?.userId).toBe(result.toUserId);
+  });
+
+  it("nechá fakturační údaje beze změny", async () => {
+    const { userId, purchaseId } = await seedBuyer("firma3@example.cz");
+    await db
+      .update(appSchema.purchase)
+      .set({ invoiceEmail: "fakturace@firma.cz", fakturoidSubjectId: 12345 })
+      .where(eq(appSchema.purchase.id, purchaseId));
+
+    await transferPurchaseToEmail(db, {
+      fromUserId: userId,
+      purchaseId,
+      targetEmail: "jina@example.cz",
+      actor: "admin:test",
+    });
+
+    const row = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.id, purchaseId))
+      .get();
+    expect(row?.invoiceEmail).toBe("fakturace@firma.cz");
+    expect(row?.fakturoidSubjectId).toBe(12345);
+  });
+
+  it("zapíše audit záznam", async () => {
+    const { userId, purchaseId } = await seedBuyer("firma4@example.cz");
+    const result = await transferPurchaseToEmail(db, {
+      fromUserId: userId,
+      purchaseId,
+      targetEmail: "audit@example.cz",
+      actor: "admin:patrick@vibecoding.cz",
+    });
+
+    const audit = await db
+      .select()
+      .from(identitySchema.userIdentityAudit)
+      .where(eq(identitySchema.userIdentityAudit.userId, result.toUserId))
+      .get();
+    expect(audit?.action).toBe("purchase_transferred");
+    expect(audit?.actor).toBe("admin:patrick@vibecoding.cz");
+    expect(JSON.parse(audit!.details!)).toMatchObject({
+      purchaseId,
+      fromEmail: "firma4@example.cz",
+      toEmail: "audit@example.cz",
+    });
+  });
+
+  it("převede nákup na účet, jehož vedlejší adresou je cíl", async () => {
+    const { userId, purchaseId } = await seedBuyer("firma6@example.cz");
+    const owner = await createAdminUser(db, { email: "hlavni@example.cz" });
+    await addUserEmail(db, { userId: owner.id, email: "vedlejsi@example.cz", via: "self-add" });
+    const usersBefore = (await db.select().from(authSchema.user).all()).length;
+
+    const result = await transferPurchaseToEmail(db, {
+      fromUserId: userId,
+      purchaseId,
+      targetEmail: "vedlejsi@example.cz",
+      actor: "admin:test",
+    });
+
+    expect(result.toUserId).toBe(owner.id);
+    expect(result.createdTargetUser).toBe(false);
+    expect((await db.select().from(authSchema.user).all()).length).toBe(usersBefore);
+    const moved = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.id, purchaseId))
+      .get();
+    expect(moved?.userId).toBe(owner.id);
+  });
+
+  it("odmítne převod na vedlejší adresu téhož účtu", async () => {
+    const { userId, purchaseId } = await seedBuyer("firma7@example.cz");
+    await addUserEmail(db, { userId, email: "druha@example.cz", via: "self-add" });
+    await expect(
+      transferPurchaseToEmail(db, {
+        fromUserId: userId,
+        purchaseId,
+        targetEmail: "druha@example.cz",
+        actor: "admin:test",
+      }),
+    ).rejects.toThrow(/stejnému účtu/i);
+  });
+
+  it("odmítne převod na stejnou adresu", async () => {
+    const { userId, purchaseId } = await seedBuyer("stejna@example.cz");
+    await expect(
+      transferPurchaseToEmail(db, {
+        fromUserId: userId,
+        purchaseId,
+        targetEmail: "STEJNA@example.cz",
+        actor: "admin:test",
+      }),
+    ).rejects.toThrow(/stejná/i);
+  });
+
+  it("odmítne neplatnou adresu i cizí objednávku", async () => {
+    const { userId, purchaseId } = await seedBuyer("firma5@example.cz");
+    await expect(
+      transferPurchaseToEmail(db, {
+        fromUserId: userId,
+        purchaseId,
+        targetEmail: "neni-email",
+        actor: "admin:test",
+      }),
+    ).rejects.toThrow(/platnou/i);
+
+    const other = await createAdminUser(db, { email: "cizi@example.cz" });
+    await expect(
+      transferPurchaseToEmail(db, {
+        fromUserId: other.id,
+        purchaseId,
+        targetEmail: "kamkoliv@example.cz",
+        actor: "admin:test",
+      }),
+    ).rejects.toThrow(/nenalezena/i);
+  });
+});
+
+describe("manuallyConfirmPayment", () => {
+  let db: ReturnType<typeof drizzle>;
+
+  beforeEach(async () => {
+    await env.DB.exec("DELETE FROM user_emails");
+    await env.DB.exec("DELETE FROM purchase");
+    await env.DB.exec("DELETE FROM session");
+    await env.DB.exec("DELETE FROM account");
+    await env.DB.exec("DELETE FROM user");
+    db = drizzle(env.DB, { schema: { ...authSchema, ...identitySchema, ...appSchema } });
+  });
+
+  /** Pending převodová objednávka se splatností za `dueInDays` dní. */
+  async function seedPending(email: string, dueInDays: number) {
+    const created = await createAdminUser(db, { email });
+    await db.insert(appSchema.purchase).values({
+      email,
+      userId: created.id,
+      type: "individual",
+      paymentMethod: "creditas",
+      status: "pending",
+      kind: "paid",
+      amountPaid: 3000,
+      expiresAt: new Date(Date.now() + dueInDays * 86_400_000),
+      createdAt: new Date(),
+    });
+    const row = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.userId, created.id))
+      .get();
+    return { userId: created.id, purchaseId: row!.id };
+  }
+
+  /**
+   * Regrese: expiresAt u pending objednávky je splatnost převodu (7 dní), ne
+   * platnost kurzu. Dřívější verze si ji při potvrzení uvnitř splatnosti
+   * ponechala a zákazník dostal přístup jen na týden.
+   */
+  it("dá plnou roční platnost i při potvrzení uvnitř splatnosti", async () => {
+    const { userId, purchaseId } = await seedPending("brzy@example.cz", 7);
+
+    await manuallyConfirmPayment(db, { userId, purchaseId, grantedBy: "admin@test.cz" });
+
+    const row = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.id, purchaseId))
+      .get();
+    const days = (row!.expiresAt.getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(360);
+    expect(row!.status).toBe("active");
+    expect(row!.kind).toBe("manual");
+  });
+
+  it("dá plnou roční platnost i u dávno propadlé objednávky", async () => {
+    const { userId, purchaseId } = await seedPending("stara@example.cz", -30);
+
+    await manuallyConfirmPayment(db, { userId, purchaseId });
+
+    const row = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.id, purchaseId))
+      .get();
+    const days = (row!.expiresAt.getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(360);
+  });
+
+  it("umí přepsat částku a odmítne nepending objednávku", async () => {
+    const { userId, purchaseId } = await seedPending("castka@example.cz", 7);
+
+    await manuallyConfirmPayment(db, { userId, purchaseId, amountPaid: 1500 });
+    const row = await db
+      .select()
+      .from(appSchema.purchase)
+      .where(eq(appSchema.purchase.id, purchaseId))
+      .get();
+    expect(row!.amountPaid).toBe(1500);
+
+    // Druhé potvrzení už projít nesmí — objednávka je aktivní.
+    await expect(
+      manuallyConfirmPayment(db, { userId, purchaseId }),
+    ).rejects.toThrow(/pending/i);
   });
 });

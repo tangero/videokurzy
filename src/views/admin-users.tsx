@@ -444,6 +444,24 @@ export function AdminUserDetailView({
                           </button>
                         </form>
                       )}
+                      <form
+                        method="post"
+                        action={`/admin/users/${user.id}/purchases/${p.id}/transfer`}
+                        class="flex items-center gap-1"
+                        onsubmit="return confirm('Převést tento nákup pod zadanou adresu? Obě adresy dostanou e-mail o změně.');"
+                        title="Převod pod jiný účet — např. kurz koupený na firmu, který má patřit pod soukromou adresu. Faktura zůstává beze změny."
+                      >
+                        <input
+                          type="email"
+                          name="targetEmail"
+                          required
+                          placeholder="nová@adresa.cz"
+                          class="w-40 rounded border px-2 py-1 text-xs"
+                        />
+                        <button class="text-xs bg-amber-600 text-white px-2 py-1 rounded hover:bg-amber-700">
+                          Převést
+                        </button>
+                      </form>
                     </div>
                   </td>
                 </tr>

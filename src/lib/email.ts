@@ -2,6 +2,7 @@
 // Odesílatel: Andrea Maloveczká <andrea@vibecoding.cz> (viz config/admin.ts)
 
 import { EMAIL_FROM, EMAIL_REPLY_TO } from "../config/admin";
+import { escapeHtml } from "./markdown";
 import type { Env } from "../types";
 import { TermsContent, TERMS_EFFECTIVE_DATE } from "../views/terms";
 import type { Prices } from "./prices";
@@ -299,6 +300,52 @@ export function accountDeletionConfirmHtml(confirmUrl: string): string {
     </p>`);
 }
 
+/**
+ * Převod nákupu na jiný účet — varianta pro NOVOU adresu (sem se přístup přesunul).
+ * Fakturační údaje se převodem nemění, proto to zpráva explicitně říká: lidé se
+ * typicky ptají, jestli přijdou o firemní doklad.
+ */
+export function purchaseTransferredToHtml(opts: {
+  fromEmail: string;
+  toEmail: string;
+  loginUrl: string;
+}): string {
+  const from = escapeHtml(opts.fromEmail);
+  const to = escapeHtml(opts.toEmail);
+  return emailWrapper(`
+    <p style="font-size: 16px; line-height: 1.5;">Dobrý den,</p>
+    <p style="font-size: 16px; line-height: 1.5;">na vaši žádost jsme přesunuli přístup ke kurzu z adresy <strong>${from}</strong> na tuto adresu <strong>${to}</strong>.</p>
+    <p style="font-size: 16px; line-height: 1.5;">Od teď se přihlašujte touto adresou — přihlášení funguje odkazem, který vám pošleme do e-mailu, heslo nepotřebujete.</p>
+    ${primaryButton(opts.loginUrl, "Přihlásit se")}
+    <p style="font-size: 16px; line-height: 1.5;">Faktura zůstává beze změny, včetně fakturačních údajů. Měnil se jen účet, pod kterým kurz sledujete.</p>
+    <p style="font-size: 14px; color: ${TEXT_MUTED}; line-height: 1.5;">
+      Kdyby cokoliv nefungovalo, stačí odpovědět na tento e-mail.
+    </p>`);
+}
+
+/**
+ * Převod nákupu na jiný účet — varianta pro PŮVODNÍ adresu (odsud přístup odešel).
+ * Obsahuje výzvu ozvat se: je to jediná pojistka, když by převod někdo vyvolal
+ * neoprávněně.
+ */
+export function purchaseTransferredFromHtml(opts: {
+  fromEmail: string;
+  toEmail: string;
+  loginUrl: string;
+}): string {
+  const from = escapeHtml(opts.fromEmail);
+  const to = escapeHtml(opts.toEmail);
+  return emailWrapper(`
+    <p style="font-size: 16px; line-height: 1.5;">Dobrý den,</p>
+    <p style="font-size: 16px; line-height: 1.5;">na vaši žádost jsme přesunuli přístup ke kurzu z této adresy <strong>${from}</strong> na adresu <strong>${to}</strong>.</p>
+    <p style="font-size: 16px; line-height: 1.5;">Pod touto adresou už kurz nenajdete — přihlaste se prosím tou novou.</p>
+    ${primaryButton(opts.loginUrl, "Přihlásit se")}
+    <p style="font-size: 16px; line-height: 1.5;">Faktura zůstává beze změny, včetně fakturačních údajů. Měnil se jen účet, pod kterým kurz sledujete.</p>
+    <p style="font-size: 14px; color: ${TEXT_MUTED}; line-height: 1.5;">
+      Pokud jste o změnu nežádali, ozvěte se nám prosím odpovědí na tento e-mail.
+    </p>`);
+}
+
 /** B2B — info o schválení domény adminem. */
 export function organizationApprovedHtml(domain: string, loginUrl: string): string {
   return emailWrapper(`
@@ -382,9 +429,13 @@ function renewalReminderHtml(daysLeft: number, renewUrl: string): string {
     ${primaryButton(renewUrl, "Obnovit přístup")}`);
 }
 
+/** Připomínka obnovy 21 dní před vypršením přístupu. */
 export const renewal21Html = (renewUrl: string) => renewalReminderHtml(21, renewUrl);
+/** Připomínka obnovy 14 dní před vypršením přístupu. */
 export const renewal14Html = (renewUrl: string) => renewalReminderHtml(14, renewUrl);
+/** Připomínka obnovy 7 dní před vypršením přístupu. */
 export const renewal7Html = (renewUrl: string) => renewalReminderHtml(7, renewUrl);
+/** Poslední připomínka obnovy — den před vypršením přístupu. */
 export const renewal1Html = (renewUrl: string) => renewalReminderHtml(1, renewUrl);
 
 // ─── Šablony: payment reminders (pending FIO objednávky) ──────────

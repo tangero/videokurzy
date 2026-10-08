@@ -9,7 +9,14 @@ import { requireAdmin } from "../middleware/auth";
 import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch, invoiceJob } from "../db/schema";
 import { reportPurchase } from "../lib/conversions";
 import { Layout } from "../views/layout";
-import { sendEmail, organizationApprovedHtml, adminWelcomeUserHtml, ccNewsNewsletterHtml } from "../lib/email";
+import {
+  sendEmail,
+  organizationApprovedHtml,
+  adminWelcomeUserHtml,
+  ccNewsNewsletterHtml,
+  purchaseTransferredToHtml,
+  purchaseTransferredFromHtml,
+} from "../lib/email";
 import {
   createAdminUsers,
   defaultAdminGrantExpiresOn,
@@ -22,6 +29,7 @@ import {
   revokeAdminPurchase,
   extendAdminPurchase,
   manuallyConfirmPayment,
+  transferPurchaseToEmail,
   normalizeSqlTimestampDate,
 } from "../lib/admin-users";
 import { invalidateAccessCache } from "../lib/access";
@@ -1125,6 +1133,11 @@ const FLASH_MESSAGES: Record<string, { kind: "ok" | "err"; text: string }> = {
   confirmed: { kind: "ok", text: "Platba potvrzena ručně." },
   revoked: { kind: "ok", text: "Přístup odebrán." },
   extended: { kind: "ok", text: "Platnost přístupu upravena." },
+  transferred: { kind: "ok", text: "Nákup převeden. Obě adresy dostaly e-mail o změně." },
+  transferred_nomail: {
+    kind: "err",
+    text: "Nákup převeden, ale nepodařilo se odeslat oznamovací e-mail — informujte uživatele ručně.",
+  },
 };
 
 function flashFromQuery(c: { req: { query: (k: string) => string | undefined } }) {
@@ -1337,6 +1350,61 @@ admin.post("/admin/users/:id/purchases/:purchaseId/confirm", async (c) => {
     return c.redirect(`/admin/users/${id}?ok=confirmed`);
   } catch (err) {
     const message = encodeURIComponent((err as Error).message || "Platbu se nepodařilo potvrdit.");
+    return c.redirect(`/admin/users/${id}?err=${message}`);
+  }
+});
+
+// Převod nákupu pod jinou adresu — typicky kurz koupený na firmu, který má
+// patřit pod soukromý účet. Notifikace jdou na obě adresy, aby o změně věděl
+// i ten, kdo o přístup přišel.
+admin.post("/admin/users/:id/purchases/:purchaseId/transfer", async (c) => {
+  const currentUser = c.get("user")!;
+  const id = c.req.param("id");
+  const purchaseId = parseInt(c.req.param("purchaseId"), 10);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.parseBody();
+  const targetEmail = String(body.targetEmail ?? "");
+
+  try {
+    const result = await transferPurchaseToEmail(db, {
+      fromUserId: id,
+      purchaseId,
+      targetEmail,
+      actor: `admin:${currentUser.email}`,
+    });
+
+    // Oba účty ztratily/získaly přístup — cache musí pryč u obou. Best-effort:
+    // převod v DB už proběhl, selhání KV nesmí skončit hláškou „převod se
+    // nepodařil" (opakovaný pokus by pak padl na „Objednávka nenalezena").
+    // Cache má TTL 5 min, starý účet o přístup přijde nejpozději pak.
+    const invalidated = await Promise.allSettled([
+      invalidateAccessCache(c.env.KV, id),
+      invalidateAccessCache(c.env.KV, result.toUserId),
+    ]);
+    for (const r of invalidated) {
+      if (r.status === "rejected") console.error("[transfer] invalidace access cache selhala", r.reason);
+    }
+
+    // Notifikace jsou best-effort: převod v DB už proběhl a neúspěšný e-mail
+    // ho nesmí shodit. Selhání se propíše do flash zprávy.
+    const loginUrl = `${new URL(c.req.url).origin}/login`;
+    const sent = await Promise.all([
+      sendEmail(c.env, {
+        to: result.toEmail,
+        subject: "Přístup ke kurzu převeden na tuto adresu",
+        html: purchaseTransferredToHtml({ ...result, loginUrl }),
+      }),
+      sendEmail(c.env, {
+        to: result.fromEmail,
+        subject: "Přístup ke kurzu převeden na jinou adresu",
+        html: purchaseTransferredFromHtml({ ...result, loginUrl }),
+      }),
+    ]);
+
+    const flash = sent.every(Boolean) ? "ok=transferred" : "ok=transferred_nomail";
+    return c.redirect(`/admin/users/${result.toUserId}?${flash}`);
+  } catch (err) {
+    const message = encodeURIComponent((err as Error).message || "Převod se nepodařil.");
     return c.redirect(`/admin/users/${id}?err=${message}`);
   }
 });
