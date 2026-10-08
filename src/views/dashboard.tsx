@@ -1,5 +1,6 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
+import { LessonSearchForm, LessonSearchResults, type LessonSearchState } from "./lesson-search";
 
 interface LessonItem {
   id: number;
@@ -24,6 +25,8 @@ interface DashboardProps {
   totalCount: number;
   hasPaidAccess: boolean;
   priceIndividual: number;
+  /** Aktivní vyhledávání (/dashboard?q=...) — místo osnovy se vykreslí výsledky. */
+  search?: LessonSearchState;
 }
 
 function formatDuration(seconds: number): string {
@@ -81,6 +84,7 @@ export const DashboardPage: FC<DashboardProps> = ({
   totalCount,
   hasPaidAccess,
   priceIndividual,
+  search,
 }) => {
   const allLessons = modules.flatMap((m) => m.lessons);
   const accessibleLessons = allLessons.filter((l) => hasPaidAccess || l.isFree);
@@ -181,14 +185,24 @@ export const DashboardPage: FC<DashboardProps> = ({
 
         {/* Module list */}
         <section>
-          <div class="section-header">
+          <div class="section-header" style="flex-wrap:wrap;align-items:flex-end">
             <div>
               <div class="kicker">osnova</div>
               <h2 style="font-family:var(--font-head);font-size:1.5rem;font-weight:600;margin:0">
-                Všechny epizody
+                {search ? "Výsledky hledání" : "Všechny epizody"}
               </h2>
             </div>
+            <LessonSearchForm action="/dashboard" query={search?.query} />
           </div>
+          {search ? (
+            <LessonSearchResults
+              search={search}
+              hasPaidAccess={hasPaidAccess}
+              lessonNumber={(id) => allLessons.findIndex((l) => l.id === id) + 1}
+              resetHref="/dashboard"
+              resetLabel="zobrazit všechny epizody"
+            />
+          ) : (
           <div class="module-list" style="margin-bottom:40px">
             {modules.map((m) => {
               const modDuration = m.lessons.reduce((a, l) => a + l.durationSeconds, 0);
@@ -244,6 +258,7 @@ export const DashboardPage: FC<DashboardProps> = ({
               );
             })}
           </div>
+          )}
         </section>
       </div>
 

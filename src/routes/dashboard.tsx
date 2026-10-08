@@ -7,6 +7,7 @@ import { course, module, lesson, progress, siteConfig } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { DashboardPage } from "../views/dashboard";
 import { PRICE_INDIVIDUAL } from "../config/payment";
+import { normalizeSearchQuery, searchLessons } from "../lib/lesson-search";
 
 const dashboard = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -85,6 +86,10 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
   const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
   const priceIndividual = parseInt(settings.price_individual ?? String(PRICE_INDIVIDUAL), 10);
 
+  // Vyhledávání: /dashboard?q=... → výsledky místo osnovy (hero se statistikami zůstává).
+  const query = normalizeSearchQuery(c.req.query("q"));
+  const searchHits = query ? await searchLessons(db, query) : null;
+
   return c.html(
     <DashboardPage
       user={user}
@@ -93,6 +98,14 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
       totalCount={totalCount}
       hasPaidAccess={hasPaidAccess}
       priceIndividual={priceIndividual}
+      search={
+        query && searchHits
+          ? {
+              query,
+              results: searchHits.map((h) => ({ ...h, completed: completedSet.has(h.id) })),
+            }
+          : undefined
+      }
     />
   );
 });

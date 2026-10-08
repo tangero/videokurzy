@@ -1,5 +1,6 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
+import { LessonSearchForm } from "./lesson-search";
 
 type DiscountStageView =
   | { kind: "off" }
@@ -221,6 +222,11 @@ export const LandingPage: FC<LandingProps> = ({
             )}
           </div>
         </div>
+        {modules.length > 0 && (
+          <div style="margin:-8px 0 20px;max-width:420px">
+            <LessonSearchForm action="/hledat" />
+          </div>
+        )}
         <div class="module-list">
           {modules.map((m, mi) => (
             <div class="module">
