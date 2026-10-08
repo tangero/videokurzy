@@ -8,6 +8,8 @@ import { shouldResume } from "../lib/watch-stats";
 import { hasAccess } from "../lib/access";
 import { generateSignedEmbedUrl } from "../lib/bunny";
 import { WatchPage } from "../views/watch";
+import { WatchPublicPage } from "../views/watch-public";
+import { fetchLessonThumbnail, lessonOgDescription, lessonOgImagePath } from "../lib/og";
 import { NotFoundError } from "../lib/errors";
 
 const watch = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -74,13 +76,32 @@ watch.get("/watch/:slug", async (c) => {
     throw new NotFoundError("Epizoda nenalezena");
   }
 
+  // OG / X card metadata — aby sdílený odkaz na FB/X ukázal název, popis
+  // a thumbnail konkrétní epizody, ne homepage.
+  const origin = new URL(c.req.url).origin;
+  const ogUrl = `${origin}/watch/${found.slug}`;
+  const ogImage = found.bunnyVideoId ? `${origin}${lessonOgImagePath(found.slug)}` : undefined;
+
   // Free lessons are accessible to everyone
   let hasPaidAccess = false;
   if (!found.isFree) {
     if (!user) {
-      // Nepřihlášený je především potenciální zákazník bez nákupu → ukaž ceník
-      // (kde má vedle nabídky koupě i jasnou možnost přihlásit se, pokud už koupeno má).
-      return c.redirect("/#cenik");
+      // Nepřihlášený (vč. crawleru Facebooku/X) dostane veřejnou stránku
+      // epizody s OG metadaty a odkazem na ceník / přihlášení. Obsah zůstává
+      // za paywallem.
+      const [mod] = await db
+        .select({ title: module.title })
+        .from(module)
+        .where(eq(module.id, found.moduleId))
+        .limit(1);
+      return c.html(
+        <WatchPublicPage
+          lesson={{ ...found, moduleTitle: mod?.title }}
+          description={lessonOgDescription(found.bodyMarkdown, mod?.title)}
+          ogUrl={ogUrl}
+          ogImage={ogImage}
+        />
+      );
     }
 
     // Platform-wide access check (no courseId needed). Admins bypass paywall.
@@ -178,8 +199,42 @@ watch.get("/watch/:slug", async (c) => {
       isLastFreeLesson={isLastFreeLesson}
       nearbyLessons={nearbyLessons}
       lessonGlobalIndex={globalIdx}
+      ogDescription={lessonOgDescription(found.bodyMarkdown, moduleRow[0]?.title)}
+      ogUrl={ogUrl}
+      ogImage={ogImage}
     />
   );
+});
+
+// Náhledový obrázek epizody pro og:image / twitter:image. Veřejný (crawlery
+// nejsou přihlášené) — thumbnail není chráněný obsah. Proxy přes worker,
+// protože Bunny pull zóna blokuje přímý přístup bez Refereru/tokenu.
+watch.get("/og/watch/:file{.+\\.jpg}", async (c) => {
+  const slug = decodeURIComponent(c.req.param("file").replace(/\.jpg$/, ""));
+  const cache = caches.default;
+  const cacheKey = new Request(new URL(c.req.url).toString());
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const db = drizzle(c.env.DB);
+  const [row] = await db
+    .select({ bunnyVideoId: lesson.bunnyVideoId })
+    .from(lesson)
+    .where(eq(lesson.slug, slug))
+    .limit(1);
+  if (!row?.bunnyVideoId) return c.text("Not found", 404);
+
+  const upstream = await fetchLessonThumbnail(c.env, row.bunnyVideoId);
+  if (!upstream) return c.text("Not found", 404);
+
+  const res = new Response(upstream.body, {
+    headers: {
+      "Content-Type": upstream.headers.get("Content-Type") ?? "image/jpeg",
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
+  c.executionCtx.waitUntil(cache.put(cacheKey, res.clone()));
+  return res;
 });
 
 export { watch as watchRoutes };

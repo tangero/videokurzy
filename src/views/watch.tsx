@@ -45,6 +45,10 @@ interface WatchProps {
   // (běžné /watch/ ho nepoužívá). Slouží jen k zacílení z klientského scriptu
   // na demo routě /watch-chyba/.
   moduleTitleId?: string;
+  /** OG / X card metadata pro sdílení odkazu na epizodu. */
+  ogDescription?: string;
+  ogUrl?: string;
+  ogImage?: string;
 }
 
 function formatDuration(seconds: number): string {
@@ -108,6 +112,9 @@ export const WatchPage: FC<WatchProps> = ({
   lessonGlobalIndex,
   resumePosition,
   moduleTitleId,
+  ogDescription,
+  ogUrl,
+  ogImage,
 }) => {
   const idx = lessonGlobalIndex ?? 0;
   const moduleNum = String(lesson.moduleId).padStart(2, "0");
@@ -115,7 +122,14 @@ export const WatchPage: FC<WatchProps> = ({
   const bodyHtml = renderMarkdown(bodyMarkdown);
 
   return (
-    <Layout title={lesson.title} user={user}>
+    <Layout
+      title={lesson.title}
+      description={ogDescription}
+      ogUrl={ogUrl}
+      ogImage={ogImage}
+      ogType={ogUrl ? "video.other" : undefined}
+      user={user}
+    >
       <div class="container" style="padding-top:20px">
         <a class="btn btn-ghost btn-sm" href="/dashboard" style="margin-bottom:18px;display:inline-flex">
           <ArrowLeftIcon /> zpět na dashboard

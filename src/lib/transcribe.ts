@@ -19,6 +19,8 @@ export type BunnyVideo = {
   length: number;
   status: number;
   captions: BunnyCaption[] | null;
+  /** Jméno souboru náhledu v pull zóně; po vlastním thumbnailu se mění. */
+  thumbnailFileName?: string | null;
 };
 
 /** Spustí transkripci videa. Zdrojový jazyk default čeština. */
@@ -102,7 +104,7 @@ export async function fetchBunnyVideo(env: Env, videoId: string): Promise<BunnyV
  * Podepíše URL pomocí Bunny CDN Basic Token Authentication.
  * token = base64-url(MD5(security_key + path + expires))
  */
-function signPullZoneUrl(path: string, securityKey: string, expirySeconds: number): string {
+export function signPullZoneUrl(path: string, securityKey: string, expirySeconds: number): string {
   const expires = Math.floor(Date.now() / 1000) + expirySeconds;
   const hashable = `${securityKey}${path}${expires}`;
   const token = createHash("md5")

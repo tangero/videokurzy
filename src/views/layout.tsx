@@ -6,6 +6,11 @@ interface LayoutProps {
   user?: { name: string | null; email: string } | null;
   /** Gated/privátní stránky (jen pro platící) — vyřadit z indexu vyhledávačů. */
   noindex?: boolean;
+  /** Absolutní URL stránky pro og:url (sdílení na FB/X). Default homepage. */
+  ogUrl?: string;
+  /** Absolutní URL náhledového obrázku pro og:image / twitter:image. */
+  ogImage?: string;
+  ogType?: string;
 }
 
 // Design tokens a komponentní CSS jsou v src/styles/input.css a minifikovány
@@ -30,6 +35,9 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
   description = "Naučte se vibe coding s Claude Code. 10 epizod, od nápadu po deployment.",
   user,
   noindex,
+  ogUrl = "https://kurzy.vibecoding.cz",
+  ogImage,
+  ogType = "website",
   children,
 }) => (
   <html lang="cs">
@@ -41,8 +49,16 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
       {noindex && <meta name="robots" content="noindex" />}
       <meta property="og:title" content={title} />
       <meta property="og:description" content={description} />
-      <meta property="og:type" content="website" />
-      <meta property="og:url" content="https://kurzy.vibecoding.cz" />
+      <meta property="og:type" content={ogType} />
+      <meta property="og:url" content={ogUrl} />
+      <meta property="og:site_name" content="kurzy.vibecoding.cz" />
+      <meta property="og:locale" content="cs_CZ" />
+      {ogImage && <meta property="og:image" content={ogImage} />}
+      {ogImage && <meta property="og:image:alt" content={title} />}
+      <meta name="twitter:card" content={ogImage ? "summary_large_image" : "summary"} />
+      <meta name="twitter:title" content={title} />
+      <meta name="twitter:description" content={description} />
+      {ogImage && <meta name="twitter:image" content={ogImage} />}
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
       <link
