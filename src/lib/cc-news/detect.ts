@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { ccNewsItem } from "../../db/schema";
+import { changelogSourceId, weekFromSourceId } from "./changelog-source";
 
 type Db = ReturnType<typeof drizzle>;
 
@@ -308,6 +309,24 @@ async function upsertDetectedItem(
       })
       .where(eq(ccNewsItem.id, row.id));
     return { kind: "changed", sourceId: item.sourceId, itemId: row.id };
+  }
+
+  // Týden už pokrývá vydání ze changelogu (od W38/2026, kdy oficiální přehledy
+  // nevycházely). Oficiální přehled by dostal STEJNÝ slug (`2026-w38-novinky`)
+  // a vznikl by duplicitní článek. Nezakládáme ho, jen upozorníme.
+  const week = weekFromSourceId(item.sourceId);
+  if (week) {
+    const [covered] = await db
+      .select({ id: ccNewsItem.id })
+      .from(ccNewsItem)
+      .where(eq(ccNewsItem.sourceId, changelogSourceId(week)))
+      .limit(1);
+    if (covered) {
+      console.error(
+        `[cc-news] oficiální přehled ${item.sourceId} dorazil k týdnu, který už pokrývá vydání ze changelogu (${covered.id}) — nezakládám duplicitní článek`
+      );
+      return { kind: "unchanged", sourceId: item.sourceId, itemId: covered.id };
+    }
   }
 
   // Nový sourceId. onConflictDoNothing ošetří závod (souběžný cron + ruční

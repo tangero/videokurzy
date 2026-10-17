@@ -14,10 +14,11 @@ import { parseDigest, renderArticle, type EditorEnv } from "./editor";
 import { prepareDraftAndApproval, type PreparedDraft } from "./draft";
 import { defaultFetchers, type Fetchers } from "./detect";
 import { sendEmail } from "../email";
+import type { LlmEnv } from "./llm";
 
 type Db = ReturnType<typeof drizzle>;
 
-export interface PipelineEnv extends EditorEnv {
+export interface PipelineEnv extends EditorEnv, LlmEnv {
   KV: KVNamespace;
   AUTH_INTERNAL_SECRET: string;
   BETTER_AUTH_URL?: string;
@@ -47,6 +48,23 @@ export async function processCcNewsItem(
   now: Date,
   fetchers: Fetchers = defaultFetchers()
 ): Promise<PreparedDraft & { usedLlm: boolean }> {
+  // Od Week 38/2026 vychází článek ze changelogu a dokumentace (oficiální
+  // přehledy Anthropic nevydává). Stejné schvalování, jen jiný zdroj a styl.
+  if (ref.sourceId.startsWith("/changelog/")) {
+    const { buildChangelogArticle, reviewKvKey } = await import("./weekly");
+    const article = await buildChangelogArticle(db, env, ref.itemId, now);
+    await env.KV.put(reviewKvKey(ref.itemId), JSON.stringify(article.review));
+    const prepared = await prepareDraftAndApproval(
+      db,
+      env,
+      ref.itemId,
+      article.markdown,
+      { slug: articleSlug(ref.sourceId), weekLabel: article.weekLabel, versionRange: article.versionRange },
+      now
+    );
+    return { ...prepared, usedLlm: true };
+  }
+
   const digestMd = await fetchers.fetchDetail(ref.sourceId);
   const parsed = parseDigest(digestMd);
   // renderArticle dostane už naparsovaný digest, aby se neparsovalo dvakrát.

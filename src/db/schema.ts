@@ -438,6 +438,34 @@ export const ccNewsItem = sqliteTable("cc_news_item", {
   publishedAt: integer("publishedAt", { mode: "timestamp" }),
 });
 
+// Položky changelogu Claude Code roztříděné do témat (Novinky v CC, fáze 2).
+// id = <verze>#<sha8(text)>; viz src/lib/cc-news/changelog-source.ts.
+export const ccChangeItem = sqliteTable(
+  "cc_change_item",
+  {
+    id: text("id").primaryKey(),
+    version: text("version").notNull(),
+    publishedAt: integer("publishedAt", { mode: "timestamp" }).notNull(),
+    ord: integer("ord").notNull(),
+    type: text("type").notNull(),
+    scope: text("scope"),
+    text: text("text").notNull(),
+    topic: text("topic"),
+    significance: integer("significance"),
+    reason: text("reason"),
+    followsId: text("followsId"),
+    relation: text("relation"),
+    followReason: text("followReason"),
+    classifiedAt: integer("classifiedAt", { mode: "timestamp" }),
+    promptVersion: text("promptVersion"),
+  },
+  (t) => [
+    index("cc_change_item_version_idx").on(t.version),
+    index("cc_change_item_topic_idx").on(t.topic, t.publishedAt),
+    index("cc_change_item_unclassified_idx").on(t.classifiedAt),
+  ],
+);
+
 // Odhlášení z newsletteru „Novinky v Claude Code" (GDPR, W-007). ZÁMĚRNĚ NEdrží
 // plain e-mail: klíč je `emailHash` = HMAC-SHA256(normalizovaný e-mail, účel
 // `claude_code_news`). Výběr příjemců spočítá stejný hash a udělá anti-join.

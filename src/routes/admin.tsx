@@ -2240,6 +2240,33 @@ admin.post("/admin/api/cc-news/diag/llm", async (c) => {
 // GET varianta triggeru — spustitelná přímo z adresního řádku prohlížeče (kde
 // session cookie funguje). Stejná logika jako POST; sdílí runCcNewsTrigger.
 admin.get("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
+
+// Ruční založení vydání ze changelogu pro konkrétní týden (?week=2026-w39) —
+// pro zpětné týdny, které cron nezaložil (zakládá jen poslední uzavřený týden).
+// Týdny zakládej postupně: rozsah verzí navazuje na konec posledního vydání.
+// Článek se staví na pozadí (fronta) a pak přijde schvalovací e-mail.
+admin.get("/admin/api/cc-news/changelog-week", async (c) => runChangelogWeek(c));
+admin.post("/admin/api/cc-news/changelog-week", async (c) => runChangelogWeek(c));
+
+async function runChangelogWeek(c: Context<{ Bindings: Env; Variables: Variables }>) {
+  const m = (c.req.query("week") ?? "").match(/^(\d{4})-w(\d{1,2})$/i);
+  if (!m) return c.redirect(`/admin?ccNews=${encodeURIComponent("Zadej týden jako ?week=2026-w39.")}`);
+  const week = { year: Number(m[1]), week: Number(m[2]) };
+  const db = drizzle(c.env.DB);
+  const { createChangelogWeekItem } = await import("../lib/cc-news/changelog-week");
+  const { enqueueCcNewsItem } = await import("../queue");
+  const outcome = await createChangelogWeekItem(db, week, new Date());
+  if (outcome.kind === "created" || outcome.kind === "exists") {
+    await enqueueCcNewsItem(c.env, outcome.itemId, outcome.sourceId, { manualTrigger: true, force: c.req.query("force") === "1" });
+  }
+  const msg = {
+    created: `Vydání ${outcome.sourceId} založeno (${"versionRange" in outcome ? outcome.versionRange : ""}); článek se staví na pozadí, schvalovací e-mail dorazí za pár minut.`,
+    exists: `Vydání ${outcome.sourceId} už existuje; koncept se staví znovu na pozadí (pokud e-mail ještě neodešel, nebo s ?force=1).`,
+    official: `Za týden ${outcome.sourceId} existuje oficiální přehled Anthropicu — ze changelogu nezakládám.`,
+    empty: `V týdnu ${outcome.sourceId} nevyšla žádná nová verze (nebo ji už pokrývá dřívější vydání).`,
+  }[outcome.kind];
+  return c.redirect(`/admin?ccNews=${encodeURIComponent(msg)}`);
+}
 admin.post("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
 
 // Doplnění chybějících STARŠÍCH týdnů přímo na web (zacelení mezer typu Week 25,

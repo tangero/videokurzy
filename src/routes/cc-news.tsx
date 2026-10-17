@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { approveItem, articleRepoPath, draftKvKey, publishedKvKey } from "../lib/cc-news/draft";
 import { fixDocLinksInMarkdown } from "../lib/cc-news/editor";
 import { ccNewsItem } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { renderMarkdown, escapeHtml } from "../lib/markdown";
-import { CcNewsListPage, CcNewsArticlePage } from "../views/cc-news";
+import { CcNewsListPage, CcNewsArticlePage, CcTopicsPage, CcTopicPage } from "../views/cc-news";
 import type { Env, Variables } from "../types";
 
 /** Slug z articlePath `src/content/novinky-cc/<slug>.md`. */
@@ -101,6 +101,27 @@ const pageShell = (title: string, body: string): string =>
   `<meta name="robots" content="noindex"><title>${escapeHtml(title)}</title></head>` +
   `<body><main>${body}</main></body></html>`;
 
+/** Recenzní údaje konceptu ze changelogu: co se vybralo, opravilo, vynechalo a co hlídat. */
+function reviewHtml(r: import("../lib/cc-news/weekly").WeeklyReview): string {
+  const li = (xs: string[]) => (xs.length ? `<ul>${xs.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : "<p>—</p>");
+  const warn = [
+    ...r.editorNotes.map((n) => `Poznámka editoru: ${n}`),
+    ...r.versionIssues.map((v) => `Verze ${v} v textu nesedí s žádnou citovanou položkou`),
+    ...r.dropped.map((d) => `Vyřazeno kontrolou faktů: ${d.title} (${d.problem})`),
+  ];
+  return (
+    `<section style="border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin:12px 0 24px;font-size:14px">` +
+    `<p><strong>Ke kontrole:</strong> ${escapeHtml(r.weekLabel)}, ${escapeHtml(r.versionRange)} · ${r.entries} položek changelogu · ${r.docsChanges} změn v dokumentaci</p>` +
+    (warn.length ? `<p style="color:#b45309"><strong>Pozor:</strong></p>${li(warn)}` : "") +
+    `<p><strong>Signály z dokumentace:</strong></p>${li(r.signals.map((s) => `${s.page}: ${s.kind === "new-page" ? "nová stránka" : "velký nový oddíl"} (${s.words} slov)`))}` +
+    `<p><strong>Hlavní novinky a zdroje:</strong></p>${li(r.features.map((f) => `${f.title} (${f.version}) ← ${f.sourceIds.join(", ")}`))}` +
+    (r.fixed.length ? `<p><strong>Opraveno kontrolou faktů:</strong></p>${li(r.fixed.map((f) => `${f.title}: ${f.problem}`))}` : "") +
+    `<details><summary>Vynechané zásadní změny (${r.skipped.length})</summary>${li(r.skipped.map((k) => `${k.id}: ${k.reason}`))}</details>` +
+    (r.strippedLinks.length ? `<p>Odstraněné odkazy mimo dokumentaci: ${r.strippedLinks.map(escapeHtml).join(", ")}</p>` : "") +
+    `</section>`
+  );
+}
+
 // Seznam publikovaných článků „Novinky v CC" — gated, v designu serveru.
 ccNewsRoutes.get("/novinky-cc", async (c) => {
   const redirect = await gateOrRedirect(c);
@@ -187,6 +208,62 @@ ccNewsRoutes.get("/novinky-cc/unsubscribe", async (c) => {
   return c.html(pageShell("Odhlášení", `<p>${msg}</p>`));
 });
 
+// Vývoj témat changelogu — gated. MUSÍ být PŘED /novinky-cc/:slug.
+ccNewsRoutes.get("/novinky-cc/temata", async (c) => {
+  const redirect = await gateOrRedirect(c);
+  if (redirect) return redirect;
+  const { TOPICS } = await import("../lib/cc-news/taxonomy");
+  const { ccChangeItem } = await import("../db/schema");
+  const db = drizzle(c.env.DB);
+  const stats = await db
+    .select({ topic: ccChangeItem.topic, n: sql<number>`count(*)`, last: sql<number>`max(${ccChangeItem.publishedAt})` })
+    .from(ccChangeItem)
+    .where(gte(ccChangeItem.significance, 2))
+    .groupBy(ccChangeItem.topic);
+  const byTopic = new Map(stats.map((s) => [s.topic, s]));
+  const topics = TOPICS.filter((t) => t.key !== "other")
+    .map((t) => ({
+      key: t.key, label: t.label, description: t.description,
+      count: Number(byTopic.get(t.key)?.n ?? 0),
+      lastAt: byTopic.get(t.key)?.last ? Number(byTopic.get(t.key)!.last) * 1000 : null,
+    }))
+    .sort((a, b) => b.count - a.count);
+  const user = c.get("user")!;
+  return c.html(<CcTopicsPage user={{ name: user.name ?? null, email: user.email }} topics={topics} />);
+});
+
+ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {
+  const redirect = await gateOrRedirect(c);
+  if (redirect) return redirect;
+  const { TOPICS } = await import("../lib/cc-news/taxonomy");
+  const { ccChangeItem } = await import("../db/schema");
+  const t = TOPICS.find((x) => x.key === c.req.param("topic") && x.key !== "other");
+  if (!t) return c.html(pageShell("Nenalezeno", "<p>Téma nenalezeno.</p>"), 404);
+  const db = drizzle(c.env.DB);
+  const rows = await db
+    .select()
+    .from(ccChangeItem)
+    .where(and(eq(ccChangeItem.topic, t.key), gte(ccChangeItem.significance, 2)))
+    .orderBy(desc(ccChangeItem.publishedAt), desc(ccChangeItem.ord));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const entries = rows.map((r) => {
+    const f = r.followsId ? byId.get(r.followsId) : undefined;
+    return {
+      id: r.id, version: r.version, publishedAt: r.publishedAt.getTime(), significance: r.significance ?? 2,
+      text: r.text, reason: r.reason,
+      follows: f ? { id: f.id, version: f.version, relation: r.relation, reason: r.followReason } : null,
+    };
+  });
+  const user = c.get("user")!;
+  return c.html(
+    <CcTopicPage
+      user={{ name: user.name ?? null, email: user.email }}
+      topic={{ key: t.key, label: t.label, description: t.description, count: entries.length, lastAt: entries[0]?.publishedAt ?? null }}
+      entries={entries}
+    />,
+  );
+});
+
 // Detail článku — gated.
 ccNewsRoutes.get("/novinky-cc/:slug", async (c) => {
   const redirect = await gateOrRedirect(c);
@@ -233,11 +310,15 @@ ccNewsRoutes.get("/internal/cc-news/draft/:id", async (c) => {
   const id = c.req.param("id");
   const draft = await c.env.KV.get(draftKvKey(id));
   if (!draft) return c.html(pageShell("Náhled konceptu", "<p>Koncept nenalezen.</p>"), 404);
+  // Vydání ze changelogu nesou recenzní údaje (výběr, kontrola faktů, poznámky editoru).
+  const { reviewKvKey } = await import("../lib/cc-news/weekly");
+  const review = await c.env.KV.get<import("../lib/cc-news/weekly").WeeklyReview>(reviewKvKey(id), "json");
 
   return c.html(
     pageShell(
       "Náhled konceptu — Novinky v Claude Code",
       `<p style="color:#b45309"><strong>Koncept (zatím nepublikováno).</strong> Úpravy se dělají na GitHubu; po schválení se publikuje.</p>` +
+        (review ? reviewHtml(review) : "") +
         renderMarkdown(fixDocLinksInMarkdown(stripFrontMatter(draft)))
     )
   );

@@ -73,6 +73,24 @@ account klíč Stream API nepřijímá a token key přes API nejde získat. Libr
 pro lekci vždy přes `resolveBunnyLibrary()` v `src/lib/bunny-library.ts`,
 nikdy napřímo `env.BUNNY_*`.
 
+## Novinky v CC — zdroj od Week 38/2026
+Anthropic od Week 37 nevydává oficiální týdenní přehledy (whats-new RSS stojí).
+Článek vzniká ze **changelogu** (CHANGELOG.md, data vydání ze stránky changelogu
+v dokumentaci; GitHub releases ne — chybí v nich verze) a z **rozdílů v dokumentaci**
+(týdenní snímky v KV `cc-docs:*`). Kód: `src/lib/cc-news/{changelog-source,classify,
+docs-snapshot,weekly,changelog-week}.ts`, tabulka `cc_change_item` (témata, význam,
+návaznosti; stránky `/novinky-cc/temata`).
+- Denní cron synchronizuje changelog a snímek dokumentace; v pondělí zmrazí týden
+  a založí vydání `/changelog/<rok>-w<NN>` za minulý týden → fronta → schvalovací e-mail.
+- Zpětné týdny ručně: `/admin/api/cc-news/changelog-week?week=2026-w39`, **postupně**
+  (rozsah verzí navazuje na konec posledního vydání).
+- Styl článku = skill „Technický článek" (`WRITER_SYSTEM` v `weekly.ts`). Názor
+  v 1. osobě ano, **vymyšlené osobní zkušenosti autora ne**.
+- Nová stránka dokumentace / velký nový oddíl = povinně hlavní novinka.
+- Oficiální přehled k týdnu, který už má vydání ze changelogu, se nezakládá
+  (stejný slug `<rok>-w<NN>-novinky`) — viz dedupe v `detect.ts`.
+- Lokální experimenty a porovnání: `scripts/cc-news-changelog/`, `docs/cc-news-changelog/`.
+
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,
   krátké klíče). Ostré secrets žijí jen v Cloudflare dashboardu.

@@ -10,3 +10,4 @@ scripts/discount-invites/out/
 .claude/scheduled_tasks.lock
 pruzkum-zm/
 scripts/event-invites/out/
+.cc-news-out/

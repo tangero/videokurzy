@@ -25,7 +25,9 @@ type WebhookMessageType =
   // Rozeslání newsletteru daného vydání předplatitelům. Běží NA POZADÍ (fronta),
   // protože odeslání stovek e-mailů přes Resend trvá déle než HTTP request —
   // admin zařadí a hned dostane odpověď, rozeslání doběhne asynchronně.
-  | "cc-news.send-newsletter";
+  | "cc-news.send-newsletter"
+  // Dotřídění položek changelogu do témat (Haiku). Bez payloadu; idempotentní.
+  | "cc-news.classify";
 
 interface WebhookMessage {
   type: WebhookMessageType;
@@ -68,6 +70,11 @@ export async function enqueueCcNewsItem(
 ): Promise<void> {
   const data: CcNewsDetectedData = { itemId, sourceId, ...opts };
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.detected", data });
+}
+
+/** Zařadí dotřídění nezatříděných položek changelogu (běží na pozadí, LLM). */
+export async function enqueueCcNewsClassify(env: Env): Promise<void> {
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.classify", data: {} });
 }
 
 /**
@@ -121,6 +128,10 @@ export async function handleQueue(
           // Asynchronní rozeslání newsletteru vydání. Idempotentní přes zámek
           // newsletterSentAt — retry po selhání nepošle duplicitně.
           await handleCcNewsSendNewsletter(db, env, data as unknown as CcNewsSendNewsletterData);
+          break;
+
+        case "cc-news.classify":
+          await handleCcNewsClassify(db, env);
           break;
 
         default:
@@ -699,6 +710,19 @@ async function handleInvoicePaid(
     paidAtConfidence: hasPaidAt ? "exact" : "estimated",
     billing: purchaseToBillingSnapshot(p),
   });
+}
+
+/**
+ * Dotřídí dávku nezatříděných položek changelogu. Když po ní něco zbývá a dávka
+ * pokročila, zařadí další (bez pokroku nezařazuje — žádná nekonečná smyčka).
+ * Chyba LLM se propaguje → retry fronty (třídění je idempotentní).
+ */
+async function handleCcNewsClassify(db: ReturnType<typeof drizzle>, env: Env): Promise<void> {
+  const { classifyPending, countUnclassified } = await import("./lib/cc-news/classify");
+  const done = await classifyPending(db, env, new Date(), 300);
+  const left = await countUnclassified(db);
+  console.log(`[queue] cc-news.classify: zatříděno ${done}, zbývá ${left}`);
+  if (done > 0 && left > 0) await enqueueCcNewsClassify(env);
 }
 
 /**
