@@ -95,6 +95,9 @@ návaznosti; stránky `/novinky-cc/temata`).
   a otevře PR do `tangero/vibecoding-site` (`english.ts`, secret `VIBECODING_SITE_GITHUB_TOKEN`).
   Kontrakt souboru je v `docs/english-section.md` webu. Nanečisto:
   `GET /admin/api/cc-news/english?itemId=…`. Více nástrojů: `docs/cc-news-changelog/vice-zdroju.md`.
+- Další sledované nástroje (zatím Grok Build, jen interně): `cc_change_item.tool`
+  (dotazy Novinek v CC VŽDY filtrují `tool = 'claude-code'`), sběr v `src/lib/tools/`,
+  denní cron, týdenní výběr do KV `tools:week:<tool>:<týden>`, admin `/admin/tools/grok-build`.
 
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,

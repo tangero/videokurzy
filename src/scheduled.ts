@@ -10,7 +10,7 @@ import { sendResendEvent } from "./lib/resend";
 import { getPrices } from "./lib/prices";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
 import { detectRecent, defaultFetchers } from "./lib/cc-news/detect";
-import { enqueueCcNewsClassify, enqueueCcNewsItem } from "./queue";
+import { enqueueCcNewsClassify, enqueueCcNewsItem, enqueueToolWeek } from "./queue";
 import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
 import { reportPurchase, bankDateToConversionInstant } from "./lib/conversions";
@@ -122,12 +122,67 @@ export async function handleScheduled(
     console.error("[cron] cc-news detect failed:", err);
   }
 
+  // Interní sledování dalších nástrojů (Grok Build): vlastní kroky, výpadek
+  // nesmí zastavit Novinky v CC.
+  try {
+    await toolsMaintenance(db, env, now);
+  } catch (err) {
+    console.error("[cron] tools maintenance failed:", err);
+  }
+
   // Novinky v CC ze changelogu (od W38/2026): synchronizace changelogu, snímek
   // dokumentace, v pondělí zmrazení týdne a založení vydání za minulý týden.
   try {
     await ccNewsChangelogMaintenance(db, env, now);
   } catch (err) {
     console.error("[cron] cc-news changelog failed:", err);
+  }
+}
+
+/**
+ * Denní údržba dalších nástrojů: changelog Grok Build (CDN x.ai + první naplnění
+ * z GitHubu), snímek docs.x.ai/build, zmrazení uzavřeného týdne a zařazení
+ * interního týdenního přehledu. Mezera v řadě verzí = alert (žádný zdroj se neztratil).
+ */
+async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: Date): Promise<void> {
+  const { syncGrokBuild, GROK_BUILD, GROK_BUILD_DOCS } = await import("./lib/tools/grok-build");
+  const { snapshotDocs, freezeWeek, docsWeekKey } = await import("./lib/cc-news/docs-snapshot");
+  const { lastClosedWeek } = await import("./lib/cc-news/changelog-source");
+  const { countUnclassified } = await import("./lib/cc-news/classify");
+  const { toolWeekKvKey } = await import("./lib/tools/weekly-tool");
+
+  try {
+    const r = await syncGrokBuild(db);
+    console.log(`[cron] grok-build: stable ${r.stable}, uloženo do ${r.latest}, nových položek ${r.added}` +
+      (r.fetchedVersions.length ? ` (${r.fetchedVersions.join(", ")})` : "") + (r.backfilled ? ", historie z GitHubu" : ""));
+    if (r.gap) console.error(`[cron] grok-build: mezera v řadě verzí, za ${r.latest} nenalezena další verze (stable ${r.stable})`);
+    if ((await countUnclassified(db)) > 0) await enqueueCcNewsClassify(env);
+  } catch (err) {
+    console.error("[cron] grok-build changelog failed:", err);
+  }
+
+  const week = lastClosedWeek(now);
+  let pending = -1;
+  let frozen = false;
+  try {
+    frozen = !!(await env.KV.get(docsWeekKey(week, GROK_BUILD_DOCS)));
+    const snap = await snapshotDocs(env.KV, now, GROK_BUILD_DOCS, 30);
+    pending = snap.pending;
+    if (snap.fetched) console.log(`[cron] grok-build docs: staženo ${snap.fetched}, změněno ${snap.changed}, odloženo ${snap.pending}`);
+    if (!frozen && pending === 0 && (await freezeWeek(env.KV, week, pending, GROK_BUILD_DOCS))) {
+      frozen = true;
+      console.log(`[cron] grok-build docs: zmrazen týden ${week.year}-w${week.week}`);
+    }
+  } catch (err) {
+    console.error("[cron] grok-build docs failed:", err);
+  }
+
+  // Interní přehled uzavřeného týdne jednou (zařadí se, dokud v KV není); bez
+  // zmrazené dokumentace se čeká do čtvrtka, pak vznikne jen ze changelogu.
+  const { isoWeekBounds } = await import("./lib/cc-news/changelog-source");
+  const daysAfter = (now.getTime() - isoWeekBounds(week.year, week.week).end.getTime()) / 86_400_000;
+  if ((frozen || daysAfter >= 3) && !(await env.KV.get(toolWeekKvKey(GROK_BUILD, week)))) {
+    await enqueueToolWeek(env, GROK_BUILD, week);
   }
 }
 

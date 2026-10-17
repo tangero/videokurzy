@@ -35,17 +35,25 @@ Před implementací sběrače u každého nástroje zjistit:
 | Nástroj | Odkud | Formát | Verze | Datum |
 |---|---|---|---|---|
 | Claude Code | CHANGELOG.md + stránka changelogu v docs | markdown | ano | z docs |
+| Grok Build | `x.ai/cli/stable` + `x.ai/cli/changelogs/<v>.external.md` (CDN); historie z GitHubu `xai-org/grok-build` (`crates/codegen/xai-grok-shell/CHANGELOG.md`) | markdown, oddíly Features / Bug Fixes / Performance / Breaking Changes | ano | v nadpisu verze |
 | Codex | ověřit (GitHub releases / CHANGELOG `openai/codex`) | ? | ? | ? |
-| Grok Build | ověřit | ? | ? | ? |
 | Muse Code | ověřit | ? | ? | ? |
+
+Grok Build (ověřeno 17. 10. 2026): stránka `x.ai/changelog/build` je za ochranou
+Cloudflare proti botům (403) a je redakčně zkrácená a pozadu za CDN, proto ji
+nesbíráme. GitHub repo se synchronizuje nepravidelně (bez releases a tagů), slouží
+jen k prvnímu naplnění. Dokumentace: `docs.x.ai/build/*` (sitemap s lastmod, `.md`).
+Implementace: `src/lib/tools/grok-build.ts`, `src/lib/tools/weekly-tool.ts`,
+admin `/admin/tools/grok-build?week=2026-w42`.
 
 Datum je povinné. Položka bez data se nezařadí do týdne a v revizi se ukáže jako
 „bez data“. Datum neodhadujeme.
 
 ## Data
 
-Aditivní migrace: `cc_change_item` → obecná `tool_change_item` se sloupcem `tool`
-(stávající řádky `claude-code`). Do přechodu může zůstat pohled se starým názvem.
+Aditivní migrace 0037: sloupec `tool` v `cc_change_item` (stávající řádky
+`claude-code`). Tabulka se nepřejmenovává: přejmenování by mezi migrací a deployem
+rozbilo běžící kód. Všechny dotazy Novinek v CC filtrují `tool = 'claude-code'`.
 
 Hrana sběrač → normalizátor:
 
@@ -53,7 +61,8 @@ Hrana sběrač → normalizátor:
 { tool, sourceUrl, version?, publishedAt, text, scope?, type, hash }
 ```
 
-- `id = <tool>:<version|datum>#<sha8(text)>`: stabilní vůči vsunutým řádkům.
+- `id = <tool>:<version|datum>#<sha8(text)>`: stabilní vůči vsunutým řádkům
+  (Claude Code ze zpětné kompatibility bez předpony: `<verze>#<sha8>`).
 - Týden = ISO týden `publishedAt` (UTC). U zdrojů s verzemi navíc rozsah verzí
   navazující na poslední vydání, jako dnes.
 

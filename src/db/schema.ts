@@ -444,6 +444,8 @@ export const ccChangeItem = sqliteTable(
   "cc_change_item",
   {
     id: text("id").primaryKey(),
+    // Sledovaný nástroj (src/lib/tools/registry.ts); Claude Code = „claude-code".
+    tool: text("tool").notNull().default("claude-code"),
     version: text("version").notNull(),
     publishedAt: integer("publishedAt", { mode: "timestamp" }).notNull(),
     ord: integer("ord").notNull(),
@@ -463,6 +465,7 @@ export const ccChangeItem = sqliteTable(
     index("cc_change_item_version_idx").on(t.version),
     index("cc_change_item_topic_idx").on(t.topic, t.publishedAt),
     index("cc_change_item_unclassified_idx").on(t.classifiedAt),
+    index("cc_change_item_tool_date_idx").on(t.tool, t.publishedAt),
   ],
 );
 

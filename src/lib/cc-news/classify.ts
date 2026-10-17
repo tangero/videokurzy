@@ -9,6 +9,7 @@ import { ccChangeItem } from "../../db/schema";
 import type { ChangelogEntry } from "./changelog-source";
 import { TOPICS, TOPIC_KEYS } from "./taxonomy";
 import { classifyModel, isTransportError, llmJson, openRouterLlm, type LlmEnv, type LlmFn } from "./llm";
+import { CLAUDE_CODE, toolName, type ToolKey } from "../tools/registry";
 
 type Db = ReturnType<typeof drizzle>;
 type Row = typeof ccChangeItem.$inferSelect;
@@ -30,7 +31,7 @@ const line = (i: Pick<Row, "id" | "type" | "scope" | "text">) =>
   `${i.id} | ${i.type}${i.scope ? ` [${i.scope}]` : ""} | ${i.text}`;
 
 /** Vloží nové položky changelogu (už uložené beze změny přeskočí). Vrací počet nových. */
-export async function syncChangelogEntries(db: Db, entries: ChangelogEntry[]): Promise<number> {
+export async function syncChangelogEntries(db: Db, entries: ChangelogEntry[], tool: ToolKey = CLAUDE_CODE): Promise<number> {
   if (entries.length === 0) return 0;
   const known = new Set<string>();
   const versions = [...new Set(entries.map((e) => e.version))];
@@ -38,7 +39,7 @@ export async function syncChangelogEntries(db: Db, entries: ChangelogEntry[]): P
     const rows = await db
       .select({ id: ccChangeItem.id })
       .from(ccChangeItem)
-      .where(inArray(ccChangeItem.version, versions.slice(i, i + 90)));
+      .where(and(eq(ccChangeItem.tool, tool), inArray(ccChangeItem.version, versions.slice(i, i + 90))));
     for (const r of rows) known.add(r.id);
   }
   const fresh = entries.filter((e) => !known.has(e.id));
@@ -62,7 +63,7 @@ export async function syncChangelogEntries(db: Db, entries: ChangelogEntry[]): P
     inserts.push(db
       .insert(ccChangeItem)
       .values(fresh.slice(i, i + INSERT_CHUNK).map((e) => ({
-        id: e.id, version: e.version, publishedAt: e.publishedAt, ord: e.ord,
+        id: e.id, tool, version: e.version, publishedAt: e.publishedAt, ord: e.ord,
         type: e.type, scope: e.scope, text: e.text,
       })))
       .onConflictDoNothing());
@@ -71,14 +72,14 @@ export async function syncChangelogEntries(db: Db, entries: ChangelogEntry[]): P
   return fresh.length;
 }
 
-const CLASSIFY_SYSTEM = [
-  "You classify Claude Code changelog entries. For EACH entry return one object:",
+const CLASSIFY_SYSTEM = (tool: string) => [
+  `You classify ${toolName(tool)} changelog entries. For EACH entry return one object:`,
   `{"id": "<id>", "topic": "<topic key>", "significance": 1|2|3, "reason": "<max 12 words, Czech>"}`,
   "",
   "Topic = the ONE key that best matches what the entry is about. Use only these keys:",
   ...TOPICS.map((t) => `- ${t.key}: ${t.description}`),
   "",
-  "Significance (for an advanced Claude Code user):",
+  `Significance (for an advanced ${toolName(tool)} user):`,
   "3 = new user-visible capability (a new command, tool, mode, output style, panel, setting a user",
   "    would turn on), a new model, changed default behaviour, removal/breaking change",
   "2 = noticeable improvement, security hardening, or fix of a problem many users hit",
@@ -93,7 +94,7 @@ interface Classified { id: string; topic: string; significance: number; reason: 
 /** Dávka, která ani po opakování nevrátí platný JSON, se rozpůlí. */
 async function classifyBatch(llm: LlmFn, batch: Row[]): Promise<Classified[]> {
   try {
-    const out = await llmJson<Classified[] | Classified>(llm, CLASSIFY_SYSTEM, batch.map(line).join("\n"), 6000);
+    const out = await llmJson<Classified[] | Classified>(llm, CLASSIFY_SYSTEM(batch[0]!.tool), batch.map(line).join("\n"), 6000);
     return Array.isArray(out) ? out : [out];
   } catch (err) {
     // Síťová chyba ani timeout se dávkou nespraví, rozpůlení by jen násobilo čekání.
@@ -109,18 +110,27 @@ async function classifyBatch(llm: LlmFn, batch: Row[]): Promise<Classified[]> {
  */
 export async function classifyPending(
   db: Db, env: LlmEnv, now: Date, limit = 200, llm: LlmFn = openRouterLlm(env, classifyModel(env)),
-  versions?: string[],
+  scope?: { tool: ToolKey; versions: string[] },
 ): Promise<number> {
   const pending = await db
     .select()
     .from(ccChangeItem)
-    .where(versions ? and(isNull(ccChangeItem.classifiedAt), inArray(ccChangeItem.version, versions.slice(0, 90))) : isNull(ccChangeItem.classifiedAt))
-    .orderBy(asc(ccChangeItem.publishedAt), asc(ccChangeItem.ord))
+    .where(scope
+      ? and(isNull(ccChangeItem.classifiedAt), eq(ccChangeItem.tool, scope.tool), inArray(ccChangeItem.version, scope.versions.slice(0, 90)))
+      : isNull(ccChangeItem.classifiedAt))
+    .orderBy(asc(ccChangeItem.tool), asc(ccChangeItem.publishedAt), asc(ccChangeItem.ord))
     .limit(limit);
   let done = 0;
-  for (let i = 0; i < pending.length; i += BATCH) {
-    const batch = pending.slice(i, i + BATCH);
+  // Dávky jen z jednoho nástroje (prompt nese jeho jméno).
+  const batches: Row[][] = [];
+  for (const r of pending) {
+    const last = batches[batches.length - 1];
+    if (last && last.length < BATCH && last[0]!.tool === r.tool) last.push(r);
+    else batches.push([r]);
+  }
+  for (const batch of batches) {
     const ids = new Set(batch.map((b) => b.id));
+    const byId = new Map(batch.map((b) => [b.id, b]));
     const results = await classifyBatch(llm, batch);
     const updates = [];
     for (const c of results) {
@@ -129,7 +139,8 @@ export async function classifyPending(
         .update(ccChangeItem)
         .set({
           topic: TOPIC_KEYS.has(c.topic) ? c.topic : "other",
-          significance: [1, 2, 3].includes(c.significance) ? c.significance : 1,
+          // Ohlášená nekompatibilní změna (Grok Build „Breaking Changes“) je vždy zásadní.
+          significance: byId.get(c.id)?.scope === "Breaking" ? 3 : [1, 2, 3].includes(c.significance) ? c.significance : 1,
           reason: String(c.reason ?? "").slice(0, 300),
           classifiedAt: now,
           promptVersion: CLASSIFY_PROMPT_VERSION,
@@ -144,8 +155,8 @@ export async function classifyPending(
 
 // ─── Návaznost ────────────────────────────────────────────────────
 
-const FOLLOW_SYSTEM = [
-  "You link Claude Code changelog entries to EARLIER entries of the same topic.",
+const FOLLOW_SYSTEM = (tool: string) => [
+  `You link ${toolName(tool)} changelog entries to EARLIER entries of the same topic.`,
   "You get HISTORY (earlier entries) and NEW entries. For each NEW entry decide whether it",
   "directly continues a specific earlier entry: extends the same feature, fixes/regresses it,",
   "changes its default, or adds a setting for it. Shared topic alone is NOT enough.",
@@ -160,15 +171,15 @@ interface Follow { id: string; followsId: string | null; relation: string | null
 const FOLLOW_BATCH = 25;
 
 /** Návaznosti jedné dávky; nevalidní JSON rozpůlí (jako třídění), síťovou chybu vyhodí. */
-async function followBatch(llm: LlmFn, history: Row[], batch: Row[]): Promise<Follow[]> {
+async function followBatch(llm: LlmFn, history: Row[], batch: Row[], tool: ToolKey): Promise<Follow[]> {
   const user = `HISTORY:\n${history.map(line).join("\n") || "(none)"}\n\nNEW:\n${batch.map(line).join("\n")}`;
   try {
-    const out = await llmJson<Follow[] | Follow>(llm, FOLLOW_SYSTEM, user, 6000);
+    const out = await llmJson<Follow[] | Follow>(llm, FOLLOW_SYSTEM(tool), user, 6000);
     return Array.isArray(out) ? out : [out];
   } catch (err) {
     if (batch.length <= 5 || isTransportError(err)) throw err;
     const half = Math.ceil(batch.length / 2);
-    return [...await followBatch(llm, history, batch.slice(0, half)), ...await followBatch(llm, [...history, ...batch.slice(0, half)].slice(-25), batch.slice(half))];
+    return [...await followBatch(llm, history, batch.slice(0, half), tool), ...await followBatch(llm, [...history, ...batch.slice(0, half)].slice(-25), batch.slice(half), tool)];
   }
 }
 
@@ -178,12 +189,13 @@ async function followBatch(llm: LlmFn, history: Row[], batch: Row[]): Promise<Fo
  * položek tématu před rozsahem.
  */
 export async function linkFollowsForVersions(
-  db: Db, env: LlmEnv, versions: string[], llm: LlmFn = openRouterLlm(env, classifyModel(env)),
+  db: Db, env: LlmEnv, versions: string[], llm: LlmFn = openRouterLlm(env, classifyModel(env)), tool: ToolKey = CLAUDE_CODE,
 ): Promise<number> {
   if (versions.length === 0) return 0;
   const fresh: Row[] = [];
   for (let i = 0; i < versions.length; i += 90) {
     fresh.push(...await db.select().from(ccChangeItem).where(and(
+      eq(ccChangeItem.tool, tool),
       inArray(ccChangeItem.version, versions.slice(i, i + 90)),
       gte(ccChangeItem.significance, 2),
       ne(ccChangeItem.topic, "other"),
@@ -198,7 +210,7 @@ export async function linkFollowsForVersions(
     const history = (await db
       .select()
       .from(ccChangeItem)
-      .where(and(eq(ccChangeItem.topic, topic), gte(ccChangeItem.significance, 2), lt(ccChangeItem.publishedAt, list[0]!.publishedAt)))
+      .where(and(eq(ccChangeItem.tool, tool), eq(ccChangeItem.topic, topic), gte(ccChangeItem.significance, 2), lt(ccChangeItem.publishedAt, list[0]!.publishedAt)))
       .orderBy(desc(ccChangeItem.publishedAt), desc(ccChangeItem.ord))
       .limit(25)).reverse();
     if (history.length === 0 && list.length < 2) continue;
@@ -209,7 +221,7 @@ export async function linkFollowsForVersions(
       // Historie dávky = starší historie + předchozí nové položky (posledních 25).
       const hist = [...history, ...list.slice(0, i)].slice(-25);
       try {
-        out.push(...await followBatch(llm, hist, list.slice(i, i + FOLLOW_BATCH)));
+        out.push(...await followBatch(llm, hist, list.slice(i, i + FOLLOW_BATCH), tool));
       } catch (err) {
         if (isTransportError(err)) throw err;
         console.error(`[cc-news] návaznost ${topic}: ${(err as Error).message}`);
@@ -234,11 +246,11 @@ export async function linkFollowsForVersions(
  * Spodní hranice denní synchronizace: verze vydaná před `days` dny (nebo nejstarší
  * uložená). Okno zachytí verze, ke kterým dokumentace doplnila datum až později.
  */
-export async function syncFloorVersion(db: Db, now: Date, days = 14): Promise<string | null> {
+export async function syncFloorVersion(db: Db, now: Date, days = 14, tool: ToolKey = CLAUDE_CODE): Promise<string | null> {
   const [r] = await db
     .select({ version: ccChangeItem.version })
     .from(ccChangeItem)
-    .where(lt(ccChangeItem.publishedAt, new Date(now.getTime() - days * 86_400_000)))
+    .where(and(eq(ccChangeItem.tool, tool), lt(ccChangeItem.publishedAt, new Date(now.getTime() - days * 86_400_000))))
     .orderBy(desc(ccChangeItem.publishedAt), desc(ccChangeItem.version))
     .limit(1);
   return r?.version ?? null;

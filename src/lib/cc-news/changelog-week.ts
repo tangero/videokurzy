@@ -11,6 +11,7 @@ import {
   changelogSourceId, compareVersions, isoWeekBounds, ORPHAN_DAYS, parseVersionRange, weekFromSourceId, weekKey, weekVersionRange,
 } from "./changelog-source";
 import { sha256Hex } from "./detect";
+import { CLAUDE_CODE } from "../tools/registry";
 
 type Db = ReturnType<typeof drizzle>;
 type Week = { year: number; week: number };
@@ -57,7 +58,7 @@ export async function createChangelogWeekItem(db: Db, week: Week, now: Date): Pr
   const entries = await db
     .selectDistinct({ version: ccChangeItem.version, publishedAt: ccChangeItem.publishedAt })
     .from(ccChangeItem)
-    .where(and(gte(ccChangeItem.publishedAt, new Date(start.getTime() - ORPHAN_DAYS * 86_400_000)), lte(ccChangeItem.publishedAt, end)));
+    .where(and(eq(ccChangeItem.tool, CLAUDE_CODE), gte(ccChangeItem.publishedAt, new Date(start.getTime() - ORPHAN_DAYS * 86_400_000)), lte(ccChangeItem.publishedAt, end)));
   // Verze, které už pokrývá jiné (i novější) vydání, se nepřiberou — jinak by
   // zpětně založený týden zopakoval sobotní verze z vydání následujícího týdne.
   const covered = (await db.select({ sourceId: ccNewsItem.sourceId, versionRange: ccNewsItem.versionRange }).from(ccNewsItem))
