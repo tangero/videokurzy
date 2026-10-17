@@ -2539,6 +2539,13 @@ admin.post("/admin/api/cc-news/publish", async (c) => {
       approveNonce: null,
     })
     .where(eq(ccNewsItem.id, body.itemId));
+  // Anglický přehled stejně jako po schválení e-mailem (běží ve frontě, chyba nevadí).
+  try {
+    const { enqueueCcNewsEnglish } = await import("../queue");
+    await enqueueCcNewsEnglish(c.env, body.itemId);
+  } catch (err) {
+    console.error("[cc-news] zařazení anglického přehledu selhalo:", err);
+  }
 
   return c.json({ ok: true, status: "published" });
 });
@@ -2626,6 +2633,26 @@ admin.post("/admin/api/cc-news/article-preview", async (c) => {
   const { stripFrontMatter } = await import("./cc-news");
   const html = renderMarkdown(stripFrontMatter(reqBody.markdown ?? ""));
   return c.json({ ok: true, html });
+});
+
+// Anglický přehled vydání (vibecoding.cz/en). GET ?itemId= = zkouška nanečisto:
+// napíše článek z uloženého výběru a vrátí markdown, PR neotevře. POST {itemId}
+// zařadí do fronty totéž co schválení české verze (PR do repa webu).
+admin.get("/admin/api/cc-news/english", async (c) => {
+  const itemId = c.req.query("itemId") ?? "";
+  if (!itemId) return c.json({ error: "itemId required" }, 400);
+  const { publishEnglishWeekly } = await import("../lib/cc-news/english");
+  const out = await publishEnglishWeekly(c.env, itemId, { dryRun: true, regenerate: c.req.query("regenerate") === "1" });
+  if (out.kind === "no-selection") return c.json({ error: "vydání nemá uložený výběr (postav koncept znovu)" }, 404);
+  if (out.kind !== "no-token") return c.json({ error: "unexpected" }, 500);
+  return c.text(`<!-- ${out.path} -->\n${out.markdown}`, 200, { "content-type": "text/markdown; charset=utf-8" });
+});
+admin.post("/admin/api/cc-news/english", async (c) => {
+  const body = await c.req.json<{ itemId?: string; force?: boolean }>().catch(() => ({}) as { itemId?: string; force?: boolean });
+  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+  const { enqueueCcNewsEnglish } = await import("../queue");
+  await enqueueCcNewsEnglish(c.env, body.itemId, { force: body.force === true });
+  return c.json({ ok: true, queued: true });
 });
 
 // Rozeslání newsletteru předplatitelům pro dané vydání. IDEMPOTENTNÍ přes

@@ -90,6 +90,11 @@ návaznosti; stránky `/novinky-cc/temata`).
 - Oficiální přehled k týdnu, který už má vydání ze changelogu, se nezakládá
   (stejný slug `<rok>-w<NN>-novinky`) — viz dedupe v `detect.ts`.
 - Lokální experimenty a porovnání: `scripts/cc-news-changelog/`, `docs/cc-news-changelog/`.
+- Anglická verze (vibecoding.cz/en): po schválení české verze fronta `cc-news.en-weekly`
+  napíše článek anglicky z uloženého výběru (`cc-news:selection:<itemId>`, ne překladem)
+  a otevře PR do `tangero/vibecoding-site` (`english.ts`, secret `VIBECODING_SITE_GITHUB_TOKEN`).
+  Kontrakt souboru je v `docs/english-section.md` webu. Nanečisto:
+  `GET /admin/api/cc-news/english?itemId=…`. Více nástrojů: `docs/cc-news-changelog/vice-zdroju.md`.
 
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,

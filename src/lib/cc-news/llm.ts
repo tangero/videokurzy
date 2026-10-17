@@ -4,14 +4,16 @@
 
 export interface LlmEnv {
   OPENROUTER_API_KEY?: string;
-  /** Psaní a výběr (default Sonnet 5.5). Sdílí proměnnou s editor.ts. */
+  /** Psaní a výběr (default nejnovější Sonnet). Sdílí proměnnou s editor.ts. */
   CC_NEWS_LLM_MODEL?: string;
-  /** Třídění, extrakce z dokumentace, kontrola faktů (default Haiku 5.5). */
+  /** Třídění, extrakce z dokumentace, kontrola faktů (default nejnovější Haiku). */
   CC_NEWS_CLASSIFY_MODEL?: string;
 }
 
-export const DEFAULT_WRITE_MODEL = "anthropic/claude-sonnet-5.5";
-export const DEFAULT_CLASSIFY_MODEL = "anthropic/claude-haiku-5.5";
+// Aliasy OpenRouteru ukazují na nejnovější verzi; konkrétní ID OpenRouter časem
+// vyřazuje a volání pak padá. Pevnou verzi lze vynutit proměnnými výše.
+export const DEFAULT_WRITE_MODEL = "~anthropic/claude-sonnet-latest";
+export const DEFAULT_CLASSIFY_MODEL = "~anthropic/claude-haiku-latest";
 // Výběr novinek nad stovkami položek trvá u Sonnetu i 2 minuty.
 const LLM_TIMEOUT_MS = 240_000;
 
