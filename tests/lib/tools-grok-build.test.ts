@@ -93,19 +93,30 @@ describe("syncGrokBuild", () => {
       "1.0.48": v("1.0.48", "2026-10-03", "**B** two"), // 1.0.47 neexistuje → přeskočí
     });
     const r = await syncGrokBuild(db, f);
-    expect(r).toMatchObject({ stable: "1.0.48", latest: "1.0.48", backfilled: true, gap: false, fetchedVersions: ["1.0.46", "1.0.48"] });
+    expect(r).toMatchObject({ stable: "1.0.48", latest: "1.0.48", caughtUp: true, backfilled: true, gap: false, fetchedVersions: ["1.0.46", "1.0.48"] });
     expect(r.added).toBe(7);
     // Podruhé nic nového a nic se nestahuje.
-    const again = fakeFetch("1.0.48", {});
+    // Podruhé nic nového; za stable se jen zkusí pár dalších čísel (stable se zpožďuje).
+    const again = fakeFetch("1.0.48", { "1.0.49": v("1.0.49", "2026-10-04", "**C** three") });
     const r2 = await syncGrokBuild(db, again.f);
-    expect(r2.added).toBe(0);
-    expect(again.urls).toEqual(["https://x.ai/cli/stable"]);
+    expect(r2).toMatchObject({ added: 1, latest: "1.0.49", fetchedVersions: ["1.0.49"], gap: false });
+    expect(again.urls.some((u) => u.includes(GITHUB_CHANGELOG_URL))).toBe(false);
   });
 
   it("mezera v řadě se nahlásí", async () => {
     const db = drizzle(env.DB);
     const r = await syncGrokBuild(db, fakeFetch("1.0.60", {}).f);
-    expect(r).toMatchObject({ latest: "1.0.45", gap: true });
+    expect(r).toMatchObject({ latest: "1.0.45", gap: true, caughtUp: false });
+  });
+
+  it("mezeru zacelí soubor stable verze (obsahuje i předchozí verze), duplicity jednou", async () => {
+    const db = drizzle(env.DB);
+    const stableMd = v("1.0.60", "2026-10-15", "**New** sixty") + "\n" + v("1.0.52", "2026-10-11", "**Old** fifty-two") + "\n" + GITHUB_MD.replace("# Changelog\n\n", "");
+    const r = await syncGrokBuild(db, fakeFetch("1.0.60", { "1.0.60": stableMd }).f);
+    expect(r).toMatchObject({ latest: "1.0.60", gap: true, caughtUp: true });
+    expect(r.added).toBe(7);
+    const versions = (await db.select().from(ccChangeItem)).map((x) => x.version);
+    expect(new Set(versions)).toEqual(new Set(["1.0.44", "1.0.45", "1.0.52", "1.0.60"]));
   });
 
   it("položky Grok Build nepřimíchá do Claude Code", async () => {

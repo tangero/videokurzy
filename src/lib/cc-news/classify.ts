@@ -140,7 +140,7 @@ export async function classifyPending(
         .set({
           topic: TOPIC_KEYS.has(c.topic) ? c.topic : "other",
           // Ohlášená nekompatibilní změna (Grok Build „Breaking Changes“) je vždy zásadní.
-          significance: byId.get(c.id)?.scope === "Breaking" ? 3 : [1, 2, 3].includes(c.significance) ? c.significance : 1,
+          significance: byId.get(c.id)?.tool === "grok-build" && byId.get(c.id)?.scope === "Breaking" ? 3 : [1, 2, 3].includes(c.significance) ? c.significance : 1,
           reason: String(c.reason ?? "").slice(0, 300),
           classifiedAt: now,
           promptVersion: CLASSIFY_PROMPT_VERSION,

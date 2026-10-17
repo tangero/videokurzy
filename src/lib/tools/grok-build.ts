@@ -102,11 +102,13 @@ export async function latestStoredGrokVersion(db: Db): Promise<string | null> {
 
 export interface GrokSyncResult {
   stable: string;
+  /** Uložená řada dohnala stable (podmínka pro týdenní přehled). */
+  caughtUp: boolean;
   /** Nejvyšší uložená verze po běhu. */
   latest: string | null;
   added: number;
   fetchedVersions: string[];
-  /** Verze mezi uloženou a stable, které se nepodařilo najít (mezera v řadě). */
+  /** V řadě verzí chyběla verze (mezera); zaceluje se staženým souborem stable verze. */
   gap: boolean;
   backfilled: boolean;
 }
@@ -144,36 +146,37 @@ export async function syncGrokBuild(db: Db, f: typeof fetch = fetch): Promise<Gr
   const collected: ChangelogEntry[] = [];
   let gap = false;
   let fetches = 0;
-  // Bez historie začni od stable (nic staršího stejně neumíme dohledat).
-  if (!latest) {
-    const md = await get(VERSION_MD_URL(stable));
+  const take = async (ver: string): Promise<boolean> => {
+    const md = await get(VERSION_MD_URL(ver));
     fetches++;
-    if (md) {
-      collected.push(...await parseGrokChangelog(md));
-      fetchedVersions.push(stable);
-      latest = stable;
-    }
-  }
-  while (latest && compareVersions(latest, stable) < 0 && fetches < MAX_VERSIONS_PER_RUN) {
-    let found: string | null = null;
+    if (md === null) return false;
+    collected.push(...await parseGrokChangelog(md));
+    fetchedVersions.push(ver);
+    latest = ver;
+    return true;
+  };
+  // Bez historie začni od stable (nic staršího stejně neumíme dohledat).
+  if (!latest) await take(stable);
+  // Dál po řadě; i za stable, protože x.ai/cli/stable se za vydáním zpožďuje.
+  while (latest && fetches < MAX_VERSIONS_PER_RUN) {
+    let found = false;
     for (const cand of nextVersionCandidates(latest)) {
-      if (compareVersions(cand, stable) > 0 || fetches >= MAX_VERSIONS_PER_RUN) continue;
-      const md = await get(VERSION_MD_URL(cand));
-      fetches++;
-      if (md === null) continue;
-      collected.push(...await parseGrokChangelog(md));
-      fetchedVersions.push(cand);
-      found = cand;
-      break;
+      if (fetches >= MAX_VERSIONS_PER_RUN) break;
+      if (await take(cand)) { found = true; break; }
     }
-    if (!found) {
-      gap = fetches < MAX_VERSIONS_PER_RUN;
-      break;
+    if (found) continue;
+    if (compareVersions(latest, stable) < 0 && fetches < MAX_VERSIONS_PER_RUN) {
+      // Mezera v řadě: soubor stable verze obsahuje i předchozí verze, zacelí většinu.
+      gap = true;
+      if (await take(stable)) continue;
     }
-    latest = found;
+    break;
   }
-  added += await syncChangelogEntries(db, collected, GROK_BUILD);
-  return { stable, latest, added, fetchedVersions, gap, backfilled };
+  // Soubory verzí se překrývají (soubor obsahuje i starší verze): každá položka jednou.
+  const unique = [...new Map(collected.map((e) => [e.id, e])).values()];
+  added += await syncChangelogEntries(db, unique, GROK_BUILD);
+  const caughtUp = !!latest && compareVersions(latest, stable) >= 0;
+  return { stable, caughtUp, latest, added, fetchedVersions, gap, backfilled };
 }
 
 /** Položky Grok Build vydané v intervalu (pro týdenní přehled). */

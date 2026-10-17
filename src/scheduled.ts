@@ -151,11 +151,13 @@ async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: D
   const { countUnclassified } = await import("./lib/cc-news/classify");
   const { toolWeekKvKey } = await import("./lib/tools/weekly-tool");
 
+  let caughtUp = false;
   try {
     const r = await syncGrokBuild(db);
+    caughtUp = r.caughtUp;
     console.log(`[cron] grok-build: stable ${r.stable}, uloženo do ${r.latest}, nových položek ${r.added}` +
       (r.fetchedVersions.length ? ` (${r.fetchedVersions.join(", ")})` : "") + (r.backfilled ? ", historie z GitHubu" : ""));
-    if (r.gap) console.error(`[cron] grok-build: mezera v řadě verzí, za ${r.latest} nenalezena další verze (stable ${r.stable})`);
+    if (r.gap) console.error(`[cron] grok-build: mezera v řadě verzí (stable ${r.stable}, uloženo do ${r.latest}), doplněno ze souboru stable verze`);
     if ((await countUnclassified(db)) > 0) await enqueueCcNewsClassify(env);
   } catch (err) {
     console.error("[cron] grok-build changelog failed:", err);
@@ -181,7 +183,8 @@ async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: D
   // zmrazené dokumentace se čeká do čtvrtka, pak vznikne jen ze changelogu.
   const { isoWeekBounds } = await import("./lib/cc-news/changelog-source");
   const daysAfter = (now.getTime() - isoWeekBounds(week.year, week.week).end.getTime()) / 86_400_000;
-  if ((frozen || daysAfter >= 3) && !(await env.KV.get(toolWeekKvKey(GROK_BUILD, week)))) {
+  // Jen po úspěšné synchronizaci, která dohnala stable: jinak by se uložil neúplný týden.
+  if (caughtUp && (frozen || daysAfter >= 3) && !(await env.KV.get(toolWeekKvKey(GROK_BUILD, week)))) {
     await enqueueToolWeek(env, GROK_BUILD, week);
   }
 }
