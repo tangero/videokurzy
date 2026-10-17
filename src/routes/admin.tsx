@@ -2647,12 +2647,33 @@ admin.get("/admin/api/cc-news/english", async (c) => {
   if (out.kind !== "no-token") return c.json({ error: "unexpected" }, 500);
   return c.text(`<!-- ${out.path} -->\n${out.markdown}`, 200, { "content-type": "text/markdown; charset=utf-8" });
 });
+// Formulář pro ruční spuštění (JSON i form-data). `rebuildSelection` doplní výběr
+// vydání, které vzniklo před jeho ukládáním (W38–W41): výběr a kontrola faktů
+// proběhnou znovu nad týmiž položkami, český článek ani jeho stav se nemění.
+admin.get("/admin/api/cc-news/english-run", async (c) => {
+  const { escapeHtml } = await import("../lib/markdown");
+  const itemId = escapeHtml(c.req.query("itemId") ?? "");
+  return c.html(`<!doctype html><meta charset="utf-8"><title>Anglický přehled</title>
+<form method="post" action="/admin/api/cc-news/english">
+<p><label>itemId <input name="itemId" value="${itemId}" required></label></p>
+<p><label><input type="checkbox" name="rebuildSelection" value="1"> doplnit výběr (starší vydání)</label></p>
+<p><label><input type="checkbox" name="force" value="1"> přepsat i už vydaný článek</label></p>
+<button>Zařadit</button></form>`);
+});
 admin.post("/admin/api/cc-news/english", async (c) => {
-  const body = await c.req.json<{ itemId?: string; force?: boolean }>().catch(() => ({}) as { itemId?: string; force?: boolean });
-  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+  const isJson = (c.req.header("content-type") ?? "").includes("application/json");
+  const raw = isJson
+    ? await c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>))
+    : await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
+  const itemId = String(raw.itemId ?? "");
+  if (!itemId) return c.json({ error: "itemId required" }, 400);
+  const flag = (v: unknown) => v === true || v === "1";
+  const { escapeHtml } = await import("../lib/markdown");
   const { enqueueCcNewsEnglish } = await import("../queue");
-  await enqueueCcNewsEnglish(c.env, body.itemId, { force: body.force === true });
-  return c.json({ ok: true, queued: true });
+  await enqueueCcNewsEnglish(c.env, itemId, { force: flag(raw.force), rebuildSelection: flag(raw.rebuildSelection) });
+  return isJson
+    ? c.json({ ok: true, queued: true })
+    : c.html(`<!doctype html><meta charset="utf-8"><p>Zařazeno (${escapeHtml(itemId)}). PR na webu vznikne během několika minut.</p>`);
 });
 
 // Rozeslání newsletteru předplatitelům pro dané vydání. IDEMPOTENTNÍ přes

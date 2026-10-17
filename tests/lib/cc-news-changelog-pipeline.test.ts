@@ -343,6 +343,18 @@ describe("opravy z code review", () => {
     expect(art.markdown).toMatch(/summary_points:\n- "Projects koordinují cloudová sezení."\n/);
   });
 
+  it("doplnění výběru uloží výběr a český článek nepíše", async () => {
+    const { db } = await seed();
+    await db.insert(ccNewsItem).values({ id: "w38", sourceId: "/changelog/2026-w38", contentHash: "h", weekLabel: "Week 38", versionRange: "v2.1.271–v2.1.278", status: "published", createdAt: NOW, publishedAt: NOW });
+    const { llm, calls } = fakeLlm();
+    const art = await buildChangelogArticle(db, env as never, "w38", NOW, { classify: llm, write: llm }, { selectionOnly: true });
+    expect(art.markdown).toBe("");
+    expect(calls.some((c) => c.kind === "write")).toBe(false);
+    expect(await env.KV.get(selectionKvKey("w38"))).toBeTruthy();
+    const [row] = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "w38"));
+    expect(row!.status).toBe("published");
+  });
+
   it("nový koncept publikované vydání nestáhne z webu", async () => {
     const db = drizzle(env.DB);
     await db.insert(ccNewsItem).values({ id: "p1", sourceId: "/changelog/2026-w38", contentHash: "h", weekLabel: "Week 38", versionRange: null, status: "published", createdAt: NOW, publishedAt: NOW });

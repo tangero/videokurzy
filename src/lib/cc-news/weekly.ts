@@ -370,6 +370,7 @@ export interface WeeklyArticle {
 export async function buildChangelogArticle(
   db: Db, env: WeeklyEnv, itemId: string, now: Date,
   llms: WeeklyLlms = { classify: openRouterLlm(env, classifyModel(env)), write: openRouterLlm(env, writeModel(env)) },
+  opts: { selectionOnly?: boolean } = {},
 ): Promise<WeeklyArticle> {
   const [item] = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, itemId)).limit(1);
   if (!item) throw new Error(`cc-news weekly: vydání ${itemId} neexistuje`);
@@ -527,6 +528,15 @@ export async function buildChangelogArticle(
     knownPages: [...knownPages],
   };
   await env.KV.put(selectionKvKey(itemId), JSON.stringify(sel));
+  const reviewBase = {
+    weekLabel, versionRange: `v${range.from}–v${range.to}`, entries: rows.length, docsChanges: docs.length, signals,
+    features: kept.map((f) => ({ title: f.title, version: f.version, sourceIds: f.sourceIds })),
+    skipped: selection.skipped, fixed, dropped,
+  };
+  // Jen výběr (doplnění pro starší vydání): český článek se nepíše.
+  if (opts.selectionOnly) {
+    return { markdown: "", weekLabel, versionRange: reviewBase.versionRange, review: { ...reviewBase, editorNotes: [], versionIssues: [], strippedLinks: [] } };
+  }
 
   // 6) Článek a deterministické kontroly.
   const written = await writeWeeklyArticle(llms.write, sel, CZECH_WRITER);
@@ -557,9 +567,7 @@ export async function buildChangelogArticle(
     weekLabel,
     versionRange,
     review: {
-      weekLabel, versionRange, entries: rows.length, docsChanges: docs.length, signals,
-      features: kept.map((f) => ({ title: f.title, version: f.version, sourceIds: f.sourceIds })),
-      skipped: selection.skipped, fixed, dropped,
+      ...reviewBase,
       editorNotes: written.editorNotes, versionIssues: written.versionIssues, strippedLinks: written.strippedLinks,
     },
   };

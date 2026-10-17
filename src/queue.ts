@@ -76,7 +76,7 @@ export async function enqueueCcNewsItem(
 
 /** Zařadí dotřídění nezatříděných položek changelogu (běží na pozadí, LLM). */
 /** Zařadí anglický přehled vydání (po schválení české verze). */
-export async function enqueueCcNewsEnglish(env: Env, itemId: string, opts: { force?: boolean } = {}): Promise<void> {
+export async function enqueueCcNewsEnglish(env: Env, itemId: string, opts: { force?: boolean; rebuildSelection?: boolean } = {}): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.en-weekly", data: { itemId, ...opts } });
 }
 
@@ -142,7 +142,7 @@ export async function handleQueue(
           break;
 
         case "cc-news.en-weekly":
-          await handleCcNewsEnglish(env, String(data.itemId ?? ""), data.force === true);
+          await handleCcNewsEnglish(db, env, String(data.itemId ?? ""), data.force === true, data.rebuildSelection === true);
           break;
 
         default:
@@ -728,8 +728,17 @@ async function handleInvoicePaid(
  * pokročila, zařadí další (bez pokroku nezařazuje — žádná nekonečná smyčka).
  * Chyba LLM se propaguje → retry fronty (třídění je idempotentní).
  */
-async function handleCcNewsEnglish(env: Env, itemId: string, force: boolean): Promise<void> {
+async function handleCcNewsEnglish(
+  db: ReturnType<typeof drizzle>, env: Env, itemId: string, force: boolean, rebuildSelection: boolean,
+): Promise<void> {
   const { publishEnglishWeekly, GithubError } = await import("./lib/cc-news/english");
+  if (rebuildSelection) {
+    const { buildChangelogArticle, selectionKvKey } = await import("./lib/cc-news/weekly");
+    if (!(await env.KV.get(selectionKvKey(itemId)))) {
+      const art = await buildChangelogArticle(db, env, itemId, new Date(), undefined, { selectionOnly: true });
+      console.log(`[queue] cc-news.en-weekly ${itemId}: výběr doplněn (${art.review.features.length} novinek, vyřazeno ${art.review.dropped.length})`);
+    }
+  }
   let out;
   try {
     // force = vědomé přepsání vydaného článku z adminu; pak i nový text.
