@@ -758,7 +758,8 @@ async function handleCcNewsEnglish(
     }
     throw err;
   }
-  if (out.kind === "already-published") console.log(`[queue] cc-news.en-weekly ${itemId}: ${out.path} už je na webu, nepřepisuji`);
+  if (out.kind === "edited-on-branch") console.log(`[queue] cc-news.en-weekly ${itemId}: ${out.path} na větvi ${out.branch} někdo upravil, nepřepisuji (force přepíše)`);
+  else if (out.kind === "already-published") console.log(`[queue] cc-news.en-weekly ${itemId}: ${out.path} už je na webu, nepřepisuji`);
   else if (out.kind === "pr") console.log(`[queue] cc-news.en-weekly ${itemId}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}`);
   else if (out.kind === "no-token") console.warn(`[queue] cc-news.en-weekly ${itemId}: chybí VIBECODING_SITE_GITHUB_TOKEN, ${out.path} nevydán`);
   else console.log(`[queue] cc-news.en-weekly ${itemId}: vydání nemá uložený výběr, přeskočeno`);

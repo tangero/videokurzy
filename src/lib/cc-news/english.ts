@@ -28,6 +28,8 @@ const DEFAULT_REPO = "tangero/vibecoding-site";
  * v PR je přesně to, co ukázal náhled, a model se neplatí dvakrát.
  */
 export const englishMdKvKey = (itemId: string) => `cc-news:en-md:${itemId}`;
+/** sha souboru, který generátor naposledy zapsal na větev PR (pozná ruční úpravy). */
+export const englishShaKvKey = (itemId: string) => `cc-news:en-sha:${itemId}`;
 const EN_MD_TTL_SEC = 60 * 24 * 60 * 60;
 const TOOL_NAMES: Record<WeekSelection["tool"], string> = { "claude-code": "Claude Code" };
 
@@ -137,7 +139,8 @@ export function englishWeeklyMarkdown(
 ): string {
   const toolName = TOOL_NAMES[sel.tool];
   const headline = written.title.replace(new RegExp(`^${toolName}[,:]?\\s*(Week\\s*\\d+\\s*[:,-]\\s*)?`, "i"), "").trim();
-  const title = `${toolName}, Week ${sel.week.week}: ${headline}`;
+  // Titulek = jen headline; nástroj a týden web ukáže z polí tool a week.
+  const title = headline || written.title.trim();
   // Nadpisy v těle od ##: případný # se sníží o úroveň (mimo bloky kódu).
   const body = written.body
     .split(/(^```[\s\S]*?^```)/m)
@@ -206,7 +209,7 @@ function toBase64(text: string): string {
   return btoa(bin);
 }
 
-export interface SitePr { url: string; branch: string; path: string; created: boolean }
+export interface SitePr { url: string; branch: string; path: string; created: boolean; sha?: string }
 
 /** Existuje soubor na výchozí větvi repa (tj. už je vydaný)? */
 export async function fileOnDefaultBranch(token: string, repo: string, path: string, f: GhFetch = fetch): Promise<boolean> {
@@ -227,7 +230,8 @@ export async function openSitePullRequest(
   file: { path: string; content: string },
   pr: { branch: string; title: string; body: string },
   f: GhFetch = fetch,
-): Promise<SitePr> {
+  guard: { lastWrittenSha?: string | null; overwrite?: boolean } = {},
+): Promise<SitePr | { edited: true; branch: string; path: string }> {
   const gh = github(token, repo, f);
   const { default_branch: base } = await gh.json<{ default_branch: string }>(await gh.call("GET", ""), "repo");
   const { object } = await gh.json<{ object: { sha: string } }>(await gh.call("GET", `/git/ref/heads/${base}`), "base ref");
@@ -239,20 +243,23 @@ export async function openSitePullRequest(
   const existing = await gh.call("GET", `/contents/${encodedPath}?ref=${encodeURIComponent(pr.branch)}`);
   const sha = existing.ok ? (await existing.json() as { sha: string }).sha : undefined;
   if (!existing.ok && existing.status !== 404) await gh.json(existing, "read file");
-  await gh.json(await gh.call("PUT", `/contents/${encodedPath}`, {
+  // Soubor na větvi, který jsme nezapsali my (ruční úprava v PR), se bez overwrite nepřepíše.
+  if (sha && sha !== guard.lastWrittenSha && !guard.overwrite) return { edited: true, branch: pr.branch, path: file.path };
+  const written = await gh.json<{ content?: { sha?: string } }>(await gh.call("PUT", `/contents/${encodedPath}`, {
     message: pr.title,
     content: toBase64(file.content),
     branch: pr.branch,
     ...(sha ? { sha } : {}),
   }), "write file");
+  const writtenSha = written.content?.sha;
 
   const owner = repo.split("/")[0]!;
   const open = await gh.json<{ html_url: string }[]>(
     await gh.call("GET", `/pulls?state=open&head=${encodeURIComponent(`${owner}:${pr.branch}`)}`), "list pulls");
-  if (open[0]) return { url: open[0].html_url, branch: pr.branch, path: file.path, created: false };
+  if (open[0]) return { url: open[0].html_url, branch: pr.branch, path: file.path, created: false, sha: writtenSha };
   const created = await gh.json<{ html_url: string }>(
     await gh.call("POST", "/pulls", { title: pr.title, head: pr.branch, base, body: pr.body }), "create pull");
-  return { url: created.html_url, branch: pr.branch, path: file.path, created: true };
+  return { url: created.html_url, branch: pr.branch, path: file.path, created: true, sha: writtenSha };
 }
 
 // ─── Celý krok ────────────────────────────────────────────────────
@@ -260,6 +267,7 @@ export async function openSitePullRequest(
 export type EnglishOutcome =
   | { kind: "no-selection" }
   | { kind: "already-published"; path: string }
+  | { kind: "edited-on-branch"; path: string; branch: string }
   | { kind: "no-token"; markdown: string; path: string }
   | { kind: "pr"; pr: SitePr };
 
@@ -323,6 +331,9 @@ export async function publishEnglishWeekly(
       ].join("\n"),
     },
     opts.fetch,
+    { lastWrittenSha: await env.KV.get(englishShaKvKey(itemId)), overwrite: opts.force },
   );
+  if ("edited" in pr) return { kind: "edited-on-branch", path: pr.path, branch: pr.branch };
+  if (pr.sha) await env.KV.put(englishShaKvKey(itemId), pr.sha, { expirationTtl: EN_MD_TTL_SEC });
   return { kind: "pr", pr };
 }

@@ -54,7 +54,7 @@ function fakeGithub(state: { branchExists?: boolean; fileSha?: string; openPr?: 
     if (path === "/git/refs") return state.branchExists ? j({ message: "Reference already exists" }, 422) : j({}, 201);
     if (method === "GET" && path.startsWith("/contents/") && !path.includes("?ref=")) return state.onMain ? j({ sha: "main" }) : j({}, 404);
     if (method === "GET" && path.startsWith("/contents/")) return state.fileSha ? j({ sha: state.fileSha }) : j({}, 404);
-    if (method === "PUT") return j({}, state.fileSha ? 200 : 201);
+    if (method === "PUT") return j({ content: { sha: "written1" } }, state.fileSha ? 200 : 201);
     if (method === "GET" && path.startsWith("/pulls")) return j(state.openPr ? [{ html_url: state.openPr }] : []);
     if (method === "POST" && path === "/pulls") return j({ html_url: "https://github.com/tangero/vibecoding-site/pull/300" }, 201);
     return j({ message: "unexpected" }, 500);
@@ -74,7 +74,7 @@ describe("formát souboru podle kontraktu webu", () => {
     }, new Date("2026-10-26T09:00:00Z"));
     expect(md).toBe([
       "---",
-      `title: "Claude Code, Week 43: Projects \\"take over\\""`,
+      `title: "Projects \\"take over\\""`,
       "date: '2026-10-26'",
       "author: Patrick Zandl",
       "type: news",
@@ -120,7 +120,7 @@ describe("publishEnglishWeekly", () => {
     expect(out.kind).toBe("no-token");
     if (out.kind !== "no-token") return;
     expect(out.path).toBe("src/content/english/claude-code-weekly-2026-w43.md");
-    expect(out.markdown).toContain(`title: "Claude Code, Week 43: Projects take over coordination"`);
+    expect(out.markdown).toContain(`title: "Projects take over coordination"`);
     expect(out.markdown).toContain("Version 2.1.301.");
     expect(out.markdown).not.toContain("—");
     expect(out.markdown).not.toContain("/nope");
@@ -136,7 +136,7 @@ describe("publishEnglishWeekly", () => {
     await env.KV.put(selectionKvKey("w43"), JSON.stringify(SEL));
     const gh = fakeGithub();
     const out = await publishEnglishWeekly({ ...env, VIBECODING_SITE_GITHUB_TOKEN: "t" } as never, "w43", { llm: fakeLlm().llm, fetch: gh.f });
-    expect(out).toEqual({ kind: "pr", pr: { url: "https://github.com/tangero/vibecoding-site/pull/300", branch: "en-weekly/claude-code-2026-w43", path: "src/content/english/claude-code-weekly-2026-w43.md", created: true } });
+    expect(out).toEqual({ kind: "pr", pr: { url: "https://github.com/tangero/vibecoding-site/pull/300", branch: "en-weekly/claude-code-2026-w43", path: "src/content/english/claude-code-weekly-2026-w43.md", created: true, sha: "written1" } });
     expect(gh.calls.find((c) => c.path === "/git/refs")!.body).toEqual({ ref: "refs/heads/en-weekly/claude-code-2026-w43", sha: "base123" });
     const put = gh.calls.find((c) => c.method === "PUT")!;
     expect(put.path).toBe("/contents/src/content/english/claude-code-weekly-2026-w43.md");
@@ -149,10 +149,24 @@ describe("publishEnglishWeekly", () => {
 
   it("opakování znovupoužije větev, soubor i otevřený PR", async () => {
     const gh = fakeGithub({ branchExists: true, fileSha: "old", openPr: "https://github.com/tangero/vibecoding-site/pull/299" });
-    const pr = await openSitePullRequest("t", "tangero/vibecoding-site", { path: "src/content/english/x.md", content: "č" }, { branch: "b", title: "T", body: "B" }, gh.f);
+    const pr = await openSitePullRequest("t", "tangero/vibecoding-site", { path: "src/content/english/x.md", content: "č" }, { branch: "b", title: "T", body: "B" }, gh.f, { lastWrittenSha: "old" });
     expect(pr).toMatchObject({ url: "https://github.com/tangero/vibecoding-site/pull/299", created: false });
     expect(gh.calls.find((c) => c.method === "PUT")!.body.sha).toBe("old");
     expect(gh.calls.some((c) => c.method === "POST" && c.path === "/pulls")).toBe(false);
+  });
+
+  it("ručně upravený soubor na větvi PR bez force nepřepíše, vlastní zápis ano", async () => {
+    await env.KV.put(selectionKvKey("w43"), JSON.stringify(SEL));
+    const tokenEnv = { ...env, VIBECODING_SITE_GITHUB_TOKEN: "t" } as never;
+    const edited = fakeGithub({ branchExists: true, fileSha: "human", openPr: "https://github.com/tangero/vibecoding-site/pull/263" });
+    expect(await publishEnglishWeekly(tokenEnv, "w43", { llm: fakeLlm().llm, fetch: edited.f }))
+      .toEqual({ kind: "edited-on-branch", path: "src/content/english/claude-code-weekly-2026-w43.md", branch: "en-weekly/claude-code-2026-w43" });
+    expect(edited.calls.some((c) => c.method === "PUT")).toBe(false);
+    // Soubor, který jsme zapsali naposledy my, se aktualizuje.
+    await env.KV.put("cc-news:en-sha:w43", "human");
+    const own = fakeGithub({ branchExists: true, fileSha: "human", openPr: "https://github.com/tangero/vibecoding-site/pull/263" });
+    expect((await publishEnglishWeekly(tokenEnv, "w43", { llm: fakeLlm().llm, fetch: own.f })).kind).toBe("pr");
+    expect(await env.KV.get("cc-news:en-sha:w43")).toBe("written1");
   });
 
   it("chyba GitHubu se vyhodí (retry fronty), ne tiše spolkne", async () => {
