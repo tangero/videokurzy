@@ -11,6 +11,20 @@ import {
 } from "../src/queue";
 
 describe("queue message dispatch", () => {
+  it("cc-news.en-weekly s neexistujícím vydáním potvrdí bez retry", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const batch = {
+      messages: [{ body: { type: "cc-news.en-weekly", data: { itemId: "neni", rebuildSelection: true } }, ack, retry }],
+    } as unknown as MessageBatch<never>;
+    await handleQueue(batch, env as never);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith("[queue] cc-news.en-weekly: vydání neni neexistuje, přeskočeno");
+    errSpy.mockRestore();
+  });
+
   it("logs and acknowledges unknown webhook message types", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const ack = vi.fn();

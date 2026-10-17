@@ -163,6 +163,30 @@ describe("syncChangelogEntries + classifyPending", () => {
   });
 });
 
+describe("návaznosti po dávkách", () => {
+  it("nevalidní JSON nad velkou dávkou rozpůlí a vazby i tak doplní", async () => {
+    const db = drizzle(env.DB);
+    const rows = Array.from({ length: 30 }, (_, n) => ({
+      id: `2.1.${300 + n}#0000000${n % 10}`, version: `2.1.${300 + n}`, publishedAt: new Date(Date.UTC(2026, 9, 1, n)), ord: 1,
+      type: "Added", scope: null, text: `hook change ${n}`, topic: "hooks", significance: 2, classifiedAt: NOW,
+    }));
+    for (let i = 0; i < rows.length; i += 8) await db.insert(ccChangeItem).values(rows.slice(i, i + 8));
+    const sizes: number[] = [];
+    const { llm } = fakeLlm({
+      follow: (u) => {
+        const fresh = idsIn(u.slice(u.indexOf("NEW:")));
+        sizes.push(fresh.length);
+        if (fresh.length > 10) return "[{\"id\": \"broken";
+        const all = idsIn(u);
+        return JSON.stringify(fresh.map((id) => ({ id, followsId: all[all.indexOf(id) - 1] ?? null, relation: "rozšiřuje", reason: "x" })));
+      },
+    });
+    const linked = await linkFollowsForVersions(db, env as never, rows.map((r) => r.version), llm);
+    expect(sizes[0]).toBe(25);
+    expect(linked).toBe(29);
+  });
+});
+
 describe("createChangelogWeekItem", () => {
   it("založí vydání s rozsahem navazujícím na poslední vydání a podruhé ho nezdvojí", async () => {
     const { db } = await seed();

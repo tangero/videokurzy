@@ -732,6 +732,13 @@ async function handleCcNewsEnglish(
   db: ReturnType<typeof drizzle>, env: Env, itemId: string, force: boolean, rebuildSelection: boolean,
 ): Promise<void> {
   const { publishEnglishWeekly, GithubError } = await import("./lib/cc-news/english");
+  // Neexistující vydání (překlep v ID) se opakováním nespraví: zalogovat a potvrdit.
+  const { ccNewsItem } = await import("./db/schema");
+  const [row] = await db.select({ id: ccNewsItem.id }).from(ccNewsItem).where(eq(ccNewsItem.id, itemId)).limit(1);
+  if (!row) {
+    console.error(`[queue] cc-news.en-weekly: vydání ${itemId || "(prázdné ID)"} neexistuje, přeskočeno`);
+    return;
+  }
   if (rebuildSelection) {
     const { buildChangelogArticle, selectionKvKey } = await import("./lib/cc-news/weekly");
     if (!(await env.KV.get(selectionKvKey(itemId)))) {
