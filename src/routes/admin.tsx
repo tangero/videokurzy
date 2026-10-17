@@ -1805,6 +1805,7 @@ admin.get("/admin/api/bunny/video/:videoId", async (c) => {
     chapters: data.chapters,
     moments: data.moments,
     thumbnailFileName: data.thumbnailFileName,
+    description: data.description,
     status: data.status,
   });
 });

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 
 const BUNNY_EMBED_BASE = "https://player.mediadelivery.net/embed";
 
@@ -13,7 +13,9 @@ export function generateSignedEmbedUrl(
   const url = `${BUNNY_EMBED_BASE}/${libraryId}/${videoId}`;
   const hashableBase = `${tokenKey}${videoId}${expires}`;
 
-  const token = createHmac("sha256", tokenKey)
+  // Bunny: token = SHA256_HEX(token_key + video_id + expires) — prostý hash,
+  // ne HMAC. Docs: https://bunny.net/docs/stream/token-authentication
+  const token = createHash("sha256")
     .update(hashableBase)
     .digest("hex");
 

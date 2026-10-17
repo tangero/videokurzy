@@ -927,6 +927,13 @@ export function AdminLessonForm({
                 titleEl.value = data.title;
                 if (autoMode) slugEl.value = slugify(data.title);
               }
+              // Description → popis lekce, jen když je popis prázdný (nepřepisujeme)
+              var bodyEl = document.querySelector('[name=bodyMarkdown]');
+              var descFilled = false;
+              if (bodyEl && data.description && !bodyEl.value.trim()) {
+                bodyEl.value = String(data.description).trim();
+                descFilled = true;
+              }
               // Chapters — replace existing rows
               chaptersList.innerHTML = '';
               (data.chapters || []).forEach(function(ch) { addChapterRow(ch.title, ch.start, ch.end); });
@@ -936,6 +943,7 @@ export function AdminLessonForm({
               var info = mins + ':' + String(secs).padStart(2,'0');
               if (data.chapters && data.chapters.length) info += ' · ' + data.chapters.length + ' kapitol';
               if (data.moments && data.moments.length) info += ' · ' + data.moments.length + ' momentů';
+              if (descFilled) info += ' · popis';
               bunnyStatus.textContent = '✓ Načteno: ' + info;
               bunnyStatus.className = 'text-xs mt-1 text-green-600';
               bunnyStatus.classList.remove('hidden');

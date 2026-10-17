@@ -23,3 +23,13 @@ describe("generateSignedEmbedUrl — startSeconds", () => {
     expect(url).toContain("showSpeed=true");
   });
 });
+
+describe("generateSignedEmbedUrl — token", () => {
+  it("token = SHA256_HEX(tokenKey + videoId + expires), ne HMAC", async () => {
+    const { createHash } = await import("node:crypto");
+    const url = new URL(generateSignedEmbedUrl("lib1", "vid1", "key1"));
+    const expires = url.searchParams.get("expires")!;
+    const expected = createHash("sha256").update(`key1vid1${expires}`).digest("hex");
+    expect(url.searchParams.get("token")).toBe(expected);
+  });
+});
