@@ -218,7 +218,7 @@ ccNewsRoutes.get("/novinky-cc/temata", async (c) => {
   const stats = await db
     .select({ topic: ccChangeItem.topic, n: sql<number>`count(*)`, last: sql<number>`max(${ccChangeItem.publishedAt})` })
     .from(ccChangeItem)
-    .where(gte(ccChangeItem.significance, 2))
+    .where(and(eq(ccChangeItem.tool, "claude-code"), gte(ccChangeItem.significance, 2)))
     .groupBy(ccChangeItem.topic);
   const byTopic = new Map(stats.map((s) => [s.topic, s]));
   const topics = TOPICS.filter((t) => t.key !== "other")
@@ -243,7 +243,7 @@ ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {
   const rows = await db
     .select()
     .from(ccChangeItem)
-    .where(and(eq(ccChangeItem.topic, t.key), gte(ccChangeItem.significance, 2)))
+    .where(and(eq(ccChangeItem.tool, "claude-code"), eq(ccChangeItem.topic, t.key), gte(ccChangeItem.significance, 2)))
     .orderBy(desc(ccChangeItem.publishedAt), desc(ccChangeItem.ord));
   const byId = new Map(rows.map((r) => [r.id, r]));
   const entries = rows.map((r) => {

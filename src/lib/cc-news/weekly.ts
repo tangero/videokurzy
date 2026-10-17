@@ -24,6 +24,7 @@ import { DOCS_INDEX_KEY, diffDocsWeeks, docsWeekKey, type DocsChange, type DocsI
 import { publishedKvKey } from "./draft";
 import { classifyModel, llmJson, openRouterLlm, writeModel, type LlmEnv, type LlmFn } from "./llm";
 import { topicLabel } from "./taxonomy";
+import { CLAUDE_CODE, toolName, type ToolKey } from "../tools/registry";
 
 type Db = ReturnType<typeof drizzle>;
 type Row = typeof ccChangeItem.$inferSelect;
@@ -94,10 +95,12 @@ export function stripUnknownDocLinks(md: string, known: Set<string>): { markdown
 
 // ─── Prompty ──────────────────────────────────────────────────────
 
-const SELECT_SYSTEM = (docLinks: string[]) => [
-  "You are the editor of a weekly 'What's new in Claude Code' digest for advanced users.",
+const SELECT_SYSTEM = (docLinks: string[], tool: ToolKey = CLAUDE_CODE) => [
+  `You are the editor of a weekly 'What's new in ${toolName(tool)}' digest for advanced users.`,
   "Input: CHANGELOG entries of one week (significance 3 first) and DOCS entries — new capabilities",
-  "found by diffing the documentation (mostly Desktop app, web, mobile, which the CLI changelog lacks).",
+  tool === CLAUDE_CODE
+    ? "found by diffing the documentation (mostly Desktop app, web, mobile, which the CLI changelog lacks)."
+    : "found by diffing the documentation (capabilities the changelog may not mention).",
   "- 4–6 FEATURES: things a user can newly DO or SEE — new commands, tools, modes, output styles,",
   "  UI panels, models, settings, changed defaults. Merge entries about the same feature and cite them all.",
   "  DOCS entries are first-class: a notable Desktop/web capability deserves a feature.",
@@ -328,10 +331,10 @@ const CZECH_WRITER: WriterLang = {
 interface Feature { title: string; version: string; lede: string; sourceIds: string[]; docLink: string | null }
 interface Selection { features: Feature[]; minorWins: { text: string; sourceIds: string[] }[]; skipped: { id: string; reason: string }[] }
 
-async function loadWeekRows(db: Db, versions: string[]): Promise<Row[]> {
+async function loadWeekRows(db: Db, versions: string[], tool: ToolKey = CLAUDE_CODE): Promise<Row[]> {
   const rows: Row[] = [];
   for (let i = 0; i < versions.length; i += 90) {
-    rows.push(...await db.select().from(ccChangeItem).where(inArray(ccChangeItem.version, versions.slice(i, i + 90))));
+    rows.push(...await db.select().from(ccChangeItem).where(and(eq(ccChangeItem.tool, tool), inArray(ccChangeItem.version, versions.slice(i, i + 90)))));
   }
   return rows.sort((a, b) => compareVersions(a.version, b.version) || a.ord - b.ord);
 }
@@ -363,55 +366,35 @@ export interface WeeklyArticle {
   review: WeeklyReview;
 }
 
+export interface SelectInput {
+  tool: ToolKey;
+  rows: Row[];
+  docs: DocsChange[];
+  signals: DocsSignal[];
+  /** Témata už vydaných článků (neopakovat). */
+  previous: string[];
+  /** Povolené odkazy do dokumentace. */
+  docLinks: string[];
+  llms: WeeklyLlms;
+}
+
+export interface SelectResult {
+  kept: Feature[];
+  selection: Selection;
+  fixed: { title: string; problem: string }[];
+  dropped: { title: string; problem: string }[];
+  /** Řádek položky ve tvaru, jak ji viděl výběr i kontrola faktů. */
+  lineOf: (id: string) => string;
+}
+
 /**
- * Sestaví článek pro vydání `/changelog/<rok>-w<týden>`. Rozsah verzí bere
- * z `versionRange` řádku (nastavený při vytvoření vydání).
+ * Výběr hlavních novinek a drobností týdne s povinným pokrytím (zásadní změny
+ * a signály dokumentace) a kontrola faktů s jednou opravou. Nezávislé na zdroji:
+ * stejné pro Claude Code i další sledované nástroje.
  */
-export async function buildChangelogArticle(
-  db: Db, env: WeeklyEnv, itemId: string, now: Date,
-  llms: WeeklyLlms = { classify: openRouterLlm(env, classifyModel(env)), write: openRouterLlm(env, writeModel(env)) },
-  opts: { selectionOnly?: boolean } = {},
-): Promise<WeeklyArticle> {
-  const [item] = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, itemId)).limit(1);
-  if (!item) throw new Error(`cc-news weekly: vydání ${itemId} neexistuje`);
-  const week = weekFromSourceId(item.sourceId);
-  const range = parseVersionRange(item.versionRange);
-  if (!week || !range) throw new Error(`cc-news weekly: vydání ${itemId} nemá týden nebo rozsah verzí`);
-  const weekLabel = `Week ${week.week}`;
-
-  // 1) Položky týdne: dotřídit, doplnit návaznosti.
-  const allVersions = (await db.selectDistinct({ v: ccChangeItem.version }).from(ccChangeItem)).map((r) => r.v);
-  const versions = allVersions
-    .filter((v) => compareVersions(v, range.from) >= 0 && compareVersions(v, range.to) <= 0)
-    .sort(compareVersions);
-  if (versions.length === 0) throw new Error(`cc-news weekly: v ${item.versionRange} nejsou žádné položky`);
-  const unclassified = await db.select({ id: ccChangeItem.id }).from(ccChangeItem)
-    .where(and(inArray(ccChangeItem.version, versions.slice(0, 90)), isNull(ccChangeItem.classifiedAt))).limit(1);
-  // Jen verze tohoto týdne: globální backlog by konzumenta zdržel před psaním.
-  if (unclassified.length > 0) await classifyPending(db, env, now, 1000, llms.classify, versions);
-  await linkFollowsForVersions(db, env, versions, llms.classify);
-  const rows = await loadWeekRows(db, versions);
+export async function selectAndVerify({ tool, rows, docs, signals, previous, docLinks, llms }: SelectInput): Promise<SelectResult> {
   const byId = new Map(rows.map((r) => [r.id, r]));
-
-  // 2) Dokumentace: konec minulého týdne vs. konec tohoto.
-  // Předchozí ISO týden (rok může mít 53 týdnů, proto ne „week − 1 / 52").
-  const prevWeek = isoWeek(new Date(isoWeekBounds(week.year, week.week).start.getTime() - 86_400_000));
-  const [afterIdx, beforeIdx, currentIdx] = await Promise.all([
-    env.KV.get<DocsIndex>(docsWeekKey(week), "json"),
-    env.KV.get<DocsIndex>(docsWeekKey(prevWeek), "json"),
-    env.KV.get<DocsIndex>(DOCS_INDEX_KEY, "json"),
-  ]);
-  let docs: DocsChange[] = [];
-  let signals: DocsSignal[] = [];
-  if (afterIdx && beforeIdx) {
-    ({ changes: docs, signals } = await diffDocsWeeks(env.KV, beforeIdx, afterIdx, llms.classify, llms.write));
-  } else {
-    console.log(`[cc-news] ${weekLabel}: chybí týdenní snímky dokumentace, článek jen ze changelogu`);
-  }
   const docsById = new Map(docs.map((d) => [d.id, d]));
-  const knownPages = new Set(Object.keys((afterIdx ?? currentIdx)?.pages ?? {}));
-  const docLinks = [...knownPages].map((p) => `https://code.claude.com/docs/en/${p}`);
-
   const lineOf = (id: string): string => {
     const r = byId.get(id);
     if (r) return `${r.id} | ${r.type}${r.scope ? ` [${r.scope}]` : ""} | ${r.text}`;
@@ -427,7 +410,6 @@ export async function buildChangelogArticle(
     ...rows.filter((r) => r.significance === 3 && (r.type === "Added" || r.type === "Changed")).map((r) => r.id),
     ...signals.map((s) => s.id),
   ];
-  const previous = await previousTopics(db, env.KV, itemId);
   const validIds = new Set([...rows.map((r) => r.id), ...docs.map((d) => d.id)]);
   const docLinkSet = new Set(docLinks);
   const clean = (s: Partial<Selection>): Selection => ({
@@ -452,7 +434,7 @@ export async function buildChangelogArticle(
     "DOCS:",
     ...docs.map((d) => lineOf(d.id)),
   ].join("\n");
-  let selection = clean(await llmJson<Selection>(llms.write, SELECT_SYSTEM(docLinks), selectUser, 12000));
+  let selection = clean(await llmJson<Selection>(llms.write, SELECT_SYSTEM(docLinks, tool), selectUser, 12000));
 
   const placed = () => new Set([...selection.features.flatMap((f) => f.sourceIds), ...selection.minorWins.flatMap((w) => w.sourceIds), ...selection.skipped.map((k) => k.id)]);
   const unplaced = mustPlace.filter((id) => !placed().has(id));
@@ -501,6 +483,61 @@ export async function buildChangelogArticle(
       dropped.push({ title: f.title, problem: re?.problem || problem });
     }
   }
+
+  return { kept, selection, fixed, dropped, lineOf };
+}
+
+/**
+ * Sestaví článek pro vydání `/changelog/<rok>-w<týden>`. Rozsah verzí bere
+ * z `versionRange` řádku (nastavený při vytvoření vydání).
+ */
+export async function buildChangelogArticle(
+  db: Db, env: WeeklyEnv, itemId: string, now: Date,
+  llms: WeeklyLlms = { classify: openRouterLlm(env, classifyModel(env)), write: openRouterLlm(env, writeModel(env)) },
+  opts: { selectionOnly?: boolean } = {},
+): Promise<WeeklyArticle> {
+  const [item] = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, itemId)).limit(1);
+  if (!item) throw new Error(`cc-news weekly: vydání ${itemId} neexistuje`);
+  const week = weekFromSourceId(item.sourceId);
+  const range = parseVersionRange(item.versionRange);
+  if (!week || !range) throw new Error(`cc-news weekly: vydání ${itemId} nemá týden nebo rozsah verzí`);
+  const weekLabel = `Week ${week.week}`;
+
+  // 1) Položky týdne: dotřídit, doplnit návaznosti.
+  const allVersions = (await db.selectDistinct({ v: ccChangeItem.version }).from(ccChangeItem).where(eq(ccChangeItem.tool, CLAUDE_CODE))).map((r) => r.v);
+  const versions = allVersions
+    .filter((v) => compareVersions(v, range.from) >= 0 && compareVersions(v, range.to) <= 0)
+    .sort(compareVersions);
+  if (versions.length === 0) throw new Error(`cc-news weekly: v ${item.versionRange} nejsou žádné položky`);
+  const unclassified = await db.select({ id: ccChangeItem.id }).from(ccChangeItem)
+    .where(and(eq(ccChangeItem.tool, CLAUDE_CODE), inArray(ccChangeItem.version, versions.slice(0, 90)), isNull(ccChangeItem.classifiedAt))).limit(1);
+  // Jen verze tohoto týdne: globální backlog by konzumenta zdržel před psaním.
+  if (unclassified.length > 0) await classifyPending(db, env, now, 1000, llms.classify, { tool: CLAUDE_CODE, versions });
+  await linkFollowsForVersions(db, env, versions, llms.classify);
+  const rows = await loadWeekRows(db, versions);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  // 2) Dokumentace: konec minulého týdne vs. konec tohoto.
+  // Předchozí ISO týden (rok může mít 53 týdnů, proto ne „week − 1 / 52").
+  const prevWeek = isoWeek(new Date(isoWeekBounds(week.year, week.week).start.getTime() - 86_400_000));
+  const [afterIdx, beforeIdx, currentIdx] = await Promise.all([
+    env.KV.get<DocsIndex>(docsWeekKey(week), "json"),
+    env.KV.get<DocsIndex>(docsWeekKey(prevWeek), "json"),
+    env.KV.get<DocsIndex>(DOCS_INDEX_KEY, "json"),
+  ]);
+  let docs: DocsChange[] = [];
+  let signals: DocsSignal[] = [];
+  if (afterIdx && beforeIdx) {
+    ({ changes: docs, signals } = await diffDocsWeeks(env.KV, beforeIdx, afterIdx, llms.classify, llms.write));
+  } else {
+    console.log(`[cc-news] ${weekLabel}: chybí týdenní snímky dokumentace, článek jen ze changelogu`);
+  }
+  const knownPages = new Set(Object.keys((afterIdx ?? currentIdx)?.pages ?? {}));
+  const docLinks = [...knownPages].map((p) => `https://code.claude.com/docs/en/${p}`);
+
+  // 3–4) Výběr s povinným pokrytím a kontrola faktů.
+  const previous = await previousTopics(db, env.KV, itemId);
+  const { kept, selection, fixed, dropped, lineOf } = await selectAndVerify({ tool: CLAUDE_CODE, rows, docs, signals, previous, docLinks, llms });
 
   // 5) Ověřený výběr se uloží: z téhož výběru píše i jiný jazyk (english.ts).
   const dates = rows.map((r) => r.publishedAt);

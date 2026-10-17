@@ -34,7 +34,7 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-async function sha8(s: string): Promise<string> {
+export async function sha8(s: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(digest)].slice(0, 4).map((b) => b.toString(16).padStart(2, "0")).join("");
 }

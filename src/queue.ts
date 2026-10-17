@@ -29,7 +29,9 @@ type WebhookMessageType =
   // Dotřídění položek changelogu do témat (Haiku). Bez payloadu; idempotentní.
   | "cc-news.classify"
   // Anglický přehled po schválení české verze → PR do repa webu. Idempotentní.
-  | "cc-news.en-weekly";
+  | "cc-news.en-weekly"
+  // Interní týdenní přehled dalšího sledovaného nástroje (Grok Build). Idempotentní.
+  | "tools.week";
 
 interface WebhookMessage {
   type: WebhookMessageType;
@@ -75,6 +77,11 @@ export async function enqueueCcNewsItem(
 }
 
 /** Zařadí dotřídění nezatříděných položek changelogu (běží na pozadí, LLM). */
+/** Zařadí interní týdenní přehled nástroje (výběr + kontrola faktů, uloží se do KV). */
+export async function enqueueToolWeek(env: Env, tool: string, week: { year: number; week: number }): Promise<void> {
+  await env.WEBHOOK_QUEUE.send({ type: "tools.week", data: { tool, year: week.year, week: week.week } });
+}
+
 /** Zařadí anglický přehled vydání (po schválení české verze). */
 export async function enqueueCcNewsEnglish(env: Env, itemId: string, opts: { force?: boolean; rebuildSelection?: boolean } = {}): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.en-weekly", data: { itemId, ...opts } });
@@ -140,6 +147,16 @@ export async function handleQueue(
         case "cc-news.classify":
           await handleCcNewsClassify(db, env);
           break;
+
+        case "tools.week": {
+          const { isToolKey } = await import("./lib/tools/registry");
+          const tool = String(data.tool ?? "");
+          if (!isToolKey(tool)) { console.error(`[queue] tools.week: neznámý nástroj ${tool}`); break; }
+          const { buildToolWeek } = await import("./lib/tools/weekly-tool");
+          const w = await buildToolWeek(db, env, tool, { year: Number(data.year), week: Number(data.week) }, new Date());
+          console.log(`[queue] tools.week ${tool} ${w.week.year}-w${w.week.week}: ${w.features.length} novinek z ${w.counts.collected} položek, vyřazeno ${w.dropped.length}`);
+          break;
+        }
 
         case "cc-news.en-weekly":
           await handleCcNewsEnglish(db, env, String(data.itemId ?? ""), data.force === true, data.rebuildSelection === true);
