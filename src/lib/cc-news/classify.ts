@@ -157,6 +157,21 @@ const FOLLOW_SYSTEM = [
 
 interface Follow { id: string; followsId: string | null; relation: string | null; reason: string }
 
+const FOLLOW_BATCH = 25;
+
+/** Návaznosti jedné dávky; nevalidní JSON rozpůlí (jako třídění), síťovou chybu vyhodí. */
+async function followBatch(llm: LlmFn, history: Row[], batch: Row[]): Promise<Follow[]> {
+  const user = `HISTORY:\n${history.map(line).join("\n") || "(none)"}\n\nNEW:\n${batch.map(line).join("\n")}`;
+  try {
+    const out = await llmJson<Follow[] | Follow>(llm, FOLLOW_SYSTEM, user, 6000);
+    return Array.isArray(out) ? out : [out];
+  } catch (err) {
+    if (batch.length <= 5 || isTransportError(err)) throw err;
+    const half = Math.ceil(batch.length / 2);
+    return [...await followBatch(llm, history, batch.slice(0, half)), ...await followBatch(llm, [...history, ...batch.slice(0, half)].slice(-25), batch.slice(half))];
+  }
+}
+
 /**
  * U významných (2–3) zatříděných položek v rozsahu verzí najde, na kterou
  * dřívější položku téhož tématu navazují. Historie = 25 posledních významných
@@ -188,13 +203,17 @@ export async function linkFollowsForVersions(
       .limit(25)).reverse();
     if (history.length === 0 && list.length < 2) continue;
     const order = new Map([...history, ...list].map((r, n) => [r.id, n]));
-    const user = `HISTORY:\n${history.map(line).join("\n") || "(none)"}\n\nNEW:\n${list.map(line).join("\n")}`;
-    let out: Follow[];
-    try {
-      out = await llmJson<Follow[]>(llm, FOLLOW_SYSTEM, user, 6000);
-    } catch (err) {
-      console.error(`[cc-news] návaznost ${topic}: ${(err as Error).message}`);
-      continue;
+    // Po dávkách: dlouhá odpověď nad celým tématem končí useknutým nebo nevalidním JSON.
+    const out: Follow[] = [];
+    for (let i = 0; i < list.length; i += FOLLOW_BATCH) {
+      // Historie dávky = starší historie + předchozí nové položky (posledních 25).
+      const hist = [...history, ...list.slice(0, i)].slice(-25);
+      try {
+        out.push(...await followBatch(llm, hist, list.slice(i, i + FOLLOW_BATCH)));
+      } catch (err) {
+        if (isTransportError(err)) throw err;
+        console.error(`[cc-news] návaznost ${topic}: ${(err as Error).message}`);
+      }
     }
     const updates = [];
     for (const f of out) {
