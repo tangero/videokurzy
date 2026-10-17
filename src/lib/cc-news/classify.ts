@@ -8,7 +8,7 @@ import type { drizzle } from "drizzle-orm/d1";
 import { ccChangeItem } from "../../db/schema";
 import type { ChangelogEntry } from "./changelog-source";
 import { TOPICS, TOPIC_KEYS } from "./taxonomy";
-import { classifyModel, llmJson, openRouterLlm, type LlmEnv, type LlmFn } from "./llm";
+import { classifyModel, isTransportError, llmJson, openRouterLlm, type LlmEnv, type LlmFn } from "./llm";
 
 type Db = ReturnType<typeof drizzle>;
 type Row = typeof ccChangeItem.$inferSelect;
@@ -50,6 +50,12 @@ export async function syncChangelogEntries(db: Db, entries: ChangelogEntry[]): P
   for (let i = 0; i < stale.length; i += 90) {
     deletes.push(db.delete(ccChangeItem).where(inArray(ccChangeItem.id, stale.slice(i, i + 90))));
   }
+  // Vazby na smazané řádky vynulovat, jinak stránka témat ukáže rozbitou návaznost.
+  for (let i = 0; i < stale.length; i += 90) {
+    deletes.push(db.update(ccChangeItem)
+      .set({ followsId: null, relation: null, followReason: null })
+      .where(inArray(ccChangeItem.followsId, stale.slice(i, i + 90))));
+  }
   await runBatched(db, deletes);
   const inserts = [];
   for (let i = 0; i < fresh.length; i += INSERT_CHUNK) {
@@ -87,9 +93,11 @@ interface Classified { id: string; topic: string; significance: number; reason: 
 /** Dávka, která ani po opakování nevrátí platný JSON, se rozpůlí. */
 async function classifyBatch(llm: LlmFn, batch: Row[]): Promise<Classified[]> {
   try {
-    return await llmJson<Classified[]>(llm, CLASSIFY_SYSTEM, batch.map(line).join("\n"), 6000);
+    const out = await llmJson<Classified[] | Classified>(llm, CLASSIFY_SYSTEM, batch.map(line).join("\n"), 6000);
+    return Array.isArray(out) ? out : [out];
   } catch (err) {
-    if (batch.length <= 5 || (err instanceof Error && /failed|OPENROUTER/.test(err.message))) throw err;
+    // Síťová chyba ani timeout se dávkou nespraví, rozpůlení by jen násobilo čekání.
+    if (batch.length <= 5 || isTransportError(err)) throw err;
     const half = Math.ceil(batch.length / 2);
     return [...(await classifyBatch(llm, batch.slice(0, half))), ...(await classifyBatch(llm, batch.slice(half)))];
   }
@@ -101,11 +109,12 @@ async function classifyBatch(llm: LlmFn, batch: Row[]): Promise<Classified[]> {
  */
 export async function classifyPending(
   db: Db, env: LlmEnv, now: Date, limit = 200, llm: LlmFn = openRouterLlm(env, classifyModel(env)),
+  versions?: string[],
 ): Promise<number> {
   const pending = await db
     .select()
     .from(ccChangeItem)
-    .where(isNull(ccChangeItem.classifiedAt))
+    .where(versions ? and(isNull(ccChangeItem.classifiedAt), inArray(ccChangeItem.version, versions.slice(0, 90))) : isNull(ccChangeItem.classifiedAt))
     .orderBy(asc(ccChangeItem.publishedAt), asc(ccChangeItem.ord))
     .limit(limit);
   let done = 0;
@@ -202,11 +211,15 @@ export async function linkFollowsForVersions(
   return linked;
 }
 
-/** Verze nejnovější uložené položky (podle data vydání), nebo null u prázdné tabulky. */
-export async function latestStoredVersion(db: Db): Promise<string | null> {
+/**
+ * Spodní hranice denní synchronizace: verze vydaná před `days` dny (nebo nejstarší
+ * uložená). Okno zachytí verze, ke kterým dokumentace doplnila datum až později.
+ */
+export async function syncFloorVersion(db: Db, now: Date, days = 14): Promise<string | null> {
   const [r] = await db
     .select({ version: ccChangeItem.version })
     .from(ccChangeItem)
+    .where(lt(ccChangeItem.publishedAt, new Date(now.getTime() - days * 86_400_000)))
     .orderBy(desc(ccChangeItem.publishedAt), desc(ccChangeItem.version))
     .limit(1);
   return r?.version ?? null;

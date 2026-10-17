@@ -137,27 +137,34 @@ export async function handleScheduled(
  * Článek se nestaví tady (LLM trvá minuty) — jen se založí vydání a zařadí do fronty.
  */
 async function ccNewsChangelogMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: Date): Promise<void> {
-  const { fetchChangelog, lastClosedWeek } = await import("./lib/cc-news/changelog-source");
-  const { syncChangelogEntries, countUnclassified, latestStoredVersion } = await import("./lib/cc-news/classify");
-  const { snapshotDocs, freezeWeek } = await import("./lib/cc-news/docs-snapshot");
+  const { fetchChangelog, isoWeekBounds, lastClosedWeek } = await import("./lib/cc-news/changelog-source");
+  const { syncChangelogEntries, countUnclassified, syncFloorVersion } = await import("./lib/cc-news/classify");
+  const { snapshotDocs, freezeWeek, docsWeekKey } = await import("./lib/cc-news/docs-snapshot");
   const { createChangelogWeekItem } = await import("./lib/cc-news/changelog-week");
 
+  let synced = false;
   try {
-    // Jen od poslední uložené verze výš (historie přišla backfillem; znovu
-    // projdeme i poslední verzi kvůli dodatečným úpravám jejích záznamů).
-    const fromVersion = (await latestStoredVersion(db)) ?? "0.0.0";
+    // Od verze vydané před 14 dny výš: verze, ke které dokumentace uvedla datum
+    // až později, se tak ještě načte (sync je idempotentní).
+    const fromVersion = (await syncFloorVersion(db, now)) ?? "0.0.0";
     const added = await syncChangelogEntries(db, await fetchChangelog(fromVersion));
     console.log(`[cron] cc-news changelog: nových položek ${added} (od ${fromVersion})`);
     if ((await countUnclassified(db)) > 0) await enqueueCcNewsClassify(env);
+    synced = true;
   } catch (err) {
     console.error("[cron] cc-news changelog sync failed:", err);
   }
 
-  const monday = now.getUTCDay() === 1;
+  // Uzavřený týden se zmrazí a založí v pondělí; když to nevyjde (výpadek zdroje,
+  // neúplný snímek), zkouší se to další dny, aby týden tiše nevypadl.
+  const week = lastClosedWeek(now);
+  const weekName = `${week.year}-w${week.week}`;
+  let frozen = false;
   let pending = -1;
   try {
-    // V pondělí dober snímek celý (až 3 průchody po MAX_PAGES_PER_RUN), ať jde zmrazit.
-    for (let pass = 0; pass < (monday ? 3 : 1); pass++) {
+    frozen = !!(await env.KV.get(docsWeekKey(week)));
+    // Dokud týden není zmrazený, dober snímek celý (až 3 průchody po MAX_PAGES_PER_RUN).
+    for (let pass = 0; pass < (frozen ? 1 : 3); pass++) {
       const snap = await snapshotDocs(env.KV, now);
       pending = snap.pending;
       console.log(`[cron] cc-news docs: staženo ${snap.fetched}, změněno ${snap.changed}, odloženo ${snap.pending}`);
@@ -167,18 +174,26 @@ async function ccNewsChangelogMaintenance(db: ReturnType<typeof drizzle>, env: E
     console.error("[cron] cc-news docs snapshot failed:", err);
   }
 
-  // Pondělí 03:00 UTC: stav dokumentace = konec minulého týdne.
-  if (monday) {
-    const week = lastClosedWeek(now);
-    try {
-      if (pending !== 0) console.error(`[cron] cc-news docs: snímek neúplný (odloženo ${pending}), týden ${week.year}-w${week.week} nezmrazuji`);
-      else if (await freezeWeek(env.KV, week, pending)) console.log(`[cron] cc-news docs: zmrazen týden ${week.year}-w${week.week}`);
-      const outcome = await createChangelogWeekItem(db, week, now);
-      console.log(`[cron] cc-news týden ${week.year}-w${week.week}: ${outcome.kind}`);
-      if (outcome.kind === "created") await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);
-    } catch (err) {
-      console.error("[cron] cc-news weekly item failed:", err);
+  try {
+    if (!frozen) {
+      if (pending !== 0) console.error(`[cron] cc-news docs: snímek neúplný (odloženo ${pending}), týden ${weekName} nezmrazuji`);
+      else if (await freezeWeek(env.KV, week, pending)) {
+        frozen = true;
+        console.log(`[cron] cc-news docs: zmrazen týden ${weekName}${now.getUTCDay() === 1 ? "" : " (opožděně)"}`);
+      }
     }
+    // Bez zmrazené dokumentace se čeká do čtvrtka, pak vydání vznikne jen ze changelogu.
+    const daysAfter = (now.getTime() - isoWeekBounds(week.year, week.week).end.getTime()) / 86_400_000;
+    if (!synced) {
+      console.error(`[cron] cc-news týden ${weekName}: changelog se nesynchronizoval, vydání nezakládám`);
+    } else if (frozen || daysAfter >= 3) {
+      if (!frozen) console.error(`[cron] cc-news týden ${weekName}: dokumentace nezmrazena ani po ${Math.floor(daysAfter)} dnech, zakládám jen ze changelogu`);
+      const outcome = await createChangelogWeekItem(db, week, now);
+      if (outcome.kind !== "exists") console.log(`[cron] cc-news týden ${weekName}: ${outcome.kind}`);
+      if (outcome.kind === "created") await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);
+    }
+  } catch (err) {
+    console.error("[cron] cc-news weekly item failed:", err);
   }
 }
 

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ccChangeItem, ccNewsItem } from "../../src/db/schema";
 import { parseChangelog, parseReleaseDates } from "../../src/lib/cc-news/changelog-source";
-import { classifyPending, linkFollowsForVersions, syncChangelogEntries } from "../../src/lib/cc-news/classify";
+import { classifyPending, linkFollowsForVersions, syncChangelogEntries, syncFloorVersion } from "../../src/lib/cc-news/classify";
 import { createChangelogWeekItem } from "../../src/lib/cc-news/changelog-week";
 import { detectRecent } from "../../src/lib/cc-news/detect";
 import {
@@ -13,7 +13,7 @@ import {
 import {
   buildChangelogArticle, czechDateRange, extractEditorNotes, stripUnknownDocLinks, versionViolations,
 } from "../../src/lib/cc-news/weekly";
-import { publishedKvKey } from "../../src/lib/cc-news/draft";
+import { prepareDraftAndApproval, publishedKvKey } from "../../src/lib/cc-news/draft";
 import type { LlmFn } from "../../src/lib/cc-news/llm";
 
 const NOW = new Date("2026-09-21T03:00:00Z");
@@ -301,5 +301,48 @@ describe("buildChangelogArticle", () => {
     // Front matter ve formátu publikovaných článků.
     expect(art.markdown).toMatch(/^---\nauthor: Patrick Zandl\n[\s\S]*\ntitle: "Projects - přebírají koordinaci"\n[\s\S]*\n---\n\n# Projects - přebírají koordinaci\n/);
     expect(art.versionRange).toBe("v2.1.271–v2.1.278");
+  });
+});
+
+describe("opravy z code review", () => {
+  it("klasifikace přijme i jediný objekt místo pole", async () => {
+    const { db } = await seed();
+    const { llm } = fakeLlm({ classify: (u) => JSON.stringify({ id: idsIn(u)[0], topic: "plugins", significance: 2, reason: "x" }) });
+    expect(await classifyPending(db, env as never, NOW, 200, llm)).toBe(1);
+  });
+
+  it("timeout modelu dávku nerozpůlí", async () => {
+    const { db } = await seed();
+    let n = 0;
+    const llm: LlmFn = async () => { n++; throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }); };
+    await expect(classifyPending(db, env as never, NOW, 200, llm)).rejects.toThrow(/timeout/);
+    expect(n).toBe(1);
+  });
+
+  it("spodní hranice synchronizace = verze vydaná před 14 dny", async () => {
+    const { db } = await seed();
+    expect(await syncFloorVersion(db, new Date("2026-09-26T03:00:00Z"))).toBe("2.1.269");
+    expect(await syncFloorVersion(db, new Date("2026-10-10T03:00:00Z"))).toBe("2.1.278");
+    expect(await syncFloorVersion(db, new Date("2026-09-20T03:00:00Z"))).toBeNull();
+  });
+
+  it("novinka bez verdiktu kontroly faktů neprojde jako ověřená", async () => {
+    const { db } = await seed();
+    await db.insert(ccNewsItem).values({ id: "w38", sourceId: "/changelog/2026-w38", contentHash: "h", weekLabel: "Week 38", versionRange: "v2.1.271–v2.1.278", status: "draft", createdAt: NOW });
+    // Model vrátí jediný objekt k neexistujícímu claimu → novinka nemá verdikt → oprava → drop.
+    const { llm, calls } = fakeLlm({ verify: () => JSON.stringify({ n: 9, supported: true, problem: "" }) });
+    const art = await buildChangelogArticle(db, env as never, "w38", NOW, { classify: llm, write: llm });
+    expect(calls.some((c) => c.kind === "fix")).toBe(true);
+    expect(art.review.dropped.map((d) => d.title)).toEqual(["Allowed domains"]);
+    expect(art.markdown).toMatch(/summary_points:\n- "Projects koordinují cloudová sezení."\n/);
+  });
+
+  it("nový koncept publikované vydání nestáhne z webu", async () => {
+    const db = drizzle(env.DB);
+    await db.insert(ccNewsItem).values({ id: "p1", sourceId: "/changelog/2026-w38", contentHash: "h", weekLabel: "Week 38", versionRange: null, status: "published", createdAt: NOW, publishedAt: NOW });
+    await prepareDraftAndApproval(db, env as never, "p1", "# nový", { slug: "2026-w38", weekLabel: "Week 38", versionRange: null }, NOW);
+    const [row] = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "p1"));
+    expect(row!.status).toBe("published");
+    expect(row!.approveNonce).toBeTruthy();
   });
 });

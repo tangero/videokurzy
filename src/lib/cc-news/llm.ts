@@ -58,6 +58,12 @@ export function openRouterLlm(env: LlmEnv, model: string): LlmFn {
   };
 }
 
+/** Síťová/HTTP chyba nebo timeout volání modelu (ne neplatný JSON v odpovědi). */
+export function isTransportError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.name === "TimeoutError" || err.name === "AbortError" || /LLM .* failed|OPENROUTER|content-type/.test(err.message);
+}
+
 /** Vytáhne JSON z odpovědi modelu (toleruje ```json ohraničení a text okolo). */
 export function parseJsonLoose<T>(text: string): T {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -72,17 +78,16 @@ export function parseJsonLoose<T>(text: string): T {
  * Volání, které má vrátit JSON. Neplatnou odpověď (neukončený řetězec, uvozovky
  * v textu, useknutí) zkusí až 2× znovu s mírně vyšší teplotou.
  */
-export async function llmJson<T>(llm: LlmFn, system: string, user: string, maxTokens = 8000): Promise<T> {
+export async function llmJson<T>(llm: LlmFn, system: string, user: string, maxTokens = 8000, firstAttempt = 0): Promise<T> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = firstAttempt; attempt < firstAttempt + 3; attempt++) {
     try {
       return parseJsonLoose<T>(await llm(system, user, { maxTokens, attempt }));
     } catch (err) {
       lastErr = err;
       // Síťová/HTTP chyba ani timeout se neopakují tady — o retry rozhodne fronta.
       // (Opakovaný 240s timeout by konzumenta zdržel až na 12 minut.)
-      if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) throw err;
-      if (err instanceof Error && /LLM .* failed|OPENROUTER|content-type/.test(err.message)) throw err;
+      if (isTransportError(err)) throw err;
     }
   }
   throw lastErr;

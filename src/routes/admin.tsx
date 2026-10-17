@@ -2273,9 +2273,17 @@ async function runChangelogWeek(c: Context<{ Bindings: Env; Variables: Variables
   const db = drizzle(c.env.DB);
   const { createChangelogWeekItem } = await import("../lib/cc-news/changelog-week");
   const { enqueueCcNewsItem } = await import("../queue");
+  const { ccNewsItem } = await import("../db/schema");
   const outcome = await createChangelogWeekItem(db, week, new Date());
+  const force = String(body.force ?? "") === "1";
+  if (outcome.kind === "exists" && !force) {
+    const [row] = await db.select({ status: ccNewsItem.status }).from(ccNewsItem).where(eq(ccNewsItem.id, outcome.itemId)).limit(1);
+    if (row?.status === "published") {
+      return c.redirect(`/admin?ccNews=${encodeURIComponent(`Vydání ${outcome.sourceId} je už publikované; nový koncept jen s force=1.`)}`);
+    }
+  }
   if (outcome.kind === "created" || outcome.kind === "exists") {
-    await enqueueCcNewsItem(c.env, outcome.itemId, outcome.sourceId, { manualTrigger: true, force: String(body.force ?? "") === "1" });
+    await enqueueCcNewsItem(c.env, outcome.itemId, outcome.sourceId, { manualTrigger: true, force });
   }
   const msg = {
     created: `Vydání ${outcome.sourceId} založeno (${"versionRange" in outcome ? outcome.versionRange : ""}); článek se staví na pozadí, schvalovací e-mail dorazí za pár minut.`,

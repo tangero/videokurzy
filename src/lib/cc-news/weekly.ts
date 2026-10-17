@@ -266,7 +266,8 @@ export async function buildChangelogArticle(
   if (versions.length === 0) throw new Error(`cc-news weekly: v ${item.versionRange} nejsou žádné položky`);
   const unclassified = await db.select({ id: ccChangeItem.id }).from(ccChangeItem)
     .where(and(inArray(ccChangeItem.version, versions.slice(0, 90)), isNull(ccChangeItem.classifiedAt))).limit(1);
-  if (unclassified.length > 0) await classifyPending(db, env, now, 1000, llms.classify);
+  // Jen verze tohoto týdne: globální backlog by konzumenta zdržel před psaním.
+  if (unclassified.length > 0) await classifyPending(db, env, now, 1000, llms.classify, versions);
   await linkFollowsForVersions(db, env, versions, llms.classify);
   const rows = await loadWeekRows(db, versions);
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -337,17 +338,26 @@ export async function buildChangelogArticle(
   if (unplaced.length > 0) {
     const extra = clean(await llmJson<Partial<Selection>>(llms.write, PLACE_SYSTEM, unplaced.map(lineOf).join("\n"), 4000));
     selection = { ...selection, minorWins: [...selection.minorWins, ...extra.minorWins], skipped: [...selection.skipped, ...extra.skipped] };
+    // Co model nezařadil ani napodruhé, musí být vidět v revizi.
+    const still = mustPlace.filter((id) => !placed().has(id));
+    selection.skipped.push(...still.map((id) => ({ id, reason: "model neumístil" })));
   }
 
   // 4) Kontrola faktů s opravou.
-  const verify = async (fs: Feature[]) => fs.length === 0 ? [] : llmJson<{ n: number; supported: boolean; problem: string }[]>(
-    llms.classify, VERIFY_SYSTEM,
-    fs.map((f, n) => `CLAIM ${n + 1}: ${f.title}. ${f.lede}\nENTRIES:\n${f.sourceIds.map(lineOf).join("\n")}`).join("\n\n"), 4000,
-  );
+  type Verdict = { n: unknown; supported: unknown; problem: string };
+  const verify = async (fs: Feature[]): Promise<Verdict[]> => {
+    if (fs.length === 0) return [];
+    const out = await llmJson<Verdict[] | Verdict>(
+      llms.classify, VERIFY_SYSTEM,
+      fs.map((f, n) => `CLAIM ${n + 1}: ${f.title}. ${f.lede}\nENTRIES:\n${f.sourceIds.map(lineOf).join("\n")}`).join("\n\n"), 4000,
+    );
+    // U jediného claimu model občas vrátí objekt místo pole.
+    return Array.isArray(out) ? out : [out];
+  };
   const weekEntries = [...candidates.map((r) => lineOf(r.id)), ...docs.map((d) => lineOf(d.id))].join("\n");
   // Model občas vrátí n nebo supported jako řetězec — sjednotit, jinak by find() nic nenašel
   // a nedoložená novinka by prošla jako ověřená.
-  const norm = (v: { n: unknown; supported: unknown; problem: string }) =>
+  const norm = (v: Verdict) =>
     ({ n: Number(v.n), supported: v.supported === true || String(v.supported) === "true", problem: v.problem ?? "" });
   const verdicts = (await verify(selection.features)).map(norm);
   const kept: Feature[] = [];
@@ -355,17 +365,19 @@ export async function buildChangelogArticle(
   const dropped: { title: string; problem: string }[] = [];
   for (const [n, f] of selection.features.entries()) {
     const v = verdicts.find((x) => x.n === n + 1);
-    if (!v || v.supported) { kept.push(f); continue; }
+    // Chybějící verdikt = neověřeno, ne „v pořádku“.
+    if (v?.supported) { kept.push(f); continue; }
+    const problem = v?.problem || "kontrola faktů nevrátila verdikt";
     const fix = await llmJson<Feature & { drop?: boolean }>(llms.write, FIX_SYSTEM,
-      `FEATURE: ${f.title}. ${f.lede}\nCITED: ${f.sourceIds.join(", ")}\nPROBLEM: ${v.problem}\n\nWEEK ENTRIES:\n${weekEntries}`, 3000);
+      `FEATURE: ${f.title}. ${f.lede}\nCITED: ${f.sourceIds.join(", ")}\nPROBLEM: ${problem}\n\nWEEK ENTRIES:\n${weekEntries}`, 3000);
     const repaired = fix.drop ? null : clean({ features: [fix] }).features[0];
     const reRaw = repaired ? (await verify([repaired]))[0] : null;
     const re = reRaw ? norm(reRaw) : null;
-    if (repaired && (!re || re.supported)) {
+    if (repaired && re?.supported) {
       kept.push(repaired);
-      fixed.push({ title: repaired.title, problem: v.problem });
+      fixed.push({ title: repaired.title, problem });
     } else {
-      dropped.push({ title: f.title, problem: re?.problem || v.problem });
+      dropped.push({ title: f.title, problem: re?.problem || problem });
     }
   }
 
@@ -397,7 +409,11 @@ export async function buildChangelogArticle(
     !!w && typeof w.title === "string" && w.title.trim().length > 0 && typeof w.body === "string" && w.body.trim().length > 200 &&
     typeof w.excerpt === "string" && Array.isArray(w.summaryPoints) && w.summaryPoints.every((p) => typeof p === "string");
   let written = await llmJson<Partial<Written>>(llms.write, WRITER_SYSTEM, writerUser, 12000);
-  if (!valid(written)) written = await llmJson<Partial<Written>>(llms.write, WRITER_SYSTEM, writerUser, 12000);
+  // Opakování s vyšší teplotou (při teplotě 0 by vrátil totéž) a s tím, co chybělo.
+  if (!valid(written)) {
+    const missing = ["title", "excerpt", "summaryPoints", "body (min. 200 znaků)"].join(", ");
+    written = await llmJson<Partial<Written>>(llms.write, WRITER_SYSTEM, `${writerUser}\n\nPŘEDCHOZÍ ODPOVĚĎ BYLA NEÚPLNÁ. Vrať JSON se všemi poli: ${missing}.`, 12000, 1);
+  }
   if (!valid(written)) throw new Error("cc-news weekly: writer nevrátil úplný článek (title, excerpt, summaryPoints, body)");
 
   // 6) Deterministické kontroly. Oprava verzí jde PŘED úklid, aby úklid (poznámky
@@ -415,13 +431,15 @@ export async function buildChangelogArticle(
     if (fixedBody.length > body.length * 0.8) body = fixedBody;
     versionIssues = versionViolations(body, allowedVersions);
   }
+  // Titulek, perex a shrnutí se neopravují, jen se chybné verze ukážou v revizi.
+  versionIssues = [...new Set([...versionIssues, ...versionViolations([written.title, written.excerpt, ...written.summaryPoints].join("\n"), allowedVersions)])];
   const extracted = extractEditorNotes(body);
   const editorNotes = extracted.notes;
   body = extracted.markdown.replace(/—/g, " - ");
   const linkCheck = knownPages.size > 0 ? stripUnknownDocLinks(body, knownPages) : { markdown: body, stripped: [] };
   body = linkCheck.markdown;
 
-  const q = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/—/g, "-")}"`;
+  const q = (s: string) => `"${s.replace(/\s*\n\s*/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/—/g, "-")}"`;
   const title = written.title.trim().replace(/—/g, "-");
   const markdown = [
     "---",
@@ -435,7 +453,7 @@ export async function buildChangelogArticle(
     `title: ${q(title)}`,
     `post_excerpt: ${q(written.excerpt.trim())}`,
     "summary_points:",
-    ...written.summaryPoints.map((p) => `- ${p.trim().replace(/—/g, "-")}`),
+    ...written.summaryPoints.map((p) => `- ${q(p.trim())}`),
     "---",
     "",
     `# ${title}`,
