@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  englishDateRange, englishWeeklyMarkdown, englishWeeklyPath, openSitePullRequest, publishEnglishWeekly,
+  GithubError, englishDateRange, englishMdKvKey, englishWeeklyMarkdown, englishWeeklyPath, openSitePullRequest,
+  publicationDate, publishEnglishWeekly,
 } from "../../src/lib/cc-news/english";
 import { selectionKvKey, type WeekSelection } from "../../src/lib/cc-news/weekly";
 import type { LlmFn } from "../../src/lib/cc-news/llm";
@@ -40,7 +41,7 @@ function fakeLlm() {
 }
 
 /** Podvržené GitHub API: zaznamená volání, stav větve/PR lze nastavit. */
-function fakeGithub(state: { branchExists?: boolean; fileSha?: string; openPr?: string } = {}) {
+function fakeGithub(state: { branchExists?: boolean; fileSha?: string; openPr?: string; onMain?: boolean } = {}) {
   const calls: { method: string; path: string; body?: any }[] = [];
   const f = (async (url: string, init: RequestInit) => {
     const path = url.replace("https://api.github.com/repos/tangero/vibecoding-site", "");
@@ -51,6 +52,7 @@ function fakeGithub(state: { branchExists?: boolean; fileSha?: string; openPr?: 
     if (method === "GET" && path === "") return j({ default_branch: "main" });
     if (path === "/git/ref/heads/main") return j({ object: { sha: "base123" } });
     if (path === "/git/refs") return state.branchExists ? j({ message: "Reference already exists" }, 422) : j({}, 201);
+    if (method === "GET" && path.startsWith("/contents/") && !path.includes("?ref=")) return state.onMain ? j({ sha: "main" }) : j({}, 404);
     if (method === "GET" && path.startsWith("/contents/")) return state.fileSha ? j({ sha: state.fileSha }) : j({}, 404);
     if (method === "PUT") return j({}, state.fileSha ? 200 : 201);
     if (method === "GET" && path.startsWith("/pulls")) return j(state.openPr ? [{ html_url: state.openPr }] : []);
@@ -61,7 +63,7 @@ function fakeGithub(state: { branchExists?: boolean; fileSha?: string; openPr?: 
 }
 
 beforeEach(async () => {
-  for (const k of (await env.KV.list({ prefix: "cc-news:selection:" })).keys) await env.KV.delete(k.name);
+  for (const k of (await env.KV.list({ prefix: "cc-news:" })).keys) await env.KV.delete(k.name);
 });
 
 describe("formát souboru podle kontraktu webu", () => {
@@ -92,6 +94,14 @@ describe("formát souboru podle kontraktu webu", () => {
     expect(md).not.toContain("translation_of");
   });
 
+  it("datum = pondělí po týdnu, prázdné shrnutí vynechá, # v kódu nechá", () => {
+    expect(publicationDate(SEL).toISOString()).toBe("2026-10-26T00:00:00.000Z");
+    const md = englishWeeklyMarkdown(SEL, { title: "X", excerpt: "E", summaryPoints: [], body: "# A\n\n```bash\n# install\n```\n\n# B" });
+    expect(md).toContain("date: '2026-10-26'");
+    expect(md).not.toContain("summary_points");
+    expect(md).toContain("## A\n\n```bash\n# install\n```\n\n## B");
+  });
+
   it("anglické období", () => {
     expect(englishDateRange(new Date("2026-09-14T12:00:00Z"), new Date("2026-09-20T12:00:00Z"))).toBe("September 14–20, 2026");
     expect(englishDateRange(new Date("2026-09-28T12:00:00Z"), new Date("2026-10-04T12:00:00Z"))).toBe("September 28 – October 4, 2026");
@@ -100,13 +110,13 @@ describe("formát souboru podle kontraktu webu", () => {
 
 describe("publishEnglishWeekly", () => {
   it("bez uloženého výběru nic nedělá", async () => {
-    expect(await publishEnglishWeekly(env as never, "missing", new Date(), { llm: fakeLlm().llm })).toEqual({ kind: "no-selection" });
+    expect(await publishEnglishWeekly(env as never, "missing", { llm: fakeLlm().llm })).toEqual({ kind: "no-selection" });
   });
 
   it("nanečisto napíše anglický článek z výběru a projde kontrolami", async () => {
     await env.KV.put(selectionKvKey("w43"), JSON.stringify(SEL));
     const { llm, calls } = fakeLlm();
-    const out = await publishEnglishWeekly(env as never, "w43", new Date("2026-10-26T09:00:00Z"), { llm, dryRun: true });
+    const out = await publishEnglishWeekly(env as never, "w43", { llm, dryRun: true });
     expect(out.kind).toBe("no-token");
     if (out.kind !== "no-token") return;
     expect(out.path).toBe("src/content/english/claude-code-weekly-2026-w43.md");
@@ -125,7 +135,7 @@ describe("publishEnglishWeekly", () => {
   it("otevře PR s jedním souborem do nové větve", async () => {
     await env.KV.put(selectionKvKey("w43"), JSON.stringify(SEL));
     const gh = fakeGithub();
-    const out = await publishEnglishWeekly({ ...env, VIBECODING_SITE_GITHUB_TOKEN: "t" } as never, "w43", new Date("2026-10-26T09:00:00Z"), { llm: fakeLlm().llm, fetch: gh.f });
+    const out = await publishEnglishWeekly({ ...env, VIBECODING_SITE_GITHUB_TOKEN: "t" } as never, "w43", { llm: fakeLlm().llm, fetch: gh.f });
     expect(out).toEqual({ kind: "pr", pr: { url: "https://github.com/tangero/vibecoding-site/pull/300", branch: "en-weekly/claude-code-2026-w43", path: "src/content/english/claude-code-weekly-2026-w43.md", created: true } });
     expect(gh.calls.find((c) => c.path === "/git/refs")!.body).toEqual({ ref: "refs/heads/en-weekly/claude-code-2026-w43", sha: "base123" });
     const put = gh.calls.find((c) => c.method === "PUT")!;
@@ -149,5 +159,32 @@ describe("publishEnglishWeekly", () => {
     const f = (async () => new Response("bad credentials", { status: 401 })) as unknown as typeof fetch;
     await expect(openSitePullRequest("t", "tangero/vibecoding-site", { path: "a.md", content: "x" }, { branch: "b", title: "T", body: "B" }, f))
       .rejects.toThrow(/GitHub repo failed: 401/);
+    const err = await openSitePullRequest("t", "r/x", { path: "a.md", content: "x" }, { branch: "b", title: "T", body: "B" }, f).catch((e) => e);
+    expect(err).toBeInstanceOf(GithubError);
+    expect(err.permanent).toBe(true);
+  });
+
+  it("vydaný článek na webu bez force nepřepíše a model nevolá", async () => {
+    await env.KV.put(selectionKvKey("w43"), JSON.stringify(SEL));
+    const gh = fakeGithub({ onMain: true });
+    const { llm, calls } = fakeLlm();
+    const out = await publishEnglishWeekly({ ...env, VIBECODING_SITE_GITHUB_TOKEN: "t" } as never, "w43", { llm, fetch: gh.f });
+    expect(out).toEqual({ kind: "already-published", path: "src/content/english/claude-code-weekly-2026-w43.md" });
+    expect(calls).toHaveLength(0);
+    expect(gh.calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("náhled se uloží a ostrý běh (i retry) ho použije bez nového psaní", async () => {
+    await env.KV.put(selectionKvKey("w43"), JSON.stringify(SEL));
+    const first = fakeLlm();
+    const preview = await publishEnglishWeekly(env as never, "w43", { llm: first.llm, dryRun: true });
+    expect(await env.KV.get(englishMdKvKey("w43"))).toBeTruthy();
+    const second = fakeLlm();
+    const gh = fakeGithub();
+    await publishEnglishWeekly({ ...env, VIBECODING_SITE_GITHUB_TOKEN: "t" } as never, "w43", { llm: second.llm, fetch: gh.f });
+    expect(second.calls).toHaveLength(0);
+    const put = gh.calls.find((c) => c.method === "PUT")!;
+    const content = new TextDecoder().decode(Uint8Array.from(atob(put.body.content), (ch) => ch.charCodeAt(0)));
+    expect(preview.kind === "no-token" && preview.markdown).toBe(content);
   });
 });

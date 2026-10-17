@@ -11,6 +11,7 @@
 
 import type { LlmEnv, LlmFn } from "./llm";
 import { openRouterLlm, writeModel } from "./llm";
+import { isoWeekBounds } from "./changelog-source";
 import { selectionKvKey, writeWeeklyArticle, yamlQuote, type WeekSelection, type WriterLang } from "./weekly";
 
 export interface EnglishEnv extends LlmEnv {
@@ -21,6 +22,13 @@ export interface EnglishEnv extends LlmEnv {
 }
 
 const DEFAULT_REPO = "tangero/vibecoding-site";
+
+/**
+ * Napsaný anglický markdown. Retry fronty i ostrý běh po náhledu ho použijí znovu:
+ * v PR je přesně to, co ukázal náhled, a model se neplatí dvakrát.
+ */
+export const englishMdKvKey = (itemId: string) => `cc-news:en-md:${itemId}`;
+const EN_MD_TTL_SEC = 60 * 24 * 60 * 60;
 const TOOL_NAMES: Record<WeekSelection["tool"], string> = { "claude-code": "Claude Code" };
 
 export const WRITER_SYSTEM_EN = [
@@ -111,6 +119,11 @@ export const ENGLISH_WRITER: WriterLang = {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
+/** Den vydání = pondělí po uzavřeném týdnu (stálý, nemění se s retry ani pozdním schválením). */
+export function publicationDate(sel: Pick<WeekSelection, "week">): Date {
+  return new Date(isoWeekBounds(sel.week.year, sel.week.week).end.getTime() + 1);
+}
+
 /** Cesta souboru podle kontraktu: src/content/english/<tool>-weekly-<rok>-w<NN>.md. */
 export function englishWeeklyPath(sel: Pick<WeekSelection, "tool" | "week">): string {
   return `src/content/english/${sel.tool}-weekly-${sel.week.year}-w${pad(sel.week.week)}.md`;
@@ -120,13 +133,18 @@ export function englishWeeklyPath(sel: Pick<WeekSelection, "tool" | "week">): st
 export function englishWeeklyMarkdown(
   sel: WeekSelection,
   written: { title: string; excerpt: string; summaryPoints: string[]; body: string },
-  date: Date,
+  date: Date = publicationDate(sel),
 ): string {
   const toolName = TOOL_NAMES[sel.tool];
   const headline = written.title.replace(new RegExp(`^${toolName}[,:]?\\s*(Week\\s*\\d+\\s*[:,-]\\s*)?`, "i"), "").trim();
   const title = `${toolName}, Week ${sel.week.week}: ${headline}`;
-  // Nadpisy v těle od ##: případný # se sníží o úroveň.
-  const body = written.body.replace(/^# /gm, "## ").trim();
+  // Nadpisy v těle od ##: případný # se sníží o úroveň (mimo bloky kódu).
+  const body = written.body
+    .split(/(^```[\s\S]*?^```)/m)
+    .map((part) => (part.startsWith("```") ? part : part.replace(/^# /gm, "## ")))
+    .join("")
+    .trim();
+  const points = written.summaryPoints.filter((p) => p.trim());
   return [
     "---",
     `title: ${yamlQuote(title)}`,
@@ -139,8 +157,8 @@ export function englishWeeklyMarkdown(
     "categories:",
     `  - ${toolName}`,
     `post_excerpt: ${yamlQuote(written.excerpt)}`,
-    "summary_points:",
-    ...written.summaryPoints.map((p) => `  - ${yamlQuote(p)}`),
+    // Prázdný klíč by byl null a schéma webu by ho odmítlo.
+    ...(points.length ? ["summary_points:", ...points.map((p) => `  - ${yamlQuote(p)}`)] : []),
     "---",
     "",
     body,
@@ -151,6 +169,12 @@ export function englishWeeklyMarkdown(
 // ─── GitHub ───────────────────────────────────────────────────────
 
 type GhFetch = typeof fetch;
+
+/** Chyba GitHub API. Trvalé chyby (špatný token, repo, oprávnění) se neopakují. */
+export class GithubError extends Error {
+  constructor(message: string, readonly status: number) { super(message); this.name = "GithubError"; }
+  get permanent(): boolean { return [401, 403, 404, 422].includes(this.status); }
+}
 
 /** Minimální klient GitHub REST API (token jen pro repo webu). */
 function github(token: string, repo: string, f: GhFetch) {
@@ -168,7 +192,7 @@ function github(token: string, repo: string, f: GhFetch) {
       signal: AbortSignal.timeout(20_000),
     });
   const json = async <T>(res: Response, what: string): Promise<T> => {
-    if (!res.ok) throw new Error(`GitHub ${what} failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw new GithubError(`GitHub ${what} failed: ${res.status} ${(await res.text()).slice(0, 200)}`, res.status);
     return (await res.json()) as T;
   };
   return { call, json };
@@ -183,6 +207,15 @@ function toBase64(text: string): string {
 }
 
 export interface SitePr { url: string; branch: string; path: string; created: boolean }
+
+/** Existuje soubor na výchozí větvi repa (tj. už je vydaný)? */
+export async function fileOnDefaultBranch(token: string, repo: string, path: string, f: GhFetch = fetch): Promise<boolean> {
+  const gh = github(token, repo, f);
+  const res = await gh.call("GET", `/contents/${path.split("/").map(encodeURIComponent).join("/")}`);
+  if (res.status === 404) return false;
+  await gh.json(res, "read file on default branch");
+  return true;
+}
 
 /**
  * Otevře (nebo znovupoužije) PR s jedním souborem. Větev se zakládá z výchozí
@@ -226,37 +259,53 @@ export async function openSitePullRequest(
 
 export type EnglishOutcome =
   | { kind: "no-selection" }
+  | { kind: "already-published"; path: string }
   | { kind: "no-token"; markdown: string; path: string }
   | { kind: "pr"; pr: SitePr };
 
 /**
  * Z uloženého výběru napíše anglický článek a otevře PR do repa webu.
- * Bez tokenu jen vrátí markdown (zkouška nanečisto). Vydání bez uloženého
- * výběru (starší než tato funkce) se přeskočí.
+ * - Bez tokenu (nebo `dryRun`) jen vrátí markdown (zkouška nanečisto).
+ * - Vydání bez uloženého výběru (starší než tato funkce) se přeskočí.
+ * - Článek, který už je na výchozí větvi webu, se bez `force` nepřepisuje
+ *   (opakované schválení nesmaže ruční úpravy vydané verze).
+ * - Napsaný markdown se ukládá a znovu použije; `regenerate` napíše nový.
  */
 export async function publishEnglishWeekly(
   env: EnglishEnv,
   itemId: string,
-  now: Date,
-  opts: { llm?: LlmFn; fetch?: GhFetch; dryRun?: boolean } = {},
+  opts: { llm?: LlmFn; fetch?: GhFetch; dryRun?: boolean; force?: boolean; regenerate?: boolean } = {},
 ): Promise<EnglishOutcome> {
   const sel = await env.KV.get<WeekSelection>(selectionKvKey(itemId), "json");
   if (!sel) return { kind: "no-selection" };
-  const written = await writeWeeklyArticle(opts.llm ?? openRouterLlm(env, writeModel(env)), sel, ENGLISH_WRITER);
-  const markdown = englishWeeklyMarkdown(sel, written, now);
   const path = englishWeeklyPath(sel);
-  if (opts.dryRun || !env.VIBECODING_SITE_GITHUB_TOKEN) return { kind: "no-token", markdown, path };
+  const token = opts.dryRun ? undefined : env.VIBECODING_SITE_GITHUB_TOKEN;
+  const repo = env.VIBECODING_SITE_REPO || DEFAULT_REPO;
+  if (token && !opts.force && (await fileOnDefaultBranch(token, repo, path, opts.fetch))) {
+    return { kind: "already-published", path };
+  }
+
+  type Cached = { markdown: string; review: string[] };
+  let cached = opts.regenerate ? null : await env.KV.get<Cached>(englishMdKvKey(itemId), "json");
+  if (!cached) {
+    const written = await writeWeeklyArticle(opts.llm ?? openRouterLlm(env, writeModel(env)), sel, ENGLISH_WRITER);
+    cached = {
+      markdown: englishWeeklyMarkdown(sel, written),
+      review: [
+        written.versionIssues.length ? `- ⚠️ verze mimo citované položky: ${written.versionIssues.join(", ")}` : "",
+        written.strippedLinks.length ? `- odstraněné odkazy: ${written.strippedLinks.join(", ")}` : "",
+        written.editorNotes.length ? `- poznámky modelu: ${written.editorNotes.join(" / ")}` : "",
+      ].filter(Boolean),
+    };
+    await env.KV.put(englishMdKvKey(itemId), JSON.stringify(cached), { expirationTtl: EN_MD_TTL_SEC });
+  }
+  if (!token) return { kind: "no-token", markdown: cached.markdown, path };
 
   const week = `${sel.week.year}-W${pad(sel.week.week)}`;
-  const review = [
-    written.versionIssues.length ? `- ⚠️ verze mimo citované položky: ${written.versionIssues.join(", ")}` : "",
-    written.strippedLinks.length ? `- odstraněné odkazy: ${written.strippedLinks.join(", ")}` : "",
-    written.editorNotes.length ? `- poznámky modelu: ${written.editorNotes.join(" / ")}` : "",
-  ].filter(Boolean);
   const pr = await openSitePullRequest(
-    env.VIBECODING_SITE_GITHUB_TOKEN,
-    env.VIBECODING_SITE_REPO || DEFAULT_REPO,
-    { path, content: markdown },
+    token,
+    repo,
+    { path, content: cached.markdown },
     {
       branch: `en-weekly/${sel.tool}-${sel.week.year}-w${pad(sel.week.week)}`,
       title: `${TOOL_NAMES[sel.tool]} weekly ${week}`,
@@ -266,7 +315,7 @@ export async function publishEnglishWeekly(
         `Napsáno rovnou anglicky z ověřeného výběru české verze (vydání \`${itemId}\`, KV \`${selectionKvKey(itemId)}\`): ${sel.features.length} hlavních novinek, ${sel.minorWins.length} drobností z ${sel.entries} položek changelogu.`,
         "",
         "Kontroly v kódu:",
-        ...(review.length ? review : ["- bez nálezů (verze, odkazy, poznámky)"]),
+        ...(cached.review.length ? cached.review : ["- bez nálezů (verze, odkazy, poznámky)"]),
         "",
         "Vydání = sloučení tohoto PR.",
         "",

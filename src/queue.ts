@@ -76,8 +76,8 @@ export async function enqueueCcNewsItem(
 
 /** Zařadí dotřídění nezatříděných položek changelogu (běží na pozadí, LLM). */
 /** Zařadí anglický přehled vydání (po schválení české verze). */
-export async function enqueueCcNewsEnglish(env: Env, itemId: string): Promise<void> {
-  await env.WEBHOOK_QUEUE.send({ type: "cc-news.en-weekly", data: { itemId } });
+export async function enqueueCcNewsEnglish(env: Env, itemId: string, opts: { force?: boolean } = {}): Promise<void> {
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.en-weekly", data: { itemId, ...opts } });
 }
 
 export async function enqueueCcNewsClassify(env: Env): Promise<void> {
@@ -142,7 +142,7 @@ export async function handleQueue(
           break;
 
         case "cc-news.en-weekly":
-          await handleCcNewsEnglish(env, String(data.itemId ?? ""));
+          await handleCcNewsEnglish(env, String(data.itemId ?? ""), data.force === true);
           break;
 
         default:
@@ -728,10 +728,22 @@ async function handleInvoicePaid(
  * pokročila, zařadí další (bez pokroku nezařazuje — žádná nekonečná smyčka).
  * Chyba LLM se propaguje → retry fronty (třídění je idempotentní).
  */
-async function handleCcNewsEnglish(env: Env, itemId: string): Promise<void> {
-  const { publishEnglishWeekly } = await import("./lib/cc-news/english");
-  const out = await publishEnglishWeekly(env, itemId, new Date());
-  if (out.kind === "pr") console.log(`[queue] cc-news.en-weekly ${itemId}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}`);
+async function handleCcNewsEnglish(env: Env, itemId: string, force: boolean): Promise<void> {
+  const { publishEnglishWeekly, GithubError } = await import("./lib/cc-news/english");
+  let out;
+  try {
+    // force = vědomé přepsání vydaného článku z adminu; pak i nový text.
+    out = await publishEnglishWeekly(env, itemId, { force, regenerate: force });
+  } catch (err) {
+    // Špatný token/repo/oprávnění se opakováním nespraví: zalogovat a zprávu potvrdit.
+    if (err instanceof GithubError && err.permanent) {
+      console.error(`[queue] cc-news.en-weekly ${itemId}: trvalá chyba GitHubu, neopakuji:`, err.message);
+      return;
+    }
+    throw err;
+  }
+  if (out.kind === "already-published") console.log(`[queue] cc-news.en-weekly ${itemId}: ${out.path} už je na webu, nepřepisuji`);
+  else if (out.kind === "pr") console.log(`[queue] cc-news.en-weekly ${itemId}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}`);
   else if (out.kind === "no-token") console.warn(`[queue] cc-news.en-weekly ${itemId}: chybí VIBECODING_SITE_GITHUB_TOKEN, ${out.path} nevydán`);
   else console.log(`[queue] cc-news.en-weekly ${itemId}: vydání nemá uložený výběr, přeskočeno`);
 }
