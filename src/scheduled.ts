@@ -153,18 +153,26 @@ async function ccNewsChangelogMaintenance(db: ReturnType<typeof drizzle>, env: E
     console.error("[cron] cc-news changelog sync failed:", err);
   }
 
+  const monday = now.getUTCDay() === 1;
+  let pending = -1;
   try {
-    const snap = await snapshotDocs(env.KV, now);
-    console.log(`[cron] cc-news docs: staženo ${snap.fetched}, změněno ${snap.changed}, odloženo ${snap.pending}`);
+    // V pondělí dober snímek celý (až 3 průchody po MAX_PAGES_PER_RUN), ať jde zmrazit.
+    for (let pass = 0; pass < (monday ? 3 : 1); pass++) {
+      const snap = await snapshotDocs(env.KV, now);
+      pending = snap.pending;
+      console.log(`[cron] cc-news docs: staženo ${snap.fetched}, změněno ${snap.changed}, odloženo ${snap.pending}`);
+      if (pending === 0) break;
+    }
   } catch (err) {
     console.error("[cron] cc-news docs snapshot failed:", err);
   }
 
   // Pondělí 03:00 UTC: stav dokumentace = konec minulého týdne.
-  if (now.getUTCDay() === 1) {
+  if (monday) {
     const week = lastClosedWeek(now);
     try {
-      if (await freezeWeek(env.KV, week)) console.log(`[cron] cc-news docs: zmrazen týden ${week.year}-w${week.week}`);
+      if (pending !== 0) console.error(`[cron] cc-news docs: snímek neúplný (odloženo ${pending}), týden ${week.year}-w${week.week} nezmrazuji`);
+      else if (await freezeWeek(env.KV, week, pending)) console.log(`[cron] cc-news docs: zmrazen týden ${week.year}-w${week.week}`);
       const outcome = await createChangelogWeekItem(db, week, now);
       console.log(`[cron] cc-news týden ${week.year}-w${week.week}: ${outcome.kind}`);
       if (outcome.kind === "created") await enqueueCcNewsItem(env, outcome.itemId, outcome.sourceId);

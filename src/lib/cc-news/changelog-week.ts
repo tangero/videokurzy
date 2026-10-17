@@ -58,7 +58,13 @@ export async function createChangelogWeekItem(db: Db, week: Week, now: Date): Pr
     .selectDistinct({ version: ccChangeItem.version, publishedAt: ccChangeItem.publishedAt })
     .from(ccChangeItem)
     .where(and(gte(ccChangeItem.publishedAt, new Date(start.getTime() - ORPHAN_DAYS * 86_400_000)), lte(ccChangeItem.publishedAt, end)));
-  const range = weekVersionRange(entries, await lastCoveredVersion(db, week), start, end);
+  // Verze, které už pokrývá jiné (i novější) vydání, se nepřiberou — jinak by
+  // zpětně založený týden zopakoval sobotní verze z vydání následujícího týdne.
+  const covered = (await db.select({ sourceId: ccNewsItem.sourceId, versionRange: ccNewsItem.versionRange }).from(ccNewsItem))
+    .map((r) => parseVersionRange(r.versionRange))
+    .filter((r): r is { from: string; to: string } => !!r);
+  const free = entries.filter((e) => !covered.some((r) => compareVersions(e.version, r.from) >= 0 && compareVersions(e.version, r.to) <= 0));
+  const range = weekVersionRange(free, await lastCoveredVersion(db, week), start, end);
   if (!range) return { kind: "empty", sourceId };
 
   const versionRange = `v${range.from}–v${range.to}`;

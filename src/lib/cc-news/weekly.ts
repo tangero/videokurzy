@@ -19,7 +19,7 @@ import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { ccChangeItem, ccNewsItem } from "../../db/schema";
 import { classifyPending, linkFollowsForVersions } from "./classify";
-import { compareVersions, parseVersionRange, weekFromSourceId } from "./changelog-source";
+import { compareVersions, isoWeek, isoWeekBounds, parseVersionRange, weekFromSourceId } from "./changelog-source";
 import { DOCS_INDEX_KEY, diffDocsWeeks, docsWeekKey, type DocsChange, type DocsIndex, type DocsSignal } from "./docs-snapshot";
 import { publishedKvKey } from "./draft";
 import { classifyModel, llmJson, openRouterLlm, writeModel, type LlmEnv, type LlmFn } from "./llm";
@@ -272,7 +272,8 @@ export async function buildChangelogArticle(
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   // 2) Dokumentace: konec minulého týdne vs. konec tohoto.
-  const prevWeek = week.week > 1 ? { year: week.year, week: week.week - 1 } : { year: week.year - 1, week: 52 };
+  // Předchozí ISO týden (rok může mít 53 týdnů, proto ne „week − 1 / 52").
+  const prevWeek = isoWeek(new Date(isoWeekBounds(week.year, week.week).start.getTime() - 86_400_000));
   const [afterIdx, beforeIdx, currentIdx] = await Promise.all([
     env.KV.get<DocsIndex>(docsWeekKey(week), "json"),
     env.KV.get<DocsIndex>(docsWeekKey(prevWeek), "json"),
@@ -344,7 +345,11 @@ export async function buildChangelogArticle(
     fs.map((f, n) => `CLAIM ${n + 1}: ${f.title}. ${f.lede}\nENTRIES:\n${f.sourceIds.map(lineOf).join("\n")}`).join("\n\n"), 4000,
   );
   const weekEntries = [...candidates.map((r) => lineOf(r.id)), ...docs.map((d) => lineOf(d.id))].join("\n");
-  const verdicts = await verify(selection.features);
+  // Model občas vrátí n nebo supported jako řetězec — sjednotit, jinak by find() nic nenašel
+  // a nedoložená novinka by prošla jako ověřená.
+  const norm = (v: { n: unknown; supported: unknown; problem: string }) =>
+    ({ n: Number(v.n), supported: v.supported === true || String(v.supported) === "true", problem: v.problem ?? "" });
+  const verdicts = (await verify(selection.features)).map(norm);
   const kept: Feature[] = [];
   const fixed: { title: string; problem: string }[] = [];
   const dropped: { title: string; problem: string }[] = [];
@@ -354,7 +359,8 @@ export async function buildChangelogArticle(
     const fix = await llmJson<Feature & { drop?: boolean }>(llms.write, FIX_SYSTEM,
       `FEATURE: ${f.title}. ${f.lede}\nCITED: ${f.sourceIds.join(", ")}\nPROBLEM: ${v.problem}\n\nWEEK ENTRIES:\n${weekEntries}`, 3000);
     const repaired = fix.drop ? null : clean({ features: [fix] }).features[0];
-    const re = repaired ? (await verify([repaired]))[0] : null;
+    const reRaw = repaired ? (await verify([repaired]))[0] : null;
+    const re = reRaw ? norm(reRaw) : null;
     if (repaired && (!re || re.supported)) {
       kept.push(repaired);
       fixed.push({ title: repaired.title, problem: v.problem });
@@ -386,22 +392,32 @@ export async function buildChangelogArticle(
     "",
     "TÉMATA (pro kontext, ne pro výčet): " + [...new Set(kept.flatMap((f) => f.sourceIds.map((id) => byId.get(id)?.topic).filter(Boolean)))].map((t) => topicLabel(t!)).join(", "),
   ].join("\n");
-  const written = await llmJson<{ title: string; excerpt: string; summaryPoints: string[]; body: string }>(llms.write, WRITER_SYSTEM, writerUser, 12000);
+  type Written = { title: string; excerpt: string; summaryPoints: string[]; body: string };
+  const valid = (w: Partial<Written> | null): w is Written =>
+    !!w && typeof w.title === "string" && w.title.trim().length > 0 && typeof w.body === "string" && w.body.trim().length > 200 &&
+    typeof w.excerpt === "string" && Array.isArray(w.summaryPoints) && w.summaryPoints.every((p) => typeof p === "string");
+  let written = await llmJson<Partial<Written>>(llms.write, WRITER_SYSTEM, writerUser, 12000);
+  if (!valid(written)) written = await llmJson<Partial<Written>>(llms.write, WRITER_SYSTEM, writerUser, 12000);
+  if (!valid(written)) throw new Error("cc-news weekly: writer nevrátil úplný článek (title, excerpt, summaryPoints, body)");
 
-  // 6) Deterministické kontroly.
-  let { markdown: body, notes: editorNotes } = extractEditorNotes(written.body.trim());
-  body = body.replace(/—/g, " - ");
+  // 6) Deterministické kontroly. Oprava verzí jde PŘED úklid, aby úklid (poznámky
+  // editoru, em dash) platil i pro text, který vrátí opravné volání.
+  let body = written.body.trim();
   const allowedVersions = new Set([...versions, range.from, range.to]);
   let versionIssues = versionViolations(body, allowedVersions);
   if (versionIssues.length > 0) {
-    const fixedBody = await llms.write(
+    const fixedBody = (await llms.write(
       VERSION_FIX_SYSTEM,
       `CHYBNÉ VERZE: ${versionIssues.join(", ")}\n\nVERZE NOVINEK:\n${kept.map((f) => `- ${f.title}: ${featureVersions(f).join(", ")}`).join("\n")}\n\nČLÁNEK:\n${body}`,
       { maxTokens: 12000 },
-    );
-    if (fixedBody.trim()) body = fixedBody.trim().replace(/^```(?:markdown)?\n|\n```$/g, "");
+    )).trim().replace(/^```(?:markdown)?\n|\n```$/g, "");
+    // Opravu přijmi jen jako celý článek (ne úvodní komentář nebo useknutý text).
+    if (fixedBody.length > body.length * 0.8) body = fixedBody;
     versionIssues = versionViolations(body, allowedVersions);
   }
+  const extracted = extractEditorNotes(body);
+  const editorNotes = extracted.notes;
+  body = extracted.markdown.replace(/—/g, " - ");
   const linkCheck = knownPages.size > 0 ? stripUnknownDocLinks(body, knownPages) : { markdown: body, stripped: [] };
   body = linkCheck.markdown;
 

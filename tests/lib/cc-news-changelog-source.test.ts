@@ -82,6 +82,10 @@ describe("týdny", () => {
     expect(end.toISOString()).toBe("2026-09-20T23:59:59.999Z");
   });
 
+  it("týden před 2027-w01 je 2026-w53 (rok s 53 týdny)", () => {
+    expect(isoWeek(new Date(isoWeekBounds(2027, 1).start.getTime() - 86_400_000))).toEqual({ year: 2026, week: 53 });
+  });
+
   it("poslední uzavřený týden v pondělí ráno = minulý týden", () => {
     expect(lastClosedWeek(new Date("2026-10-19T03:00:00Z"))).toEqual({ year: 2026, week: 42 });
   });

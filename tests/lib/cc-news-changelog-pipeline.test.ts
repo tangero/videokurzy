@@ -8,7 +8,7 @@ import { classifyPending, linkFollowsForVersions, syncChangelogEntries } from ".
 import { createChangelogWeekItem } from "../../src/lib/cc-news/changelog-week";
 import { detectRecent } from "../../src/lib/cc-news/detect";
 import {
-  DOCS_INDEX_KEY, contentLines, docsPageKey, docsWeekKey, parseSitemap, snapshotDocs, type DocsIndex,
+  DOCS_INDEX_KEY, contentLines, docsPageKey, docsWeekKey, freezeWeek, parseSitemap, snapshotDocs, type DocsIndex,
 } from "../../src/lib/cc-news/docs-snapshot";
 import {
   buildChangelogArticle, czechDateRange, extractEditorNotes, stripUnknownDocLinks, versionViolations,
@@ -119,6 +119,14 @@ describe("syncChangelogEntries + classifyPending", () => {
     expect(rows).toHaveLength(entries.length);
   });
 
+  it("smaže řádek, jehož text Anthropic v changelogu upravil (nové id)", async () => {
+    const { db } = await seed();
+    const edited = await parseChangelog(CHANGELOG.replace("Fixed a rare hang", "Fixed a rare hang on startup"), parseReleaseDates(DOCS));
+    expect(await syncChangelogEntries(db, edited)).toBe(1);
+    const texts = (await db.select().from(ccChangeItem).where(eq(ccChangeItem.version, "2.1.271"))).map((r) => r.text).sort();
+    expect(texts).toEqual(["Added per-command allowed domains for sandboxed commands", "Fixed a rare hang on startup", "Fixed flicker in fullscreen"]);
+  });
+
   it("roztřídí položky a rozbitou dávku rozpůlí", async () => {
     const { db } = await seed();
     const { llm, calls } = fakeLlm({
@@ -179,6 +187,13 @@ describe("createChangelogWeekItem", () => {
     expect(await createChangelogWeekItem(db, W38, NOW)).toMatchObject({ kind: "created", versionRange: "v2.1.271–v2.1.278" });
   });
 
+  it("zpětný týden nepřibere verze, které už pokrývá vydání následujícího týdne", async () => {
+    const { db } = await seed();
+    // W39 (založený cronem dřív) si přes 3denní okno vzal sobotní 2.1.278.
+    await db.insert(ccNewsItem).values({ id: "w39", sourceId: "/changelog/2026-w39", contentHash: "h", weekLabel: "Week 39", versionRange: "v2.1.278–v2.1.290", status: "draft", createdAt: NOW });
+    expect(await createChangelogWeekItem(db, W38, NOW)).toMatchObject({ kind: "created", versionRange: "v2.1.269–v2.1.275" });
+  });
+
   it("týden bez nových verzí je prázdný", async () => {
     const { db } = await seed();
     await db.insert(ccNewsItem).values({ id: "x", sourceId: "/changelog/2026-w37", contentHash: "h", weekLabel: "Week 37", versionRange: "v2.1.269–v2.1.278", status: "published", createdAt: NOW });
@@ -205,6 +220,13 @@ describe("snímky dokumentace", () => {
       <url><loc>https://code.claude.com/docs/de/desktop</loc><lastmod>2026-10-14T00:00:00Z</lastmod></url>`;
     expect(parseSitemap(xml)).toEqual([{ path: "desktop", lastmod: "2026-10-14T00:00:00Z" }]);
     expect(contentLines("# Nadpis\n\n> Fetch the complete documentation index at: /docs/llms.txt\n- A long enough sentence describing a capability in detail.")).toEqual(["A long enough sentence describing a capability in detail."]);
+  });
+
+  it("neúplný snímek se nezmrazí", async () => {
+    await env.KV.put(DOCS_INDEX_KEY, JSON.stringify({ takenAt: "", pages: {} }));
+    expect(await freezeWeek(env.KV, W38, 5)).toBe(false);
+    expect(await env.KV.get(docsWeekKey(W38))).toBeNull();
+    expect(await freezeWeek(env.KV, W38, 0)).toBe(true);
   });
 
   it("snapshotDocs stáhne jen změněné stránky a uloží obsah podle hashe", async () => {

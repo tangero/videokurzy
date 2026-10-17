@@ -59,11 +59,11 @@ const idx = JSON.parse(readFileSync(join(snapshotDir, "index.json"), "utf8")) as
   takenAt: string; pages: { path: string; lastmod: string; hash?: string; file?: string }[];
 };
 const pages: Record<string, { lastmod: string; hash: string }> = {};
-const kv: { key: string; value: string; expiration_ttl?: number }[] = [];
+const kv: { key: string; value: string }[] = [];
 for (const p of idx.pages) {
   if (!p.hash || !p.file) continue;
   pages[p.path] = { lastmod: p.lastmod, hash: p.hash };
-  kv.push({ key: `cc-docs:page:${p.path}:${p.hash}`, value: readFileSync(join(snapshotDir, p.file), "utf8"), expiration_ttl: 200 * 86_400 });
+  kv.push({ key: `cc-docs:page:${p.path}:${p.hash}`, value: readFileSync(join(snapshotDir, p.file), "utf8") });
 }
 const index = JSON.stringify({ takenAt: idx.takenAt, pages });
 kv.push({ key: "cc-docs:index", value: index });

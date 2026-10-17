@@ -42,6 +42,15 @@ export async function syncChangelogEntries(db: Db, entries: ChangelogEntry[]): P
     for (const r of rows) known.add(r.id);
   }
   const fresh = entries.filter((e) => !known.has(e.id));
+  // Řádky, které z changelogu zmizely (Anthropic upravil text → nové id), smazat,
+  // jinak by v článku i na stránce témat byla stará i nová formulace téže změny.
+  const current = new Set(entries.map((e) => e.id));
+  const stale = [...known].filter((id) => !current.has(id));
+  const deletes = [];
+  for (let i = 0; i < stale.length; i += 90) {
+    deletes.push(db.delete(ccChangeItem).where(inArray(ccChangeItem.id, stale.slice(i, i + 90))));
+  }
+  await runBatched(db, deletes);
   const inserts = [];
   for (let i = 0; i < fresh.length; i += INSERT_CHUNK) {
     inserts.push(db

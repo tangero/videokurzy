@@ -79,7 +79,9 @@ export async function llmJson<T>(llm: LlmFn, system: string, user: string, maxTo
       return parseJsonLoose<T>(await llm(system, user, { maxTokens, attempt }));
     } catch (err) {
       lastErr = err;
-      // Síťová/HTTP chyba se neopakuje tady — o retry rozhodne fronta.
+      // Síťová/HTTP chyba ani timeout se neopakují tady — o retry rozhodne fronta.
+      // (Opakovaný 240s timeout by konzumenta zdržel až na 12 minut.)
+      if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) throw err;
       if (err instanceof Error && /LLM .* failed|OPENROUTER|content-type/.test(err.message)) throw err;
     }
   }

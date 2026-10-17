@@ -18,7 +18,6 @@ const FETCH_TIMEOUT_MS = 15_000;
 // Strop stažených stránek na jeden cron (limit subrequestů workeru). Zbytek
 // dožene další den — lastmod v indexu zůstane starý, takže se stránka zopakuje.
 export const MAX_PAGES_PER_RUN = 80;
-const PAGE_TTL_SECONDS = 200 * 86_400;
 
 export interface DocsIndex {
   takenAt: string;
@@ -71,7 +70,9 @@ export async function snapshotDocs(kv: KVNamespace, now: Date): Promise<{ fetche
     const md = await r.text();
     const hash = await sha16(md);
     if (prev.pages[p.path]?.hash !== hash) {
-      await kv.put(docsPageKey(p.path, hash), md, { expirationTtl: PAGE_TTL_SECONDS });
+      // Bez expirace: index na obsah odkazuje, dokud se stránka nezmění, a to
+      // může trvat měsíce (s TTL by se změna dlouho stabilní stránky ztratila).
+      await kv.put(docsPageKey(p.path, hash), md);
       changed++;
     }
     next.pages[p.path] = { lastmod: p.lastmod, hash };
@@ -80,8 +81,13 @@ export async function snapshotDocs(kv: KVNamespace, now: Date): Promise<{ fetche
   return { fetched: todo.length, changed, pending: stale.length - todo.length };
 }
 
-/** Zmrazí aktuální index jako stav na konci týdne `week` (jen jednou). */
-export async function freezeWeek(kv: KVNamespace, week: { year: number; week: number }): Promise<boolean> {
+/**
+ * Zmrazí aktuální index jako stav na konci týdne `week` (jen jednou). Neúplný
+ * index (stránky ze sitemap, které se ještě nestáhly) nezmrazí — v příštím
+ * porovnání by se chybějící stránky tvářily jako nové a dostaly signál new-page.
+ */
+export async function freezeWeek(kv: KVNamespace, week: { year: number; week: number }, pending = 0): Promise<boolean> {
+  if (pending > 0) return false;
   const key = docsWeekKey(week);
   if (await kv.get(key)) return false;
   const idx = await kv.get(DOCS_INDEX_KEY);
