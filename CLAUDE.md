@@ -63,6 +63,16 @@ v adminu tlačítkem „Potvrdit platbu" u pending objednávky → `kind='manual
 (reálné peníze, počítá se do revenue; **ne** `comp`, to je grant zdarma).
 `manuallyConfirmPayment()` v `src/lib/admin-users.ts`.
 
+## Bunny — více video library
+Lekce má `bunnyLibraryId` (NULL = hlavní library z `BUNNY_LIBRARY_ID` /
+`BUNNY_API_KEY` / `BUNNY_TOKEN_KEY` / `BUNNY_PULL_ZONE`). Další library se
+konfigurují JSON secretem `BUNNY_EXTRA_LIBRARIES`
+(`{"655172": {"apiKey","tokenKey","pullZone","pullZoneToken?","name?"}}`).
+Každá library má **vlastní** Stream API klíč i Token Authentication Key —
+account klíč Stream API nepřijímá a token key přes API nejde získat. Library
+pro lekci vždy přes `resolveBunnyLibrary()` v `src/lib/bunny-library.ts`,
+nikdy napřímo `env.BUNNY_*`.
+
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,
   krátké klíče). Ostré secrets žijí jen v Cloudflare dashboardu.

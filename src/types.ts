@@ -18,6 +18,9 @@ export interface Env {
   BUNNY_TOKEN_KEY: string;
   BUNNY_PULL_ZONE?: string;
   BUNNY_PULL_ZONE_TOKEN?: string;
+  // Další Bunny Stream library (JSON {libraryId: {apiKey, tokenKey, pullZone?,
+  // pullZoneToken?, name?}}). Viz src/lib/bunny-library.ts.
+  BUNNY_EXTRA_LIBRARIES?: string;
   FAKTUROID_CLIENT_ID?: string;
   FAKTUROID_CLIENT_SECRET?: string;
   FIO_API_TOKEN: string;

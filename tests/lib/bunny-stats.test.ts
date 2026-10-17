@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { fetchVideoStatistics } from "../../src/lib/bunny-stats";
 
-const env = { BUNNY_API_KEY: "key", BUNNY_LIBRARY_ID: "123" };
+const lib = { id: "123", apiKey: "key" };
 
 type FetchInit = { headers?: Record<string, string> };
 
@@ -25,7 +25,7 @@ describe("fetchVideoStatistics", () => {
       engagementScore: 72.4,
     });
 
-    const stats = await fetchVideoStatistics(env, "guid-1");
+    const stats = await fetchVideoStatistics(lib, "guid-1");
 
     expect(stats).toEqual({ views: 15, watchTimeSeconds: 900, engagementScore: 72 });
     const call = fetchMock.mock.calls[0]!;
@@ -35,12 +35,12 @@ describe("fetchVideoStatistics", () => {
 
   it("zvládne prázdné/chybějící charty (vrátí nuly)", async () => {
     mockFetch({});
-    const stats = await fetchVideoStatistics(env, "guid-2");
+    const stats = await fetchVideoStatistics(lib, "guid-2");
     expect(stats).toEqual({ views: 0, watchTimeSeconds: 0, engagementScore: 0 });
   });
 
   it("vyhodí chybu při non-2xx odpovědi", async () => {
     mockFetch("nope", 401, "Unauthorized");
-    await expect(fetchVideoStatistics(env, "guid-3")).rejects.toThrow(/401/);
+    await expect(fetchVideoStatistics(lib, "guid-3")).rejects.toThrow(/401/);
   });
 });

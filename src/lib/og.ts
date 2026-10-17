@@ -2,6 +2,7 @@
 
 import type { Env } from "../types";
 import { fetchBunnyVideo, signPullZoneUrl } from "./transcribe";
+import type { BunnyLibrary } from "./bunny-library";
 
 export const DEFAULT_OG_DESCRIPTION =
   "Naučte se vibe coding s Claude Code. 10 epizod, od nápadu po deployment.";
@@ -54,22 +55,26 @@ export function lessonOgImagePath(slug: string): string {
  * (Referer, případně token auth), takže crawler Facebooku/X by ho napřímo
  * nedostal — proto obrázek servírujeme přes worker.
  */
-export async function fetchLessonThumbnail(env: Env, videoId: string): Promise<Response | null> {
-  if (!env.BUNNY_PULL_ZONE) return null;
+export async function fetchLessonThumbnail(
+  env: Env,
+  lib: BunnyLibrary,
+  videoId: string,
+): Promise<Response | null> {
+  if (!lib.pullZone) return null;
 
   // Vlastní thumbnail (nastavený z adminu) má jiné jméno souboru než default.
   let fileName = "thumbnail.jpg";
   try {
-    const video = await fetchBunnyVideo(env, videoId);
+    const video = await fetchBunnyVideo(lib, videoId);
     if (video.thumbnailFileName) fileName = video.thumbnailFileName;
   } catch (err) {
     console.error(`[og] bunny video ${videoId}: ${(err as Error).message}`);
   }
 
-  const host = env.BUNNY_PULL_ZONE.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const host = lib.pullZone.replace(/^https?:\/\//, "").replace(/\/$/, "");
   const path = `/${videoId}/${fileName}`;
-  const signedPath = env.BUNNY_PULL_ZONE_TOKEN
-    ? signPullZoneUrl(path, env.BUNNY_PULL_ZONE_TOKEN, 300)
+  const signedPath = lib.pullZoneToken
+    ? signPullZoneUrl(path, lib.pullZoneToken, 300)
     : path;
   const authUrl = env.BETTER_AUTH_URL?.replace(/\/$/, "") ?? "";
   const referer = authUrl && !authUrl.includes("localhost")

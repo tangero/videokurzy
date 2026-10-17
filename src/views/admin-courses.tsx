@@ -25,6 +25,7 @@ type Lesson = {
   title: string;
   slug: string;
   bunnyVideoId: string | null;
+  bunnyLibraryId?: string | null;
   durationSeconds: number;
   isFree: boolean;
   sortOrder: number;
@@ -536,14 +537,18 @@ export function AdminLessonForm({
   lesson: les,
   modules,
   saved,
+  libraries = [],
 }: {
   courseId: number;
   moduleId: number;
   lesson?: Lesson;
   modules?: { id: number; title: string }[];
   saved?: boolean;
+  /** Nakonfigurované Bunny library, hlavní první. */
+  libraries?: { id: string; name: string }[];
 }) {
   const isEdit = !!les;
+  const selectedLibraryId = les?.bunnyLibraryId || libraries[0]?.id || "";
   return (
     <section class="max-w-3xl mx-auto px-4 py-8">
       <a
@@ -592,6 +597,24 @@ export function AdminLessonForm({
             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
           />
         </div>
+        {libraries.length > 1 ? (
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Bunny library</label>
+            <select
+              id="bunny-library-id"
+              name="bunnyLibraryId"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            >
+              {libraries.map((l) => (
+                <option value={l.id} selected={l.id === selectedLibraryId}>
+                  {l.name} ({l.id})
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <input type="hidden" id="bunny-library-id" name="bunnyLibraryId" value={selectedLibraryId} />
+        )}
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Bunny Video ID</label>
           <div class="flex gap-2">
@@ -609,8 +632,38 @@ export function AdminLessonForm({
             >
               Načíst z Bunny
             </button>
+            <button
+              type="button"
+              id="bunny-pick-btn"
+              class="bg-indigo-50 text-indigo-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-100 whitespace-nowrap"
+            >
+              Vybrat z library
+            </button>
           </div>
           <div id="bunny-status" class="text-xs mt-1 text-gray-400 hidden"></div>
+          <div
+            id="bunny-picker"
+            data-autoopen={les?.bunnyVideoId ? "0" : "1"}
+            class="hidden mt-2 border border-gray-200 rounded-lg bg-white"
+          >
+            <div class="flex gap-2 p-2 border-b border-gray-100">
+              <input
+                id="bunny-picker-search"
+                type="search"
+                placeholder="Hledat podle názvu…"
+                class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+              <button
+                type="button"
+                id="bunny-picker-close"
+                class="text-gray-400 hover:text-gray-600 px-2 text-sm"
+              >
+                Zavřít
+              </button>
+            </div>
+            <div id="bunny-picker-status" class="text-xs px-3 py-2 text-gray-400"></div>
+            <ul id="bunny-picker-list" class="max-h-80 overflow-y-auto divide-y divide-gray-100"></ul>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Délka</label>
@@ -730,12 +783,20 @@ export function AdminLessonForm({
       </form>
       <script dangerouslySetInnerHTML={{ __html: `
         (function () {
+          var CURRENT_LESSON_ID = ${les ? les.id : "null"};
           var titleEl = document.getElementById('lesson-title');
           var slugEl = document.getElementById('slug-input');
           var autoBtn = document.getElementById('slug-auto-btn');
           var bunnyIdEl = document.getElementById('bunny-video-id');
           var bunnyBtn = document.getElementById('bunny-load-btn');
           var bunnyStatus = document.getElementById('bunny-status');
+          var bunnyLibEl = document.getElementById('bunny-library-id');
+          var pickBtn = document.getElementById('bunny-pick-btn');
+          var picker = document.getElementById('bunny-picker');
+          var pickerSearch = document.getElementById('bunny-picker-search');
+          var pickerStatus = document.getElementById('bunny-picker-status');
+          var pickerList = document.getElementById('bunny-picker-list');
+          var pickerClose = document.getElementById('bunny-picker-close');
           var chaptersList = document.getElementById('chapters-list');
           var momentsList = document.getElementById('moments-list');
           var chaptersJson = document.getElementById('chapters-json');
@@ -833,14 +894,20 @@ export function AdminLessonForm({
             slugEl.value = slugify(titleEl.value);
           });
 
-          bunnyBtn && bunnyBtn.addEventListener('click', async function () {
+          function libraryQuery() {
+            return bunnyLibEl && bunnyLibEl.value ? 'library=' + encodeURIComponent(bunnyLibEl.value) : '';
+          }
+
+          bunnyBtn && bunnyBtn.addEventListener('click', function () { loadFromBunny(); });
+
+          async function loadFromBunny() {
             var videoId = bunnyIdEl.value.trim();
             if (!videoId) { bunnyStatus.textContent = 'Zadej nejdřív Bunny Video ID.'; bunnyStatus.className = 'text-xs mt-1 text-red-500'; bunnyStatus.classList.remove('hidden'); return; }
             bunnyBtn.textContent = 'Načítám…';
             bunnyBtn.disabled = true;
             bunnyStatus.classList.add('hidden');
             try {
-              var res = await fetch('/admin/api/bunny/video/' + encodeURIComponent(videoId));
+              var res = await fetch('/admin/api/bunny/video/' + encodeURIComponent(videoId) + '?' + libraryQuery());
               var data = await res.json();
               if (!res.ok || data.error) {
                 bunnyStatus.textContent = (data.error || 'Chyba') + (data.detail ? ': ' + data.detail : '');
@@ -880,7 +947,95 @@ export function AdminLessonForm({
               bunnyBtn.textContent = 'Načíst z Bunny';
               bunnyBtn.disabled = false;
             }
+          }
+
+          // ─── Výběr videa z library (nejnovější první) ───
+          var BUNNY_STATUS = {0:'vytvořeno',1:'nahráno',2:'zpracovává se',3:'překódovává se',4:'',5:'chyba',6:'upload selhal',7:'zpracovává se',8:''};
+          var pickerTimer = null;
+          var pickerSeq = 0;
+
+          function esc(v) {
+            return String(v == null ? '' : v)
+              .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+          }
+
+          function fmtDate(iso) {
+            var d = new Date(iso && !/Z|[+-][0-9]{2}:?[0-9]{2}$/.test(iso) ? iso + 'Z' : iso);
+            if (isNaN(d.getTime())) return '';
+            return d.toLocaleDateString('cs-CZ') + ' ' + d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
+          }
+
+          async function loadPicker() {
+            var seq = ++pickerSeq;
+            pickerStatus.textContent = 'Načítám videa…';
+            pickerStatus.className = 'text-xs px-3 py-2 text-gray-400';
+            pickerList.innerHTML = '';
+            var q = pickerSearch.value.trim();
+            try {
+              var res = await fetch('/admin/api/bunny/videos?' + libraryQuery() + (q ? '&search=' + encodeURIComponent(q) : ''));
+              var data = await res.json();
+              if (seq !== pickerSeq) return;
+              if (!res.ok || data.error) {
+                pickerStatus.textContent = data.error || 'Chyba při načítání videí.';
+                pickerStatus.className = 'text-xs px-3 py-2 text-red-500';
+                return;
+              }
+              var items = data.items || [];
+              pickerStatus.textContent = items.length
+                ? 'Zobrazeno ' + items.length + (data.totalItems > items.length ? ' z ' + data.totalItems : '') + ' videí, nejnovější nahoře.'
+                : 'V library nejsou žádná videa' + (q ? ' odpovídající hledání.' : '.');
+              var current = bunnyIdEl.value.trim();
+              pickerList.innerHTML = items.map(function (v) {
+                var status = BUNNY_STATUS[v.status] || '';
+                var meta = [fmtDate(v.dateUploaded), v.length ? fmtTime(v.length) : ''].filter(Boolean).join(' · ');
+                var used = v.usedBy && v.usedBy.id !== CURRENT_LESSON_ID
+                  ? '<span class="text-amber-600">už použito: ' + esc(v.usedBy.title) + '</span>' : '';
+                var cls = 'w-full text-left px-3 py-2 hover:bg-indigo-50 flex flex-col gap-0.5' + (v.guid === current ? ' bg-indigo-50' : '');
+                return '<li><button type="button" class="' + cls + '" data-guid="' + esc(v.guid) + '">'
+                  + '<span class="text-sm text-gray-900">' + esc(v.title || v.guid) + '</span>'
+                  + '<span class="text-xs text-gray-500">' + esc(meta)
+                  + (status ? ' · <span class="text-red-500">' + esc(status) + '</span>' : '')
+                  + (used ? ' · ' + used : '') + '</span>'
+                  + '</button></li>';
+              }).join('');
+            } catch (e) {
+              if (seq !== pickerSeq) return;
+              pickerStatus.textContent = 'Síťová chyba.';
+              pickerStatus.className = 'text-xs px-3 py-2 text-red-500';
+            }
+          }
+
+          function openPicker() {
+            picker.classList.remove('hidden');
+            loadPicker();
+            pickerSearch.focus();
+          }
+
+          pickBtn && pickBtn.addEventListener('click', function () {
+            if (picker.classList.contains('hidden')) openPicker();
+            else picker.classList.add('hidden');
           });
+          pickerClose && pickerClose.addEventListener('click', function () { picker.classList.add('hidden'); });
+          pickerSearch && pickerSearch.addEventListener('input', function () {
+            clearTimeout(pickerTimer);
+            pickerTimer = setTimeout(loadPicker, 300);
+          });
+          pickerSearch && pickerSearch.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); clearTimeout(pickerTimer); loadPicker(); }
+          });
+          pickerList && pickerList.addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-guid]');
+            if (!btn) return;
+            bunnyIdEl.value = btn.getAttribute('data-guid');
+            picker.classList.add('hidden');
+            loadFromBunny();
+          });
+          bunnyLibEl && bunnyLibEl.tagName === 'SELECT' && bunnyLibEl.addEventListener('change', function () {
+            if (!picker.classList.contains('hidden')) loadPicker();
+          });
+          // Nová epizoda bez videa → seznam rovnou otevřený.
+          if (picker && picker.getAttribute('data-autoopen') === '1') openPicker();
         })();
       ` }} />
       {isEdit && les && (

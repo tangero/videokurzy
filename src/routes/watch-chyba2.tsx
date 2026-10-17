@@ -5,7 +5,7 @@ import type { Env, Variables } from "../types";
 import { lesson, module, progress, lessonWatch } from "../db/schema";
 import { shouldResume } from "../lib/watch-stats";
 import { hasAccess } from "../lib/access";
-import { generateSignedEmbedUrl } from "../lib/bunny";
+import { lessonEmbedUrl } from "../lib/bunny-library";
 import { WatchChyba2Page } from "../views/watch-chyba2";
 
 // DEMO ROUTA #2 pro výuku (Claude Code) — SERVEROVÁ chyba.
@@ -25,6 +25,7 @@ watchChyba2.get("/watch-chyba2/:slug", async (c) => {
       title: lesson.title,
       slug: lesson.slug,
       bunnyVideoId: lesson.bunnyVideoId,
+      bunnyLibraryId: lesson.bunnyLibraryId,
       durationSeconds: lesson.durationSeconds,
       isFree: lesson.isFree,
       moduleId: lesson.moduleId,
@@ -104,15 +105,7 @@ watchChyba2.get("/watch-chyba2/:slug", async (c) => {
     ? lastPosition
     : null;
 
-  const embedUrl = found.bunnyVideoId
-    ? generateSignedEmbedUrl(
-        c.env.BUNNY_LIBRARY_ID,
-        found.bunnyVideoId,
-        c.env.BUNNY_TOKEN_KEY,
-        4,
-        resumePosition ?? 0
-      )
-    : "";
+  const embedUrl = lessonEmbedUrl(c.env, found, 4, resumePosition ?? 0);
 
   const globalIdx = allLessons.findIndex((l) => l.id === found.id);
   const prevSlug = globalIdx > 0 ? allLessons[globalIdx - 1].slug : null;

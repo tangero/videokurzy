@@ -39,6 +39,12 @@ import { fetchResendAutomationStats } from "../lib/resend";
 import { getRetentionCurve } from "../lib/watch-stats";
 import { syncVideoStats } from "../lib/bunny-stats";
 import {
+  getBunnyLibraries,
+  listLibraryVideos,
+  normalizeLessonLibraryId,
+  resolveBunnyLibrary,
+} from "../lib/bunny-library";
+import {
   triggerTranscribe,
   fetchBunnyVideo,
   fetchCaptionVtt,
@@ -1751,10 +1757,36 @@ admin.post("/admin/api/video-stats/sync", async (c) => {
 
 // ─── Bunny API proxy ──────────────────────────────────────────────
 
+// Videa v library pro výběr ve formuláři lekce, nejnovější první. U každého
+// videa i lekce, které už je přiřazené (ať editor nepřiřadí totéž dvakrát).
+admin.get("/admin/api/bunny/videos", async (c) => {
+  const lib = resolveBunnyLibrary(c.env, c.req.query("library"));
+  if (!lib) return c.json({ error: "Library není nakonfigurovaná." }, 400);
+  const search = (c.req.query("search") ?? "").trim();
+  try {
+    const { items, totalItems } = await listLibraryVideos(lib, { search: search || undefined });
+    const db = drizzle(c.env.DB);
+    const assigned = await db
+      .select({ guid: lesson.bunnyVideoId, id: lesson.id, title: lesson.title })
+      .from(lesson)
+      .where(sql`${lesson.bunnyVideoId} IS NOT NULL`);
+    const usedBy = new Map(assigned.map((a) => [a.guid, { id: a.id, title: a.title }]));
+    return c.json({
+      libraryId: lib.id,
+      totalItems,
+      items: items.map((v) => ({ ...v, usedBy: usedBy.get(v.guid) ?? null })),
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message, libraryId: lib.id }, 502);
+  }
+});
+
 admin.get("/admin/api/bunny/video/:videoId", async (c) => {
   const videoId = c.req.param("videoId");
-  const libraryId = c.env.BUNNY_LIBRARY_ID;
-  const apiKey = c.env.BUNNY_API_KEY;
+  const lib = resolveBunnyLibrary(c.env, c.req.query("library"));
+  if (!lib) return c.json({ error: "Library není nakonfigurovaná." }, 400);
+  const libraryId = lib.id;
+  const apiKey = lib.apiKey;
   const url = `https://video.bunnycdn.com/library/${libraryId}/videos/${videoId}`;
   const res = await fetch(url, { headers: { AccessKey: apiKey } });
   const body = await res.text();
@@ -2626,6 +2658,7 @@ admin.post("/admin/api/lessons/:id/transcribe", async (c) => {
     .select({
       id: lesson.id,
       bunnyVideoId: lesson.bunnyVideoId,
+      bunnyLibraryId: lesson.bunnyLibraryId,
       moduleId: lesson.moduleId,
     })
     .from(lesson)
@@ -2635,9 +2668,13 @@ admin.post("/admin/api/lessons/:id/transcribe", async (c) => {
   if (!row.bunnyVideoId) {
     return c.json({ error: "Lekce nemá přiřazené Bunny video." }, 400);
   }
+  const lib = resolveBunnyLibrary(c.env, row.bunnyLibraryId);
+  if (!lib) {
+    return c.json({ error: `Bunny library ${row.bunnyLibraryId} není nakonfigurovaná.` }, 400);
+  }
 
   try {
-    await triggerTranscribe(c.env, row.bunnyVideoId, { sourceLanguage: "cs", force: true });
+    await triggerTranscribe(lib, row.bunnyVideoId, { sourceLanguage: "cs", force: true });
     await db
       .update(lesson)
       .set({ transcribeStatus: "pending", transcribedAt: null, transcribeError: null })
@@ -2668,13 +2705,17 @@ admin.post("/admin/api/lessons/:id/thumbnail", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const db = drizzle(c.env.DB);
   const [row] = await db
-    .select({ id: lesson.id, bunnyVideoId: lesson.bunnyVideoId })
+    .select({ id: lesson.id, bunnyVideoId: lesson.bunnyVideoId, bunnyLibraryId: lesson.bunnyLibraryId })
     .from(lesson)
     .where(eq(lesson.id, id))
     .limit(1);
   if (!row) return c.text("Not found", 404);
   if (!row.bunnyVideoId) {
     return c.json({ error: "Lekce nemá přiřazené Bunny video." }, 400);
+  }
+  const lib = resolveBunnyLibrary(c.env, row.bunnyLibraryId);
+  if (!lib) {
+    return c.json({ error: `Bunny library ${row.bunnyLibraryId} není nakonfigurovaná.` }, 400);
   }
 
   const body = await c.req.parseBody();
@@ -2683,7 +2724,7 @@ admin.post("/admin/api/lessons/:id/thumbnail", async (c) => {
     return c.json({ error: "Zadej platnou http(s) URL obrázku." }, 400);
   }
 
-  const result = await setBunnyThumbnail(c.env, row.bunnyVideoId, thumbnailUrl);
+  const result = await setBunnyThumbnail(lib, row.bunnyVideoId, thumbnailUrl);
   const note = result.ok
     ? "thumbOk"
     : `thumbErr-${result.status}`;
@@ -2694,7 +2735,7 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const db = drizzle(c.env.DB);
   const [row] = await db
-    .select({ id: lesson.id, bunnyVideoId: lesson.bunnyVideoId })
+    .select({ id: lesson.id, bunnyVideoId: lesson.bunnyVideoId, bunnyLibraryId: lesson.bunnyLibraryId })
     .from(lesson)
     .where(eq(lesson.id, id))
     .limit(1);
@@ -2702,9 +2743,13 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
   if (!row.bunnyVideoId) {
     return c.json({ error: "Lekce nemá přiřazené Bunny video." }, 400);
   }
+  const lib = resolveBunnyLibrary(c.env, row.bunnyLibraryId);
+  if (!lib) {
+    return c.json({ error: `Bunny library ${row.bunnyLibraryId} není nakonfigurovaná.` }, 400);
+  }
 
   try {
-    const video = await fetchBunnyVideo(c.env, row.bunnyVideoId);
+    const video = await fetchBunnyVideo(lib, row.bunnyVideoId);
     const captionsSummary = (video.captions ?? [])
       .map((c) => c.srclang)
       .join(",");
@@ -2720,7 +2765,7 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
         .where(eq(lesson.id, id));
       return c.redirect(`/admin/lessons/${id}/edit#transkripce`);
     }
-    const result = await fetchCaptionVtt(c.env, row.bunnyVideoId, czechCaption.srclang);
+    const result = await fetchCaptionVtt(c.env, lib, row.bunnyVideoId, czechCaption.srclang);
     if (result.kind === "ok") {
       await db
         .update(lesson)
@@ -2733,7 +2778,7 @@ admin.post("/admin/api/lessons/:id/transcribe/refresh", async (c) => {
         .where(eq(lesson.id, id));
     } else {
       const diag = result.kind === "no-pull-zone"
-        ? "Captions u Bunny existují, ale BUNNY_PULL_ZONE secret není nastavený."
+        ? `Captions u Bunny existují, ale pull zóna library ${lib.id} není nastavená (BUNNY_PULL_ZONE, resp. pullZone v BUNNY_EXTRA_LIBRARIES).`
         : `Captions u Bunny existují (${captionsSummary}), ale CDN vrátil HTTP ${result.status} na ${result.url}. Soubor se možná teprve generuje, zkus za 5 minut. Pokud trvá déle, zkontroluj cestu k VTT.`;
       await db
         .update(lesson)
@@ -2960,6 +3005,11 @@ admin.post(
 
 // ─── Lessons CRUD ─────────────────────────────────────────────────
 
+/** Library pro výběr ve formuláři lekce (bez klíčů — jdou do HTML). */
+function bunnyLibraryOptions(env: Env): { id: string; name: string }[] {
+  return getBunnyLibraries(env).map((l) => ({ id: l.id, name: l.name }));
+}
+
 admin.get(
   "/admin/courses/:courseId/modules/:moduleId/lessons/new",
   async (c) => {
@@ -2968,7 +3018,11 @@ admin.get(
     const moduleId = parseInt(c.req.param("moduleId"), 10);
     return c.html(
       <Layout title="Nová epizoda" user={currentUser}>
-        <AdminLessonForm courseId={courseId} moduleId={moduleId} />
+        <AdminLessonForm
+          courseId={courseId}
+          moduleId={moduleId}
+          libraries={bunnyLibraryOptions(c.env)}
+        />
       </Layout>
     );
   }
@@ -2984,6 +3038,8 @@ admin.post(
     const title = String(body.title ?? "").trim();
     const slug = String(body.slug ?? "").trim();
     const bunnyVideoId = String(body.bunnyVideoId ?? "").trim() || null;
+    const bunnyLibraryId = normalizeLessonLibraryId(c.env, String(body.bunnyLibraryId ?? ""));
+    if (bunnyLibraryId === undefined) return c.text("Neplatná Bunny library", 400);
     const durationSeconds =
       parseInt(String(body.durationMinutes ?? "0"), 10) * 60 +
       parseInt(String(body.durationSecondsRem ?? "0"), 10);
@@ -2999,6 +3055,7 @@ admin.post(
       title,
       slug,
       bunnyVideoId,
+      bunnyLibraryId,
       durationSeconds,
       sortOrder,
       isFree,
@@ -3041,6 +3098,7 @@ admin.get("/admin/lessons/:id/edit", async (c) => {
         lesson={row.lesson}
         modules={modules}
         saved={saved}
+        libraries={bunnyLibraryOptions(c.env)}
       />
     </Layout>
   );
@@ -3063,6 +3121,8 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
   const title = String(body.title ?? "").trim();
   const slug = String(body.slug ?? "").trim();
   const bunnyVideoId = String(body.bunnyVideoId ?? "").trim() || null;
+  const bunnyLibraryId = normalizeLessonLibraryId(c.env, String(body.bunnyLibraryId ?? ""));
+  if (bunnyLibraryId === undefined) return c.text("Neplatná Bunny library", 400);
   const durationSeconds =
     parseInt(String(body.durationMinutes ?? "0"), 10) * 60 +
     parseInt(String(body.durationSecondsRem ?? "0"), 10);
@@ -3093,6 +3153,7 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
       title,
       slug,
       bunnyVideoId,
+      bunnyLibraryId,
       durationSeconds,
       sortOrder,
       isFree,

@@ -40,6 +40,8 @@ export const lesson = sqliteTable("lesson", {
   title: text("title").notNull(),
   slug: text("slug").notNull(),
   bunnyVideoId: text("bunnyVideoId"),
+  // NULL = hlavní library (BUNNY_LIBRARY_ID), jinak ID z BUNNY_EXTRA_LIBRARIES.
+  bunnyLibraryId: text("bunnyLibraryId"),
   durationSeconds: integer("durationSeconds").notNull().default(0),
   isFree: integer("isFree", { mode: "boolean" }).notNull().default(false),
   sortOrder: integer("sortOrder").notNull().default(0),

@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import type { Env } from "../types";
+import type { BunnyLibrary } from "./bunny-library";
 
 const BUNNY_API_BASE = "https://video.bunnycdn.com";
 
@@ -25,13 +26,13 @@ export type BunnyVideo = {
 
 /** Spustí transkripci videa. Zdrojový jazyk default čeština. */
 export async function triggerTranscribe(
-  env: Env,
+  lib: BunnyLibrary,
   videoId: string,
   opts: { sourceLanguage?: string; targetLanguages?: string[]; force?: boolean } = {},
 ): Promise<void> {
   const sourceLanguage = opts.sourceLanguage ?? "cs";
   const url = new URL(
-    `${BUNNY_API_BASE}/library/${env.BUNNY_LIBRARY_ID}/videos/${videoId}/transcribe`,
+    `${BUNNY_API_BASE}/library/${lib.id}/videos/${videoId}/transcribe`,
   );
   if (opts.force) url.searchParams.set("force", "true");
 
@@ -47,7 +48,7 @@ export async function triggerTranscribe(
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      AccessKey: env.BUNNY_API_KEY,
+      AccessKey: lib.apiKey,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
@@ -67,18 +68,18 @@ export async function triggerTranscribe(
  * Loguje jen status (ne tělo) — vstup je admin-only, ale držíme hygienu logů.
  */
 export async function setBunnyThumbnail(
-  env: Env,
+  lib: BunnyLibrary,
   videoId: string,
   thumbnailUrl: string,
 ): Promise<{ ok: boolean; status: number }> {
   const url = new URL(
-    `${BUNNY_API_BASE}/library/${env.BUNNY_LIBRARY_ID}/videos/${videoId}/thumbnail`,
+    `${BUNNY_API_BASE}/library/${lib.id}/videos/${videoId}/thumbnail`,
   );
   url.searchParams.set("thumbnailUrl", thumbnailUrl);
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { AccessKey: env.BUNNY_API_KEY, Accept: "application/json" },
+    headers: { AccessKey: lib.apiKey, Accept: "application/json" },
   });
   if (!res.ok) {
     console.error(`[bunny] set thumbnail ${res.status}`);
@@ -87,11 +88,11 @@ export async function setBunnyThumbnail(
 }
 
 /** Načte metadata videa včetně dostupných caption tracků. */
-export async function fetchBunnyVideo(env: Env, videoId: string): Promise<BunnyVideo> {
+export async function fetchBunnyVideo(lib: BunnyLibrary, videoId: string): Promise<BunnyVideo> {
   const res = await fetch(
-    `${BUNNY_API_BASE}/library/${env.BUNNY_LIBRARY_ID}/videos/${videoId}`,
+    `${BUNNY_API_BASE}/library/${lib.id}/videos/${videoId}`,
     {
-      headers: { AccessKey: env.BUNNY_API_KEY, Accept: "application/json" },
+      headers: { AccessKey: lib.apiKey, Accept: "application/json" },
     },
   );
   if (!res.ok) {
@@ -133,14 +134,15 @@ export type FetchVttResult =
  */
 export async function fetchCaptionVtt(
   env: Env,
+  lib: BunnyLibrary,
   videoId: string,
   srclang: string,
 ): Promise<FetchVttResult> {
-  if (!env.BUNNY_PULL_ZONE) return { kind: "no-pull-zone" };
-  const host = env.BUNNY_PULL_ZONE.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  if (!lib.pullZone) return { kind: "no-pull-zone" };
+  const host = lib.pullZone.replace(/^https?:\/\//, "").replace(/\/$/, "");
   const path = `/${videoId}/captions/${srclang}.vtt`;
-  const signedPath = env.BUNNY_PULL_ZONE_TOKEN
-    ? signPullZoneUrl(path, env.BUNNY_PULL_ZONE_TOKEN, 300)
+  const signedPath = lib.pullZoneToken
+    ? signPullZoneUrl(path, lib.pullZoneToken, 300)
     : path;
   const url = `https://${host}${signedPath}`;
   const authUrl = env.BETTER_AUTH_URL?.replace(/\/$/, "") ?? "";

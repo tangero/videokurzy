@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { isNotNull } from "drizzle-orm";
 import { lesson, videoStats } from "../db/schema";
 import type { Env } from "../types";
+import { resolveBunnyLibrary, type BunnyLibrary } from "./bunny-library";
 
 const BUNNY_API_BASE = "https://video.bunnycdn.com";
 
@@ -33,16 +34,16 @@ function sumChart(chart: unknown): number {
  * Volá se server-side (ostré BUNNY_* creds jsou jen v produkčním workeru).
  */
 export async function fetchVideoStatistics(
-  env: Pick<Env, "BUNNY_API_KEY" | "BUNNY_LIBRARY_ID">,
+  lib: Pick<BunnyLibrary, "id" | "apiKey">,
   videoGuid: string,
   dateFrom = "2026-01-01",
 ): Promise<VideoStatistics> {
   const url =
-    `${BUNNY_API_BASE}/library/${env.BUNNY_LIBRARY_ID}/statistics` +
+    `${BUNNY_API_BASE}/library/${lib.id}/statistics` +
     `?videoGuid=${encodeURIComponent(videoGuid)}&dateFrom=${dateFrom}`;
 
   const res = await fetch(url, {
-    headers: { AccessKey: env.BUNNY_API_KEY, Accept: "application/json" },
+    headers: { AccessKey: lib.apiKey, Accept: "application/json" },
   });
   if (!res.ok) {
     throw new Error(`Bunny statistics ${res.status}: ${res.statusText}`);
@@ -67,7 +68,7 @@ export async function syncVideoStats(
   env: Env,
 ): Promise<{ synced: number; errors: number }> {
   const lessons = await db
-    .select({ guid: lesson.bunnyVideoId })
+    .select({ guid: lesson.bunnyVideoId, libraryId: lesson.bunnyLibraryId })
     .from(lesson)
     .where(isNotNull(lesson.bunnyVideoId));
 
@@ -76,8 +77,14 @@ export async function syncVideoStats(
 
   for (const l of lessons) {
     if (!l.guid) continue;
+    const lib = resolveBunnyLibrary(env, l.libraryId);
+    if (!lib) {
+      errors++;
+      console.error(`[bunny-stats] video ${l.guid}: library ${l.libraryId} není nakonfigurovaná`);
+      continue;
+    }
     try {
-      const s = await fetchVideoStatistics(env, l.guid);
+      const s = await fetchVideoStatistics(lib, l.guid);
       const now = new Date();
 
       await db
