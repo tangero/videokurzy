@@ -2240,6 +2240,59 @@ admin.post("/admin/api/cc-news/diag/llm", async (c) => {
 // GET varianta triggeru — spustitelná přímo z adresního řádku prohlížeče (kde
 // session cookie funguje). Stejná logika jako POST; sdílí runCcNewsTrigger.
 admin.get("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
+
+// Ruční založení vydání ze changelogu pro konkrétní týden (?week=2026-w39) —
+// pro zpětné týdny, které cron nezaložil (zakládá jen poslední uzavřený týden).
+// Týdny zakládej postupně: rozsah verzí navazuje na konec posledního vydání.
+// Článek se staví na pozadí (fronta) a pak přijde schvalovací e-mail.
+// GET jen zobrazí potvrzení (akce se spouští POSTem — odkaz z cizího webu nesmí
+// nic založit ani znovu poslat schvalovací e-mail).
+admin.get("/admin/api/cc-news/changelog-week", async (c) => {
+  const { escapeHtml } = await import("../lib/markdown");
+  const week = escapeHtml(c.req.query("week") ?? "");
+  const force = c.req.query("force") === "1";
+  return c.html(
+    `<!doctype html><meta charset="utf-8"><title>Novinky v CC — založit týden</title>` +
+      `<form method="post" style="font:16px system-ui;max-width:520px;margin:40px auto">` +
+      `<p>Založit vydání „Novinky v CC“ ze changelogu a postavit koncept na pozadí?</p>` +
+      `<label>Týden <input name="week" value="${week}" placeholder="2026-w39" required pattern="\\d{4}-w\\d{1,2}"></label> ` +
+      `<label><input type="checkbox" name="force" value="1"${force ? " checked" : ""}> znovu poslat schvalovací e-mail</label> ` +
+      `<button type="submit">Založit</button></form>`,
+  );
+});
+admin.post("/admin/api/cc-news/changelog-week", async (c) => runChangelogWeek(c));
+
+async function runChangelogWeek(c: Context<{ Bindings: Env; Variables: Variables }>) {
+  const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+  const raw = String(body.week ?? c.req.query("week") ?? "");
+  const m = raw.match(/^(\d{4})-w(\d{1,2})$/i);
+  const week = m ? { year: Number(m[1]), week: Number(m[2]) } : null;
+  if (!week || week.week < 1 || week.week > 53 || week.year < 2025) {
+    return c.redirect(`/admin?ccNews=${encodeURIComponent("Zadej týden jako 2026-w39 (týden 1–53).")}`);
+  }
+  const db = drizzle(c.env.DB);
+  const { createChangelogWeekItem } = await import("../lib/cc-news/changelog-week");
+  const { enqueueCcNewsItem } = await import("../queue");
+  const { ccNewsItem } = await import("../db/schema");
+  const outcome = await createChangelogWeekItem(db, week, new Date());
+  const force = String(body.force ?? "") === "1";
+  if (outcome.kind === "exists" && !force) {
+    const [row] = await db.select({ status: ccNewsItem.status }).from(ccNewsItem).where(eq(ccNewsItem.id, outcome.itemId)).limit(1);
+    if (row?.status === "published") {
+      return c.redirect(`/admin?ccNews=${encodeURIComponent(`Vydání ${outcome.sourceId} je už publikované; nový koncept jen s force=1.`)}`);
+    }
+  }
+  if (outcome.kind === "created" || outcome.kind === "exists") {
+    await enqueueCcNewsItem(c.env, outcome.itemId, outcome.sourceId, { manualTrigger: true, force });
+  }
+  const msg = {
+    created: `Vydání ${outcome.sourceId} založeno (${"versionRange" in outcome ? outcome.versionRange : ""}); článek se staví na pozadí, schvalovací e-mail dorazí za pár minut.`,
+    exists: `Vydání ${outcome.sourceId} už existuje; koncept se staví znovu na pozadí (pokud e-mail ještě neodešel, nebo s ?force=1).`,
+    official: `Za týden ${outcome.sourceId} existuje oficiální přehled Anthropicu — ze changelogu nezakládám.`,
+    empty: `V týdnu ${outcome.sourceId} nevyšla žádná nová verze (nebo ji už pokrývá dřívější vydání).`,
+  }[outcome.kind];
+  return c.redirect(`/admin?ccNews=${encodeURIComponent(msg)}`);
+}
 admin.post("/admin/api/cc-news/trigger", async (c) => runCcNewsTrigger(c));
 
 // Doplnění chybějících STARŠÍCH týdnů přímo na web (zacelení mezer typu Week 25,

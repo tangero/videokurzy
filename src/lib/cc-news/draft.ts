@@ -10,7 +10,7 @@
 // `approveNonce` (jednorázovost schválení). Reálný commit na GitHub je mimo
 // dry-run rozsah (mantinel: jen branch/PR, žádné nasazení).
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { ccNewsItem } from "../../db/schema";
@@ -78,12 +78,13 @@ export async function prepareDraftAndApproval(
   // 1) Markdown konceptu do KV.
   await env.KV.put(draftKvKey(itemId), markdown);
 
-  // 2) Nonce + articlePath na řádku; status zůstává draft.
+  // 2) Nonce + articlePath na řádku. Publikované vydání zůstává publikované:
+  // nový koncept leží v draft KV a živou verzi nahradí až schválení.
   const nonce = nanoid();
   const articlePath = articleRepoPath(meta.slug);
   await db
     .update(ccNewsItem)
-    .set({ articlePath, approveNonce: nonce, status: "draft" })
+    .set({ articlePath, approveNonce: nonce, status: sql`CASE WHEN ${ccNewsItem.status} = 'published' THEN 'published' ELSE 'draft' END` })
     .where(eq(ccNewsItem.id, itemId));
 
   // 3) Jednorázový podepsaný schvalovací link.
