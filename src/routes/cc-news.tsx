@@ -332,6 +332,13 @@ ccNewsRoutes.get("/internal/cc-news/approve", async (c) => {
   const result = await approveItem(db, c.env, token, new Date());
 
   if (result.ok) {
+    // Anglický přehled běží zvlášť ve frontě: jeho selhání české vydání neovlivní.
+    try {
+      const { enqueueCcNewsEnglish } = await import("../queue");
+      await enqueueCcNewsEnglish(c.env, result.itemId);
+    } catch (err) {
+      console.error("[cc-news] zařazení anglického přehledu selhalo:", err);
+    }
     return c.html(
       `<!doctype html><meta charset="utf-8"><title>Publikováno</title>` +
         `<p>Článek byl schválen a publikován v sekci „Novinky v CC“. Rozeslání proběhne dle nastavení (v dry-run režimu se reálně neodesílá).</p>`

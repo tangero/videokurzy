@@ -27,7 +27,9 @@ type WebhookMessageType =
   // admin zařadí a hned dostane odpověď, rozeslání doběhne asynchronně.
   | "cc-news.send-newsletter"
   // Dotřídění položek changelogu do témat (Haiku). Bez payloadu; idempotentní.
-  | "cc-news.classify";
+  | "cc-news.classify"
+  // Anglický přehled po schválení české verze → PR do repa webu. Idempotentní.
+  | "cc-news.en-weekly";
 
 interface WebhookMessage {
   type: WebhookMessageType;
@@ -73,6 +75,11 @@ export async function enqueueCcNewsItem(
 }
 
 /** Zařadí dotřídění nezatříděných položek changelogu (běží na pozadí, LLM). */
+/** Zařadí anglický přehled vydání (po schválení české verze). */
+export async function enqueueCcNewsEnglish(env: Env, itemId: string): Promise<void> {
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.en-weekly", data: { itemId } });
+}
+
 export async function enqueueCcNewsClassify(env: Env): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.classify", data: {} });
 }
@@ -132,6 +139,10 @@ export async function handleQueue(
 
         case "cc-news.classify":
           await handleCcNewsClassify(db, env);
+          break;
+
+        case "cc-news.en-weekly":
+          await handleCcNewsEnglish(env, String(data.itemId ?? ""));
           break;
 
         default:
@@ -717,6 +728,14 @@ async function handleInvoicePaid(
  * pokročila, zařadí další (bez pokroku nezařazuje — žádná nekonečná smyčka).
  * Chyba LLM se propaguje → retry fronty (třídění je idempotentní).
  */
+async function handleCcNewsEnglish(env: Env, itemId: string): Promise<void> {
+  const { publishEnglishWeekly } = await import("./lib/cc-news/english");
+  const out = await publishEnglishWeekly(env, itemId, new Date());
+  if (out.kind === "pr") console.log(`[queue] cc-news.en-weekly ${itemId}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}`);
+  else if (out.kind === "no-token") console.warn(`[queue] cc-news.en-weekly ${itemId}: chybí VIBECODING_SITE_GITHUB_TOKEN, ${out.path} nevydán`);
+  else console.log(`[queue] cc-news.en-weekly ${itemId}: vydání nemá uložený výběr, přeskočeno`);
+}
+
 async function handleCcNewsClassify(db: ReturnType<typeof drizzle>, env: Env): Promise<void> {
   const { classifyPending, countUnclassified } = await import("./lib/cc-news/classify");
   const done = await classifyPending(db, env, new Date(), 300);

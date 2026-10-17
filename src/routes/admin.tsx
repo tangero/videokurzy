@@ -2628,6 +2628,26 @@ admin.post("/admin/api/cc-news/article-preview", async (c) => {
   return c.json({ ok: true, html });
 });
 
+// Anglický přehled vydání (vibecoding.cz/en). GET ?itemId= = zkouška nanečisto:
+// napíše článek z uloženého výběru a vrátí markdown, PR neotevře. POST {itemId}
+// zařadí do fronty totéž co schválení české verze (PR do repa webu).
+admin.get("/admin/api/cc-news/english", async (c) => {
+  const itemId = c.req.query("itemId") ?? "";
+  if (!itemId) return c.json({ error: "itemId required" }, 400);
+  const { publishEnglishWeekly } = await import("../lib/cc-news/english");
+  const out = await publishEnglishWeekly(c.env, itemId, new Date(), { dryRun: true });
+  if (out.kind === "no-selection") return c.json({ error: "vydání nemá uložený výběr (postav koncept znovu)" }, 404);
+  if (out.kind !== "no-token") return c.json({ error: "unexpected" }, 500);
+  return c.text(`<!-- ${out.path} -->\n${out.markdown}`, 200, { "content-type": "text/markdown; charset=utf-8" });
+});
+admin.post("/admin/api/cc-news/english", async (c) => {
+  const body = await c.req.json<{ itemId?: string }>().catch(() => ({}) as { itemId?: string });
+  if (!body.itemId) return c.json({ error: "itemId required" }, 400);
+  const { enqueueCcNewsEnglish } = await import("../queue");
+  await enqueueCcNewsEnglish(c.env, body.itemId);
+  return c.json({ ok: true, queued: true });
+});
+
 // Rozeslání newsletteru předplatitelům pro dané vydání. IDEMPOTENTNÍ přes
 // per-vydání zámek (newsletterSentAt) — opakované volání nic nepošle podruhé.
 // ?force=1 vynutí znovurozeslání (pošle VŠEM znovu, vč. těch, co už dostali).

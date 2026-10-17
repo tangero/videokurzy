@@ -198,10 +198,130 @@ export const WRITER_SYSTEM = [
 ].join("\n");
 
 const VERSION_FIX_SYSTEM = [
-  "Opravuješ čísla verzí v českém článku. Dostaneš článek, seznam CHYBNÝCH verzí (nejsou u žádné",
-  "citované položky) a pro každou novinku její skutečné verze. Chybnou verzi nahraď správnou podle",
+  "Opravuješ čísla verzí v českém článku. Dostaneš článek (ARTICLE), seznam CHYBNÝCH verzí (WRONG VERSIONS,",
+  "nejsou u žádné citované položky) a pro každou novinku její skutečné verze (FEATURE VERSIONS). Chybnou verzi nahraď správnou podle",
   "novinky, ke které patří, nebo ji odstraň. Jinak text NEMĚŇ. Vrať jen opravený markdown.",
 ].join("\n");
+
+// ─── Uložený výběr a psaní ────────────────────────────────────────
+
+/**
+ * Ověřený výběr týdne (po kontrole faktů). Ukládá se do KV, aby z něj šlo napsat
+ * článek v jiném jazyce bez nového výběru. `sources` = citované položky ve tvaru
+ * „id | typ [platforma] | text“, jak je viděla kontrola faktů.
+ */
+export interface WeekSelection {
+  v: 1;
+  tool: "claude-code";
+  itemId: string;
+  week: { year: number; week: number };
+  weekLabel: string;
+  range: { from: string; to: string };
+  from: string;
+  to: string;
+  releases: number;
+  entries: number;
+  features: { title: string; lede: string; docLink: string | null; versions: string[]; sources: string[] }[];
+  minorWins: { text: string; versions: string[] }[];
+  topics: string[];
+  allowedVersions: string[];
+  knownPages: string[];
+}
+
+export const selectionKvKey = (itemId: string) => `cc-news:selection:${itemId}`;
+
+/** Jazyková varianta autora: prompty a vstup pro model. */
+export interface WriterLang {
+  system: string;
+  versionFixSystem: string;
+  user: (sel: WeekSelection) => string;
+  incomplete: (missing: string) => string;
+}
+
+export interface WrittenArticle {
+  title: string;
+  excerpt: string;
+  summaryPoints: string[];
+  body: string;
+  editorNotes: string[];
+  versionIssues: string[];
+  strippedLinks: string[];
+}
+
+/** Hodnota front matteru v dvojitých uvozovkách, na jeden řádek, bez em dashe. */
+export const yamlQuote = (s: string) =>
+  `"${s.trim().replace(/\s*\n\s*/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/—/g, "-")}"`;
+
+/**
+ * Napíše článek z uloženého výběru a projde ho kontrolami v kódu: verze jen
+ * z citovaných položek (jedna opravná iterace), poznámky editoru ven, em dash
+ * pryč, odkazy jen na existující stránky dokumentace.
+ */
+export async function writeWeeklyArticle(llm: LlmFn, sel: WeekSelection, lang: WriterLang): Promise<WrittenArticle> {
+  type Written = { title: string; excerpt: string; summaryPoints: string[]; body: string };
+  const valid = (w: Partial<Written> | null): w is Written =>
+    !!w && typeof w.title === "string" && w.title.trim().length > 0 && typeof w.body === "string" && w.body.trim().length > 200 &&
+    typeof w.excerpt === "string" && Array.isArray(w.summaryPoints) && w.summaryPoints.every((p) => typeof p === "string");
+  const userMsg = lang.user(sel);
+  let written = await llmJson<Partial<Written>>(llm, lang.system, userMsg, 12000);
+  // Opakování s vyšší teplotou (při teplotě 0 by vrátil totéž) a s tím, co chybělo.
+  if (!valid(written)) {
+    written = await llmJson<Partial<Written>>(llm, lang.system, `${userMsg}\n\n${lang.incomplete("title, excerpt, summaryPoints, body (min. 200)")}`, 12000, 1);
+  }
+  if (!valid(written)) throw new Error("cc-news weekly: writer nevrátil úplný článek (title, excerpt, summaryPoints, body)");
+
+  // Oprava verzí jde PŘED úklid, aby úklid (poznámky editoru, em dash) platil
+  // i pro text, který vrátí opravné volání.
+  let body = written.body.trim();
+  const allowedVersions = new Set(sel.allowedVersions);
+  let versionIssues = versionViolations(body, allowedVersions);
+  if (versionIssues.length > 0) {
+    const fixedBody = (await llm(
+      lang.versionFixSystem,
+      `WRONG VERSIONS: ${versionIssues.join(", ")}\n\nFEATURE VERSIONS:\n${sel.features.map((f) => `- ${f.title}: ${f.versions.join(", ")}`).join("\n")}\n\nARTICLE:\n${body}`,
+      { maxTokens: 12000 },
+    )).trim().replace(/^```(?:markdown)?\n|\n```$/g, "");
+    // Opravu přijmi jen jako celý článek (ne úvodní komentář nebo useknutý text).
+    if (fixedBody.length > body.length * 0.8) body = fixedBody;
+    versionIssues = versionViolations(body, allowedVersions);
+  }
+  // Titulek, perex a shrnutí se neopravují, jen se chybné verze ukážou v revizi.
+  versionIssues = [...new Set([...versionIssues, ...versionViolations([written.title, written.excerpt, ...written.summaryPoints].join("\n"), allowedVersions)])];
+  const extracted = extractEditorNotes(body);
+  body = extracted.markdown.replace(/—/g, " - ");
+  const known = new Set(sel.knownPages);
+  const linkCheck = known.size > 0 ? stripUnknownDocLinks(body, known) : { markdown: body, stripped: [] };
+  return {
+    title: written.title.trim().replace(/—/g, "-"),
+    excerpt: written.excerpt.trim(),
+    summaryPoints: written.summaryPoints.map((p) => p.trim()),
+    body: linkCheck.markdown,
+    editorNotes: extracted.notes,
+    versionIssues,
+    strippedLinks: linkCheck.stripped,
+  };
+}
+
+const CZECH_WRITER: WriterLang = {
+  system: WRITER_SYSTEM,
+  versionFixSystem: VERSION_FIX_SYSTEM,
+  user: (sel) => [
+    `TÝDEN: ${sel.weekLabel}, ${czechDateRange(new Date(sel.from), new Date(sel.to))}; verze ${sel.range.from} až ${sel.range.to} (${sel.releases} vydání, ${sel.entries} položek changelogu).`,
+    "",
+    "HLAVNÍ NOVINKY (v pořadí důležitosti):",
+    ...sel.features.map((f, n) => [
+      `${n + 1}. ${f.title} | verze: ${f.versions.join(", ")} | docLink: ${f.docLink ?? "-"}`,
+      `   ${f.lede}`,
+      ...f.sources.map((l) => `   - ${l}`),
+    ].join("\n")),
+    "",
+    "DROBNOSTI:",
+    ...sel.minorWins.map((w) => `- ${w.text} | verze: ${w.versions.join(", ") || "-"}`),
+    "",
+    "TÉMATA (pro kontext, ne pro výčet): " + sel.topics.map(topicLabel).join(", "),
+  ].join("\n"),
+  incomplete: (missing) => `PŘEDCHOZÍ ODPOVĚĎ BYLA NEÚPLNÁ. Vrať JSON se všemi poli: ${missing}.`,
+};
 
 // ─── Stavba článku ────────────────────────────────────────────────
 
@@ -381,66 +501,36 @@ export async function buildChangelogArticle(
     }
   }
 
-  // 5) Článek.
+  // 5) Ověřený výběr se uloží: z téhož výběru píše i jiný jazyk (english.ts).
   const dates = rows.map((r) => r.publishedAt);
-  const from = new Date(Math.min(...dates.map(Number)));
-  const to = new Date(Math.max(...dates.map(Number)));
-  const period = czechDateRange(from, to);
-  const versionRange = `v${range.from}–v${range.to}`;
   const featureVersions = (f: { sourceIds: string[] }) =>
     [...new Set(f.sourceIds.map((id) => byId.get(id)?.version).filter((v): v is string => !!v))];
-  const writerUser = [
-    `TÝDEN: ${weekLabel}, ${period}; verze ${range.from} až ${range.to} (${versions.length} vydání, ${rows.length} položek changelogu).`,
-    "",
-    "HLAVNÍ NOVINKY (v pořadí důležitosti):",
-    ...kept.map((f, n) => [
-      `${n + 1}. ${f.title} | verze: ${featureVersions(f).join(", ") || f.version} | docLink: ${f.docLink ?? "-"}`,
-      `   ${f.lede}`,
-      ...f.sourceIds.map((id) => `   - ${lineOf(id)}`),
-    ].join("\n")),
-    "",
-    "DROBNOSTI:",
-    ...selection.minorWins.map((w) => `- ${w.text} | verze: ${featureVersions(w).join(", ") || "-"}`),
-    "",
-    "TÉMATA (pro kontext, ne pro výčet): " + [...new Set(kept.flatMap((f) => f.sourceIds.map((id) => byId.get(id)?.topic).filter(Boolean)))].map((t) => topicLabel(t!)).join(", "),
-  ].join("\n");
-  type Written = { title: string; excerpt: string; summaryPoints: string[]; body: string };
-  const valid = (w: Partial<Written> | null): w is Written =>
-    !!w && typeof w.title === "string" && w.title.trim().length > 0 && typeof w.body === "string" && w.body.trim().length > 200 &&
-    typeof w.excerpt === "string" && Array.isArray(w.summaryPoints) && w.summaryPoints.every((p) => typeof p === "string");
-  let written = await llmJson<Partial<Written>>(llms.write, WRITER_SYSTEM, writerUser, 12000);
-  // Opakování s vyšší teplotou (při teplotě 0 by vrátil totéž) a s tím, co chybělo.
-  if (!valid(written)) {
-    const missing = ["title", "excerpt", "summaryPoints", "body (min. 200 znaků)"].join(", ");
-    written = await llmJson<Partial<Written>>(llms.write, WRITER_SYSTEM, `${writerUser}\n\nPŘEDCHOZÍ ODPOVĚĎ BYLA NEÚPLNÁ. Vrať JSON se všemi poli: ${missing}.`, 12000, 1);
-  }
-  if (!valid(written)) throw new Error("cc-news weekly: writer nevrátil úplný článek (title, excerpt, summaryPoints, body)");
+  const sel: WeekSelection = {
+    v: 1,
+    tool: "claude-code",
+    itemId,
+    week,
+    weekLabel,
+    range,
+    from: new Date(Math.min(...dates.map(Number))).toISOString(),
+    to: new Date(Math.max(...dates.map(Number))).toISOString(),
+    releases: versions.length,
+    entries: rows.length,
+    features: kept.map((f) => ({
+      title: f.title, lede: f.lede, docLink: f.docLink,
+      versions: featureVersions(f).length ? featureVersions(f) : [f.version],
+      sources: f.sourceIds.map(lineOf),
+    })),
+    minorWins: selection.minorWins.map((w) => ({ text: w.text, versions: featureVersions(w) })),
+    topics: [...new Set(kept.flatMap((f) => f.sourceIds.map((id) => byId.get(id)?.topic).filter((t): t is string => !!t)))],
+    allowedVersions: [...new Set([...versions, range.from, range.to])],
+    knownPages: [...knownPages],
+  };
+  await env.KV.put(selectionKvKey(itemId), JSON.stringify(sel));
 
-  // 6) Deterministické kontroly. Oprava verzí jde PŘED úklid, aby úklid (poznámky
-  // editoru, em dash) platil i pro text, který vrátí opravné volání.
-  let body = written.body.trim();
-  const allowedVersions = new Set([...versions, range.from, range.to]);
-  let versionIssues = versionViolations(body, allowedVersions);
-  if (versionIssues.length > 0) {
-    const fixedBody = (await llms.write(
-      VERSION_FIX_SYSTEM,
-      `CHYBNÉ VERZE: ${versionIssues.join(", ")}\n\nVERZE NOVINEK:\n${kept.map((f) => `- ${f.title}: ${featureVersions(f).join(", ")}`).join("\n")}\n\nČLÁNEK:\n${body}`,
-      { maxTokens: 12000 },
-    )).trim().replace(/^```(?:markdown)?\n|\n```$/g, "");
-    // Opravu přijmi jen jako celý článek (ne úvodní komentář nebo useknutý text).
-    if (fixedBody.length > body.length * 0.8) body = fixedBody;
-    versionIssues = versionViolations(body, allowedVersions);
-  }
-  // Titulek, perex a shrnutí se neopravují, jen se chybné verze ukážou v revizi.
-  versionIssues = [...new Set([...versionIssues, ...versionViolations([written.title, written.excerpt, ...written.summaryPoints].join("\n"), allowedVersions)])];
-  const extracted = extractEditorNotes(body);
-  const editorNotes = extracted.notes;
-  body = extracted.markdown.replace(/—/g, " - ");
-  const linkCheck = knownPages.size > 0 ? stripUnknownDocLinks(body, knownPages) : { markdown: body, stripped: [] };
-  body = linkCheck.markdown;
-
-  const q = (s: string) => `"${s.replace(/\s*\n\s*/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/—/g, "-")}"`;
-  const title = written.title.trim().replace(/—/g, "-");
+  // 6) Článek a deterministické kontroly.
+  const written = await writeWeeklyArticle(llms.write, sel, CZECH_WRITER);
+  const versionRange = `v${range.from}–v${range.to}`;
   const markdown = [
     "---",
     "author: Patrick Zandl",
@@ -450,15 +540,15 @@ export async function buildChangelogArticle(
     "- Anthropic",
     "- Vývojářské nástroje",
     "layout: post",
-    `title: ${q(title)}`,
-    `post_excerpt: ${q(written.excerpt.trim())}`,
+    `title: ${yamlQuote(written.title)}`,
+    `post_excerpt: ${yamlQuote(written.excerpt)}`,
     "summary_points:",
-    ...written.summaryPoints.map((p) => `- ${q(p.trim())}`),
+    ...written.summaryPoints.map((p) => `- ${yamlQuote(p)}`),
     "---",
     "",
-    `# ${title}`,
+    `# ${written.title}`,
     "",
-    body,
+    written.body,
     "",
   ].join("\n");
 
@@ -469,7 +559,8 @@ export async function buildChangelogArticle(
     review: {
       weekLabel, versionRange, entries: rows.length, docsChanges: docs.length, signals,
       features: kept.map((f) => ({ title: f.title, version: f.version, sourceIds: f.sourceIds })),
-      skipped: selection.skipped, fixed, dropped, editorNotes, versionIssues, strippedLinks: linkCheck.stripped,
+      skipped: selection.skipped, fixed, dropped,
+      editorNotes: written.editorNotes, versionIssues: written.versionIssues, strippedLinks: written.strippedLinks,
     },
   };
 }

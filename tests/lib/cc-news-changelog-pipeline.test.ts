@@ -11,7 +11,8 @@ import {
   DOCS_INDEX_KEY, contentLines, docsPageKey, docsWeekKey, freezeWeek, parseSitemap, snapshotDocs, type DocsIndex,
 } from "../../src/lib/cc-news/docs-snapshot";
 import {
-  buildChangelogArticle, czechDateRange, extractEditorNotes, stripUnknownDocLinks, versionViolations,
+  buildChangelogArticle, czechDateRange, extractEditorNotes, selectionKvKey, stripUnknownDocLinks, versionViolations,
+  type WeekSelection,
 } from "../../src/lib/cc-news/weekly";
 import { prepareDraftAndApproval, publishedKvKey } from "../../src/lib/cc-news/draft";
 import type { LlmFn } from "../../src/lib/cc-news/llm";
@@ -86,7 +87,7 @@ function fakeLlm(overrides: Partial<Record<string, (user: string) => string>> = 
       summaryPoints: ["Projects koordinují cloudová sezení."],
       body: "*Kolik sezení uhlídáte?*\n\n<!-- Poznámka: ověřit tarify -->\n---\n\n## Projects\n\n**Dispečer.** Claude koordinuje vlákna — sám ([dokumentace](https://code.claude.com/docs/en/claude-projects)). Verze 2.1.999.\n\n**Odkaz.** [Nic](https://code.claude.com/docs/en/not-a-page).",
     }),
-    versionfix: (u) => u.slice(u.indexOf("ČLÁNEK:\n") + 8).replace("Verze 2.1.999.", "Verze 2.1.271."),
+    versionfix: (u) => u.slice(u.indexOf("ARTICLE:\n") + 9).replace("Verze 2.1.999.", "Verze 2.1.271."),
   };
   const llm: LlmFn = async (system, user) => {
     const kind = kindOf(system);
@@ -301,6 +302,11 @@ describe("buildChangelogArticle", () => {
     // Front matter ve formátu publikovaných článků.
     expect(art.markdown).toMatch(/^---\nauthor: Patrick Zandl\n[\s\S]*\ntitle: "Projects - přebírají koordinaci"\n[\s\S]*\n---\n\n# Projects - přebírají koordinaci\n/);
     expect(art.versionRange).toBe("v2.1.271–v2.1.278");
+    // Ověřený výběr uložený pro jiný jazyk.
+    const sel = await env.KV.get<WeekSelection>(selectionKvKey("w38"), "json");
+    expect(sel).toMatchObject({ tool: "claude-code", week: W38, range: { from: "2.1.271", to: "2.1.278" }, knownPages: ["desktop", "claude-projects"] });
+    expect(sel!.features.map((f) => f.title)).toEqual(art.review.features.map((f) => f.title));
+    expect(sel!.features[0]!.sources[0]).toMatch(/^docs:claude-projects#page \| DOCS/);
   });
 });
 
