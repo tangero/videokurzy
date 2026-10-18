@@ -338,7 +338,8 @@ describe("opravy z code review", () => {
   it("klasifikace přijme i jediný objekt místo pole", async () => {
     const { db } = await seed();
     const { llm } = fakeLlm({ classify: (u) => JSON.stringify({ id: idsIn(u)[0], topic: "plugins", significance: 2, reason: "x" }) });
-    expect(await classifyPending(db, env as never, NOW, 200, llm)).toBe(1);
+    // Model vrací vždy jen první položku; vynechané se opakují po půlkách (2 úrovně).
+    expect(await classifyPending(db, env as never, NOW, 200, llm)).toBeGreaterThan(1);
   });
 
   it("timeout modelu dávku nerozpůlí", async () => {

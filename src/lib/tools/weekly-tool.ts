@@ -6,7 +6,7 @@ import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { ccChangeItem } from "../../db/schema";
 import { compareVersions, isoWeek, isoWeekBounds, weekKey } from "../cc-news/changelog-source";
-import { classifyPending, linkFollowsForVersions } from "../cc-news/classify";
+import { assertWeekClassified, classifyPending, linkFollowsForVersions } from "../cc-news/classify";
 import { diffDocsWeeks, docsIndexKey, docsWeekKey, type DocsIndex, type DocsSource } from "../cc-news/docs-snapshot";
 import { classifyModel, openRouterLlm, writeModel, type LlmEnv } from "../cc-news/llm";
 import { selectAndVerify, type WeeklyLlms } from "../cc-news/weekly";
@@ -60,6 +60,7 @@ export async function buildToolWeek(
     const pending = await db.select({ id: ccChangeItem.id }).from(ccChangeItem)
       .where(and(inWeek, isNull(ccChangeItem.classifiedAt))).limit(1);
     if (pending.length > 0) await classifyPending(db, env, now, 1000, llms.classify, { tool, versions });
+    await assertWeekClassified(db, tool, versions);
     await linkFollowsForVersions(db, env, versions, llms.classify, tool);
   }
   const rows = (versions.length
