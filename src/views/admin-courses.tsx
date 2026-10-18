@@ -1146,6 +1146,7 @@ export function AdminSettingsForm({
   activeBank,
   ccNewsLiveSend,
   ccNewsApprovalEmails,
+  ccNewsAutopublish,
   discount,
   slotsUsed,
   saved,
@@ -1157,6 +1158,7 @@ export function AdminSettingsForm({
   activeBank: "fio" | "creditas";
   ccNewsLiveSend: boolean;
   ccNewsApprovalEmails: string;
+  ccNewsAutopublish: boolean;
   discount: DiscountSettingsView;
   slotsUsed: number;
   saved?: boolean;
@@ -1228,13 +1230,32 @@ export function AdminSettingsForm({
             <span class="text-sm text-gray-800">Povolit reálné odesílání Novinek v Claude Code</span>
           </label>
 
+          <label class="mt-4 flex items-start gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              name="cc_news_autopublish"
+              checked={ccNewsAutopublish}
+              class="mt-0.5 h-4 w-4 text-indigo-600 rounded border-gray-300"
+            />
+            <span class="text-sm text-gray-800">
+              Automatické vydávání článků
+              <span class="block text-xs text-gray-600">
+                Český týdenní článek se po napsání sám publikuje a anglické přehledy
+                (Claude Code, Grok Build) se samy vydají na vibecoding.cz/en. Místo
+                schvalování přijde oznámení s odkazy na úpravy. Newsletter se dál
+                rozesílá ručně.
+              </span>
+            </span>
+          </label>
+
           <div class="mt-4">
             <label class="block text-sm font-medium text-gray-800 mb-1">
               Příjemci schvalovacího e-mailu
             </label>
             <p class="text-xs text-gray-600 mb-2">
-              Jeden e-mail na řádek (nebo oddělené čárkou). Sem chodí e-mail
-              „Ke schválení: Novinky v Claude Code". Když necháte prázdné, použijí
+              Jeden e-mail na řádek (nebo oddělené čárkou). Sem chodí oznámení
+              „Vydáno: Novinky v Claude Code" a „Vydáno na vibecoding.cz/en" (při
+              vypnutém automatickém vydávání „Ke schválení"). Když necháte prázdné, použijí
               se výchozí admin adresy:{" "}
               <span class="font-mono">{ADMIN_EMAILS.join(", ")}</span>.
             </p>

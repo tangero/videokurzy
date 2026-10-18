@@ -84,6 +84,12 @@ návaznosti; stránky `/novinky-cc/temata`).
   a založí vydání `/changelog/<rok>-w<NN>` za minulý týden → fronta → schvalovací e-mail.
 - Zpětné týdny ručně: `/admin/api/cc-news/changelog-week?week=2026-w39`, **postupně**
   (rozsah verzí navazuje na konec posledního vydání).
+- **Automatické vydávání (od 18. 10. 2026): lidské schválení před publikací se NEvyžaduje**
+  (rozhodnutí Patricka, nevracet jako „chybu“). Přepínač `cc_news_autopublish` v `/admin/settings`
+  (výchozí zapnuto): český článek se po napsání sám publikuje (`autoPublishDraft`), přijde e-mail
+  „Vydáno“ s odkazy na úpravy a nálezy kontrol; anglické přehledy se po úspěšném buildu webu samy
+  sloučí (fronta `cc-news.en-merge`, `mergeSitePullRequest`). Úpravy zpětně: český text admin →
+  Newsletter, anglický Keystatic na vibecoding.cz/keystatic. Newsletter předplatitelům zůstává ruční.
 - Styl článku = skill „Technický článek" (`WRITER_SYSTEM` v `weekly.ts`). Názor
   v 1. osobě ano, **vymyšlené osobní zkušenosti autora ne**.
 - Nová stránka dokumentace / velký nový oddíl = povinně hlavní novinka.
@@ -92,7 +98,8 @@ návaznosti; stránky `/novinky-cc/temata`).
 - Lokální experimenty a porovnání: `scripts/cc-news-changelog/`, `docs/cc-news-changelog/`.
 - Anglická verze (vibecoding.cz/en): po schválení české verze fronta `cc-news.en-weekly`
   napíše článek anglicky z uloženého výběru (`cc-news:selection:<itemId>`, ne překladem)
-  a otevře PR do `tangero/vibecoding-site` (`english.ts`, secret `VIBECODING_SITE_GITHUB_TOKEN`).
+  a otevře PR do `tangero/vibecoding-site` (`english.ts`, secret `VIBECODING_SITE_GITHUB_TOKEN`),
+  který se při automatickém vydávání sám sloučí po úspěšném buildu.
   Kontrakt souboru je v `docs/english-section.md` webu. Nanečisto:
   `GET /admin/api/cc-news/english?itemId=…`. Více nástrojů: `docs/cc-news-changelog/vice-zdroju.md`.
 - Další sledované nástroje (zatím Grok Build, jen interně): `cc_change_item.tool`
@@ -100,6 +107,7 @@ návaznosti; stránky `/novinky-cc/temata`).
   denní cron, týdenní výběr do KV `tools:week:<tool>:<týden>`, admin `/admin/tools/grok-build`.
   Týdenní výběr se uloží i jako `cc-news:selection:<tool>-<rok>-w<NN>`; z něj tlačítko v adminu
   píše anglický přehled (PR do webu, nástroj musí být ve `WEEKLY_TOOLS` webu). Bez českého článku.
+  Při automatickém vydávání se zařadí sám po sestavení týdne (fronta `tools.week`).
 
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,

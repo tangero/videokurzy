@@ -41,7 +41,7 @@ function fakeLlm() {
 }
 
 /** Podvržené GitHub API: zaznamená volání, stav větve/PR lze nastavit. */
-function fakeGithub(state: { branchExists?: boolean; fileSha?: string; openPr?: string; onMain?: boolean } = {}) {
+function fakeGithub(state: { branchExists?: boolean; fileSha?: string; fileContent?: string; openPr?: string; onMain?: boolean } = {}) {
   const calls: { method: string; path: string; body?: any }[] = [];
   const f = (async (url: string, init: RequestInit) => {
     const path = url.replace("https://api.github.com/repos/tangero/vibecoding-site", "");
@@ -53,7 +53,7 @@ function fakeGithub(state: { branchExists?: boolean; fileSha?: string; openPr?: 
     if (path === "/git/ref/heads/main") return j({ object: { sha: "base123" } });
     if (path === "/git/refs") return state.branchExists ? j({ message: "Reference already exists" }, 422) : j({}, 201);
     if (method === "GET" && path.startsWith("/contents/") && !path.includes("?ref=")) return state.onMain ? j({ sha: "main" }) : j({}, 404);
-    if (method === "GET" && path.startsWith("/contents/")) return state.fileSha ? j({ sha: state.fileSha }) : j({}, 404);
+    if (method === "GET" && path.startsWith("/contents/")) return state.fileSha ? j({ sha: state.fileSha, ...(state.fileContent ? { content: state.fileContent } : {}) }) : j({}, 404);
     if (method === "PUT") return j({ content: { sha: "written1" } }, state.fileSha ? 200 : 201);
     if (method === "GET" && path.startsWith("/pulls")) return j(state.openPr ? [{ html_url: state.openPr }] : []);
     if (method === "POST" && path === "/pulls") return j({ html_url: "https://github.com/tangero/vibecoding-site/pull/300" }, 201);
@@ -153,6 +153,14 @@ describe("publishEnglishWeekly", () => {
     expect(pr).toMatchObject({ url: "https://github.com/tangero/vibecoding-site/pull/299", created: false });
     expect(gh.calls.find((c) => c.method === "PUT")!.body.sha).toBe("old");
     expect(gh.calls.some((c) => c.method === "POST" && c.path === "/pulls")).toBe(false);
+  });
+
+  it("stejný obsah na větvi se nezapisuje znovu (nový commit by spustil build)", async () => {
+    const same = btoa(String.fromCharCode(...new TextEncoder().encode("č")));
+    const gh = fakeGithub({ branchExists: true, fileSha: "old", fileContent: `${same}\n`, openPr: "https://github.com/tangero/vibecoding-site/pull/299" });
+    const pr = await openSitePullRequest("t", "tangero/vibecoding-site", { path: "src/content/english/x.md", content: "č" }, { branch: "b", title: "T", body: "B" }, gh.f, { lastWrittenSha: "old" });
+    expect(pr).toMatchObject({ created: false, sha: "old" });
+    expect(gh.calls.some((c) => c.method === "PUT")).toBe(false);
   });
 
   it("ručně upravený soubor na větvi PR bez force nepřepíše, vlastní zápis ano", async () => {

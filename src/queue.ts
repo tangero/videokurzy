@@ -31,7 +31,10 @@ type WebhookMessageType =
   // Anglický přehled po schválení české verze → PR do repa webu. Idempotentní.
   | "cc-news.en-weekly"
   // Interní týdenní přehled dalšího sledovaného nástroje (Grok Build). Idempotentní.
-  | "tools.week";
+  | "tools.week"
+  // Automatické vydání anglického přehledu: sloučí PR do webu, až projde build.
+  // Odkládá se (delaySeconds) a znovu zařazuje, dokud kontroly běží.
+  | "cc-news.en-merge";
 
 interface WebhookMessage {
   type: WebhookMessageType;
@@ -85,6 +88,28 @@ export async function enqueueToolWeek(env: Env, tool: string, week: { year: numb
 /** Zařadí anglický přehled vydání (po schválení české verze). */
 export async function enqueueCcNewsEnglish(env: Env, itemId: string, opts: { force?: boolean; rebuildSelection?: boolean } = {}): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.en-weekly", data: { itemId, ...opts } });
+}
+
+/** První kontrola PR po ~4 minutách (build webu), pak po 5 minutách až ~2 hodiny. */
+const EN_MERGE_FIRST_DELAY_S = 240;
+const EN_MERGE_DELAY_S = 300;
+const EN_MERGE_MAX_ATTEMPTS = 24;
+
+/** Zámek řetězce slučování: jeden běžící řetězec na PR (opakované vydání ho nezdvojí). */
+const enMergeLockKey = (itemId: string, number: number) => `cc-news:en-merge:${itemId}:${number}`;
+const EN_MERGE_LOCK_TTL_S = 3 * 60 * 60;
+
+/** Zařadí (odložené) sloučení PR anglického přehledu. První pokus jen bez běžícího řetězce. */
+export async function enqueueCcNewsEnMerge(env: Env, data: { itemId: string; number: number; attempt: number }): Promise<void> {
+  if (data.attempt === 0) {
+    const key = enMergeLockKey(data.itemId, data.number);
+    if (await env.KV.get(key)) return;
+    await env.KV.put(key, "1", { expirationTtl: EN_MERGE_LOCK_TTL_S });
+  }
+  await env.WEBHOOK_QUEUE.send(
+    { type: "cc-news.en-merge", data },
+    { delaySeconds: data.attempt === 0 ? EN_MERGE_FIRST_DELAY_S : EN_MERGE_DELAY_S },
+  );
 }
 
 export async function enqueueCcNewsClassify(env: Env): Promise<void> {
@@ -155,8 +180,18 @@ export async function handleQueue(
           const { buildToolWeek } = await import("./lib/tools/weekly-tool");
           const w = await buildToolWeek(db, env, tool, { year: Number(data.year), week: Number(data.week) }, new Date());
           console.log(`[queue] tools.week ${tool} ${w.week.year}-w${w.week.week}: ${w.features.length} novinek z ${w.counts.collected} položek, vyřazeno ${w.dropped.length}`);
+          // Automatické vydání: anglický přehled týdne (už vydaný se nepřepíše).
+          const { getCcNewsAutopublish } = await import("./lib/cc-news/settings");
+          if (w.features.length > 0 && (await getCcNewsAutopublish(db))) {
+            const { toolSelectionId } = await import("./lib/tools/weekly-tool");
+            await enqueueCcNewsEnglish(env, toolSelectionId(tool, w.week));
+          }
           break;
         }
+
+        case "cc-news.en-merge":
+          await handleCcNewsEnMerge(db, env, data as { itemId?: string; number?: number; attempt?: number });
+          break;
 
         case "cc-news.en-weekly":
           await handleCcNewsEnglish(db, env, String(data.itemId ?? ""), data.force === true, data.rebuildSelection === true);
@@ -788,9 +823,93 @@ async function handleCcNewsEnglish(
   }
   if (out.kind === "edited-on-branch") console.log(`[queue] cc-news.en-weekly ${itemId}: ${out.path} na větvi ${out.branch} někdo upravil, nepřepisuji (force přepíše)`);
   else if (out.kind === "already-published") console.log(`[queue] cc-news.en-weekly ${itemId}: ${out.path} už je na webu, nepřepisuji`);
-  else if (out.kind === "pr") console.log(`[queue] cc-news.en-weekly ${itemId}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}`);
+  else if (out.kind === "pr") {
+    console.log(`[queue] cc-news.en-weekly ${itemId}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}`);
+    const { getCcNewsAutopublish } = await import("./lib/cc-news/settings");
+    if (out.pr.number && (await getCcNewsAutopublish(db))) {
+      await enqueueCcNewsEnMerge(env, { itemId, number: out.pr.number, attempt: 0 });
+    }
+  }
   else if (out.kind === "no-token") console.warn(`[queue] cc-news.en-weekly ${itemId}: chybí VIBECODING_SITE_GITHUB_TOKEN, ${out.path} nevydán`);
   else console.log(`[queue] cc-news.en-weekly ${itemId}: vydání nemá uložený výběr, přeskočeno`);
+}
+
+/**
+ * Sloučí PR anglického přehledu, až projde build webu (automatické vydání).
+ * Běžící kontroly nejsou chyba: zpráva se znovu odloží (ne retry, ten by skončil
+ * v DLQ). Konflikt, zavřený PR nebo vypršení čekání = oznámení adminovi, PR zůstane.
+ */
+async function handleCcNewsEnMerge(
+  db: ReturnType<typeof drizzle>, env: Env, data: { itemId?: string; number?: number; attempt?: number },
+): Promise<void> {
+  const itemId = String(data.itemId ?? "");
+  const number = Number(data.number);
+  const attempt = Number(data.attempt ?? 0);
+  if (!itemId || !Number.isInteger(number) || number <= 0) {
+    console.error("[queue] cc-news.en-merge: malformovaná zpráva, zahazuji:", data);
+    return;
+  }
+  const token = env.VIBECODING_SITE_GITHUB_TOKEN;
+  if (!token) { console.warn(`[queue] cc-news.en-merge ${itemId}: chybí VIBECODING_SITE_GITHUB_TOKEN`); return; }
+  const { getCcNewsAutopublish, getCcNewsApprovalEmails, isCcNewsLiveSend } = await import("./lib/cc-news/settings");
+  if (!(await getCcNewsAutopublish(db))) { console.log(`[queue] cc-news.en-merge ${itemId}: automatické vydávání vypnuto, PR #${number} čeká na ruční sloučení`); return; }
+
+  const { mergeSitePullRequest, englishWeeklyUrls, GithubError } = await import("./lib/cc-news/english");
+  const repo = env.VIBECODING_SITE_REPO || "tangero/vibecoding-site";
+  const notify = async (subject: string, intro: string, links: { label: string; url: string }[]) => {
+    if (!(await isCcNewsLiveSend(db, env))) return;
+    const { ccNewsPublishedHtml } = await import("./lib/email");
+    await sendEmail({ RESEND_API_KEY: env.RESEND_API_KEY ?? "" },
+      { to: await getCcNewsApprovalEmails(db), subject, html: ccNewsPublishedHtml({ intro, links, findings: [] }) })
+      .catch((err) => console.error(`[queue] cc-news.en-merge ${itemId}: oznámení selhalo:`, err));
+  };
+  const done = () => env.KV.delete(enMergeLockKey(itemId, number));
+  let out;
+  try {
+    // Bez čitelných check-runs (oprávnění tokenu) se slučuje až od 3. pokusu (~9 min na build).
+    out = await mergeSitePullRequest(token, repo, number, fetch, { allowWithoutChecks: attempt >= 2 });
+  } catch (err) {
+    if (err instanceof GithubError && err.permanent) {
+      console.error(`[queue] cc-news.en-merge ${itemId}: trvalá chyba GitHubu u PR #${number}:`, err.message);
+      await notify(`Nevydáno: anglický přehled ${itemId}`, `PR #${number} do webu se nepodařilo sloučit (${err.message.slice(0, 120)}). Sloučte ho ručně.`,
+        [{ label: `PR #${number}`, url: `https://github.com/${repo}/pull/${number}` }]);
+      await done();
+      return;
+    }
+    throw err;
+  }
+  if (out.kind === "pending") {
+    if (attempt + 1 >= EN_MERGE_MAX_ATTEMPTS) {
+      console.error(`[queue] cc-news.en-merge ${itemId}: PR #${number} ani po ${attempt + 1} pokusech není sloučitelný (${out.state})`);
+      await notify(`Nevydáno: anglický přehled ${itemId}`, `Build PR #${number} do webu ani po dvou hodinách neprošel (stav ${out.state}). Zkontrolujte ho a sloučte ručně.`,
+        [{ label: `PR #${number}`, url: `https://github.com/${repo}/pull/${number}` }]);
+      await done();
+      return;
+    }
+    await enqueueCcNewsEnMerge(env, { itemId, number, attempt: attempt + 1 });
+    return;
+  }
+  if (out.kind === "blocked") {
+    console.error(`[queue] cc-news.en-merge ${itemId}: PR #${number} nelze sloučit: ${out.reason}`);
+    await notify(`Nevydáno: anglický přehled ${itemId}`, `PR #${number} do webu nelze sloučit: ${out.reason}.`, [{ label: `PR #${number}`, url: out.url }]);
+    await done();
+    return;
+  }
+  await done();
+  console.log(`[queue] cc-news.en-merge ${itemId}: PR #${number} ${out.kind === "merged" ? "sloučen" : "už byl sloučen"}`);
+  if (out.kind !== "merged") return;
+  const { selectionKvKey } = await import("./lib/cc-news/weekly");
+  const sel = await env.KV.get<import("./lib/cc-news/weekly").WeekSelection>(selectionKvKey(itemId), "json");
+  const { toolName } = await import("./lib/tools/registry");
+  const urls = sel ? englishWeeklyUrls(sel) : null;
+  await notify(
+    `Vydáno na vibecoding.cz/en: ${sel ? `${toolName(sel.tool)} weekly ${sel.week.year}-W${String(sel.week.week).padStart(2, "0")}` : itemId}`,
+    "Anglický týdenní přehled vyšel automaticky (stránka bude dostupná po nasazení webu, do pár minut).",
+    [
+      ...(urls ? [{ label: "Článek", url: urls.url }, { label: "Upravit v Keystatic", url: urls.editUrl }] : []),
+      { label: `PR #${number}`, url: out.url },
+    ],
+  );
 }
 
 async function handleCcNewsClassify(db: ReturnType<typeof drizzle>, env: Env): Promise<void> {
@@ -805,8 +924,9 @@ async function handleCcNewsClassify(db: ReturnType<typeof drizzle>, env: Env): P
  * Konzument zprávy cc-news.detected — napojuje detekci (W-003) na redakční
  * pipeline (W-004/W-005): stáhne `.md` detail digestu, vyrobí článek editorem
  * (deterministicky + volitelně LLM dle CC_NEWS_LLM), uloží draft a připraví
- * schvalovací e-mail v DRY-RUN. NIC se neodesílá ani nepublikuje — publikace
- * nastává až po lidském kliknutí na schvalovací link (mantinel kontraktu).
+ * schvalovací e-mail. Týdenní článek ze changelogu se při zapnutém automatickém
+ * vydávání (výchozí) rovnou publikuje a zařadí se anglický přehled; jinak
+ * publikace nastává po kliknutí na schvalovací link.
  */
 async function handleCcNewsDetected(
   db: ReturnType<typeof drizzle>,
@@ -843,6 +963,7 @@ async function handleCcNewsDetected(
       if ("skipped" in result && result.skipped) {
         console.log(`[queue] cc-news manuální trigger: item=${data.itemId} SKIPPED (už odesláno)`);
       } else {
+        if (result.autopublished) await enqueueCcNewsEnglish(env, data.itemId).catch((err) => console.error("[queue] zařazení anglického přehledu selhalo:", err));
         console.log(
           `[queue] cc-news manuální trigger: item=${data.itemId} llm=${result.usedLlm} ` +
             `mode=${result.mode} sent=${result.sent}`
@@ -861,6 +982,10 @@ async function handleCcNewsDetected(
 
   const { processCcNewsItem } = await import("./lib/cc-news/pipeline");
   const result = await processCcNewsItem(db, env, ref, now);
+  // Automaticky vydaný český článek: anglický přehled stejně jako po schválení.
+  if (result.autopublished) {
+    await enqueueCcNewsEnglish(env, data.itemId).catch((err) => console.error("[queue] zařazení anglického přehledu selhalo:", err));
+  }
   // mode=live znamená, že schvalovací e-mail reálně odešel (za oběma branami);
   // mode=dry-run = jen připraven a zalogován. Přechodné chyby (fetch/LLM výpadek)
   // nechytáme — ať se zpráva retryuje konzumentem fronty.

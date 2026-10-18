@@ -20,6 +20,15 @@ export const CC_NEWS_LIVE_SEND_KEY = "cc_news_live_send";
 /** Klíč v `site_config` pro příjemce schvalovacího e-mailu (řádky/čárky). */
 export const CC_NEWS_APPROVAL_EMAILS_KEY = "cc_news_approval_emails";
 
+/**
+ * Klíč v `site_config` pro automatické vydávání (od 18. 10. 2026). Zapnuto
+ * (výchozí, když řádek chybí): český článek se po napsání sám publikuje, anglické
+ * přehledy (Claude Code i další nástroje) se samy sloučí na web, a autorovi přijde
+ * jen oznámení s odkazy na úpravy. Vypnuto: dosavadní schvalovací e-mail a ruční
+ * sloučení PR. Newsletter předplatitelům se v obou režimech rozesílá ručně.
+ */
+export const CC_NEWS_AUTOPUBLISH_KEY = "cc_news_autopublish";
+
 /** Základní sanity check tvaru e-mailu (local@domain.tld). */
 const isLikelyEmail = (email: string): boolean =>
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -48,6 +57,15 @@ export async function getCcNewsApprovalEmails(db: Db): Promise<string[]> {
     .where(eq(siteConfig.key, CC_NEWS_APPROVAL_EMAILS_KEY));
   const parsed = parseApprovalEmails(rows[0]?.value);
   return parsed.length > 0 ? parsed : [...ADMIN_EMAILS];
+}
+
+/** Automatické vydávání (default zapnuto, vypíná se hodnotou "false"). */
+export async function getCcNewsAutopublish(db: Db): Promise<boolean> {
+  const rows = await db
+    .select({ value: siteConfig.value })
+    .from(siteConfig)
+    .where(eq(siteConfig.key, CC_NEWS_AUTOPUBLISH_KEY));
+  return rows[0]?.value !== "false";
 }
 
 /** Přečte admin přepínač (default false, když řádek chybí). */

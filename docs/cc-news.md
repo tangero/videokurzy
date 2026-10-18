@@ -2,13 +2,20 @@
 
 Newsletter pro platící uživatele kurzy.vibecoding.cz. Z nového týdenního záznamu
 na changelogu Claude Code (`code.claude.com/docs/en/whats-new`) vznikne redakčně
-zpracovaný přehled, uloží se jako koncept, pošle ke schválení člověku, po
-schválení se publikuje v gated sekci a rozešle platícím uživatelům.
+zpracovaný přehled, který se publikuje v gated sekci a rozešle platícím uživatelům.
 
-> **Stav: fáze 1 — kompletní pipeline jako PR, bez produkčního nasazení a bez
-> reálného odesílání e-mailů.** Všechny e-mailové a rozesílací cesty běží v
-> **dry-run** režimu (výchozí). Publikace nastává jen po explicitním lidském
-> kliknutí na schvalovací link.
+> **Automatické vydávání (od 18. 10. 2026, rozhodnutí Patricka): lidské schválení
+> před publikací se NEvyžaduje.** S přepínačem `cc_news_autopublish` (výchozí
+> zapnuto, `/admin/settings`) se týdenní článek ze changelogu po napsání sám
+> publikuje a autor ho upravuje zpětně (admin → Newsletter). Místo e-mailu „Ke
+> schválení“ přijde oznámení „Vydáno“ s odkazy na úpravy a nálezy kontrol v kódu.
+> Anglické přehledy (Claude Code i Grok Build) se samy sloučí na vibecoding.cz/en,
+> jakmile projde build webu (fronta `cc-news.en-merge`); upravují se v Keystatic.
+> Newsletter předplatitelům se rozesílá **ručně** tlačítkem v adminu. Po vypnutí
+> přepínače platí původní tok se schvalovacím odkazem popsaný níže.
+
+> Odesílání e-mailů má dvě brány (`CC_NEWS_DRY_RUN=0` + `cc_news_live_send`);
+> bez nich běží v **dry-run** režimu.
 
 ## Pipeline (6 kroků)
 
@@ -16,8 +23,8 @@ schválení se publikuje v gated sekci a rozešle platícím uživatelům.
 |---|------|-------|-----------|
 | 1 | **Detekce** nového whats-new záznamu (idempotentní) | `lib/cc-news/detect.ts` (cron v `scheduled.ts`) | R1 |
 | 2 | **Redakční zpracování** dle `redakcni-pravidla.md` | `lib/cc-news/editor.ts` | R2 |
-| 3 | **Uložení konceptu + schvalovací e-mail** (dry-run) | `lib/cc-news/draft.ts`, `lib/email.ts` | R3, R4 |
-| 4 | **Publikace** v gated sekci po schválení | `routes/cc-news.tsx` (`approveItem`) | R4, R5 |
+| 3 | **Uložení konceptu** + automatické vydání (`autoPublishDraft`), nebo schvalovací e-mail při vypnutém přepínači | `lib/cc-news/draft.ts`, `lib/email.ts` | R3, R4 |
+| 4 | **Publikace** v gated sekci (automaticky, nebo po schválení) | `lib/cc-news/draft.ts`, `routes/cc-news.tsx` (`approveItem`) | R4, R5 |
 | 5 | **Rozeslání** (dry-run) + **odhlášení** (GDPR) | `lib/cc-news/newsletter.ts` | R6 |
 | 6 | **Odkazy na nové CC články** z vibecoding.cz | `parseCcArticleLinks` v `newsletter.ts` | R7 |
 
@@ -65,6 +72,9 @@ dry-run (kroky 3–4). Tím je detekce zřetězená s celou redakční pipeline.
   deterministická kostra. **Fakta se nehalucinují** — staví na naparsovaném modelu.
 
 ## Schvalování (R4) a publikace (R5)
+
+Platí jen při vypnutém automatickém vydávání (`cc_news_autopublish=false`) a pro
+nový koncept už vydaného článku (ten se automaticky nepřepíše).
 
 `prepareDraftAndApproval` uloží markdown do KV, zapíše `approveNonce` na řádku a
 vytvoří **podepsaný jednorázový** schvalovací link (HMAC-SHA256, doménová

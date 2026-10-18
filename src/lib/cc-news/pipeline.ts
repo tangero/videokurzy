@@ -5,7 +5,9 @@
 // Defaultně se NIC neodesílá ani nepublikuje — jen se uloží koncept a připraví
 // dry-run schvalovací e-mail. Reálné odeslání e-mailu vyžaduje obě brány
 // (env CC_NEWS_DRY_RUN=0 + admin přepínač cc_news_live_send) — viz settings.ts.
-// Publikace článku nastává vždy až po lidském kliknutí na schvalovací link.
+// Publikace: lidské schválení před publikací se nevyžaduje (Patrick, 18. 10. 2026).
+// S přepínačem cc_news_autopublish (výchozí) vyjde týdenní článek ze changelogu
+// sám a autor ho upravuje zpětně; po vypnutí přepínače se vrací schvalovací link.
 
 import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
@@ -46,14 +48,48 @@ export async function processCcNewsItem(
   env: PipelineEnv,
   ref: CcNewsRef,
   now: Date,
-  fetchers: Fetchers = defaultFetchers()
+  fetchers: Fetchers = defaultFetchers(),
+  opts: { redraft?: boolean } = {}
 ): Promise<PreparedDraft & { usedLlm: boolean }> {
   // Od Week 38/2026 vychází článek ze changelogu a dokumentace (oficiální
   // přehledy Anthropic nevydává). Stejné schvalování, jen jiný zdroj a styl.
   if (ref.sourceId.startsWith("/changelog/")) {
+    const [row] = await db.select({ status: ccNewsItem.status }).from(ccNewsItem).where(eq(ccNewsItem.id, ref.itemId)).limit(1);
+    const { getCcNewsAutopublish } = await import("./settings");
+    const autopublish = await getCcNewsAutopublish(db);
+    // Už vydaný článek (opakované doručení zprávy, retry po vydání) se znovu
+    // nepíše: jen se idempotentně doplní anglický přehled. Nový koncept vydaného
+    // článku vzniká jen vědomě (ruční spuštění s force) a jde přes schválení.
+    if (row?.status === "published" && autopublish && !opts.redraft) {
+      return {
+        itemId: ref.itemId, articlePath: "", approveUrl: "", email: { to: [], subject: "", html: "" },
+        mode: "dry-run", sent: false, autopublished: true, usedLlm: false,
+      };
+    }
     const { buildChangelogArticle, reviewKvKey } = await import("./weekly");
     const article = await buildChangelogArticle(db, env, ref.itemId, now);
     await env.KV.put(reviewKvKey(ref.itemId), JSON.stringify(article.review));
+    // Automatické vydání: jen dosud nevydané vydání (nový koncept už vydaného
+    // článku jde dál přes schválení, aby se živá verze tiše nepřepsala).
+    if (row?.status !== "published" && autopublish) {
+      const { autoPublishDraft, reviewFindings } = await import("./draft");
+      const { weekFromSourceId } = await import("./changelog-source");
+      const { englishWeeklyUrls } = await import("./english");
+      const week = weekFromSourceId(ref.sourceId);
+      const published = await autoPublishDraft(
+        db,
+        env,
+        ref.itemId,
+        article.markdown,
+        {
+          slug: articleSlug(ref.sourceId), weekLabel: article.weekLabel, versionRange: article.versionRange,
+          findings: reviewFindings(article.review),
+          ...(week ? { english: englishWeeklyUrls({ tool: "claude-code", week }) } : {}),
+        },
+        now
+      );
+      return { ...published, usedLlm: true };
+    }
     const prepared = await prepareDraftAndApproval(
       db,
       env,
@@ -129,7 +165,7 @@ export async function triggerCcNewsApproval(
     }
   }
 
-  const prepared = await processCcNewsItem(db, env, ref, now, fetchers);
+  const prepared = await processCcNewsItem(db, env, ref, now, fetchers, { redraft: opts.force === true });
 
   // Pokud byly splněny obě live brány, prepareDraftAndApproval e-mail UŽ odeslala
   // (prepared.sent === true) — druhé odeslání by ho jen zduplikovalo. Tady
