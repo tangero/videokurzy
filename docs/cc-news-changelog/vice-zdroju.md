@@ -37,8 +37,9 @@ Před implementací sběrače u každého nástroje zjistit:
 |---|---|---|---|---|
 | Claude Code | CHANGELOG.md + stránka changelogu v docs | markdown | ano | z docs |
 | Grok Build | `x.ai/cli/stable` + `x.ai/cli/changelogs/<v>.external.md` (CDN); historie z GitHubu `xai-org/grok-build` (`crates/codegen/xai-grok-shell/CHANGELOG.md`) | markdown, oddíly Features / Bug Fixes / Performance / Breaking Changes | ano | v nadpisu verze |
-| Codex | ověřit (GitHub releases / CHANGELOG `openai/codex`) | ? | ? | ? |
-| Muse Code | ověřit | ? | ? | ? |
+| Codex CLI | GitHub releases `openai/codex`, stabilní tagy `rust-v<verze>` (API, nejvýš 1000 vydání ≈ od 11/2025) | markdown, oddíly New Features / Bug Fixes / Chores / Breaking Changes (starší Highlights); seznam PR a Documentation se nesbírají | ano | `published_at` vydání |
+| Muse Code | `dev.meta.ai/docs/muse-code/changelog` (oficiální), musecodes.io není doména Meta | HTML, oddíly New / Improvements / Fixes | ano | **chybí**, šlo by jen „poprvé spatřeno“ ze snímků |
+| Antigravity CLI (Google, `agy`) | GitHub releases `google-antigravity/antigravity-cli`, tagy `<verze>`, od 1.0.4 (1. 6. 2026), skoro denně; `antigravity.google/changelog` se vykresluje v prohlížeči | markdown, jen odrážky, typ podle prvního slova (Added / Improved / Fixed…) | ano | `published_at` vydání |
 
 Grok Build (ověřeno 17. 10. 2026): stránka `x.ai/changelog/build` je za ochranou
 Cloudflare proti botům (403) a je redakčně zkrácená a pozadu za CDN, proto ji
@@ -46,6 +47,12 @@ nesbíráme. GitHub repo se synchronizuje nepravidelně (bez releases a tagů), 
 jen k prvnímu naplnění. Dokumentace: `docs.x.ai/build/*` (sitemap s lastmod, `.md`).
 Implementace: `src/lib/tools/grok-build.ts`, `src/lib/tools/weekly-tool.ts`,
 admin `/admin/tools/grok-build?week=2026-w42`.
+
+Codex CLI (ověřeno 18. 10. 2026): `src/lib/tools/codex.ts`, denně v cronu po Grok Build,
+admin `/admin/tools/codex`. Dokumentaci zatím nesnímkujeme. Anglická řada na webu
+zatím není (`TOOLS.codex.englishWeekly = false`); zapnout až po přidání do WEEKLY_TOOLS webu.
+Antigravity CLI (ověřeno 18. 10. 2026): `src/lib/tools/antigravity.ts`, stejný sběr z GitHub
+releases (`github-releases.ts`), admin `/admin/tools/antigravity`, anglická řada zatím také ne.
 
 Datum je povinné. Položka bez data se nezařadí do týdne a v revizi se ukáže jako
 „bez data“. Datum neodhadujeme.

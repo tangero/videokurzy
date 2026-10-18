@@ -121,7 +121,7 @@ describe("loadTopicHistory", () => {
       row("c", "grok-build", "hooks", new Date("2026-10-08T10:00:00Z")),
     ] as never);
     const h = await loadTopicHistory(db, "hooks", NOW);
-    expect(h.tools.map((t) => t.tool)).toEqual(["claude-code", "grok-build"]);
+    expect(h.tools.map((t) => t.tool)).toEqual(["claude-code", "grok-build", "codex", "antigravity"]);
     expect(h.tools[0]!.weeks.find((w) => w.key === "2026-w41")).toMatchObject({ share: 50, toolTotal: 2 });
     expect(h.tools[1]!.weeks.find((w) => w.key === "2026-w41")).toMatchObject({ share: 100 });
     expect(h.terms.find((t) => t.term === "PreToolUse")).toBeTruthy();

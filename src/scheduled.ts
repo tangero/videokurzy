@@ -143,6 +143,7 @@ export async function handleScheduled(
  * Denní údržba dalších nástrojů: changelog Grok Build (CDN x.ai + první naplnění
  * z GitHubu), snímek docs.x.ai/build, zmrazení uzavřeného týdne a zařazení
  * interního týdenního přehledu. Mezera v řadě verzí = alert (žádný zdroj se neztratil).
+ * Pak Codex CLI a Antigravity CLI z GitHub releases (bez snímků dokumentace).
  */
 async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: Date): Promise<void> {
   const { syncGrokBuild, GROK_BUILD, GROK_BUILD_DOCS } = await import("./lib/tools/grok-build");
@@ -186,6 +187,24 @@ async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: D
   // Jen po úspěšné synchronizaci, která dohnala stable: jinak by se uložil neúplný týden.
   if (caughtUp && (frozen || daysAfter >= 3) && !(await env.KV.get(toolWeekKvKey(GROK_BUILD, week)))) {
     await enqueueToolWeek(env, GROK_BUILD, week);
+  }
+
+  // Nástroje z GitHub releases (Codex CLI, Antigravity CLI). Dokumentaci zatím
+  // nesnímkujeme, týden se proto zařadí hned po úspěšné synchronizaci. Každý
+  // zdroj zvlášť: výpadek jednoho nesmí zastavit ostatní.
+  const { CODEX_SOURCE } = await import("./lib/tools/codex");
+  const { ANTIGRAVITY_SOURCE } = await import("./lib/tools/antigravity");
+  const { syncGithubReleases } = await import("./lib/tools/github-releases");
+  for (const src of [CODEX_SOURCE, ANTIGRAVITY_SOURCE]) {
+    try {
+      const r = await syncGithubReleases(db, src, { token: env.VIBECODING_SITE_GITHUB_TOKEN });
+      console.log(`[cron] ${src.tool}: nejnovější ${r.newest}, uloženo do ${r.latest}, nových položek ${r.added}, stran ${r.pages}` +
+        (r.backfilled ? ", první naplnění" : ""));
+      if (r.added > 0 && (await countUnclassified(db)) > 0) await enqueueCcNewsClassify(env);
+      if (r.caughtUp && !(await env.KV.get(toolWeekKvKey(src.tool, week)))) await enqueueToolWeek(env, src.tool, week);
+    } catch (err) {
+      console.error(`[cron] ${src.tool} changelog failed:`, err);
+    }
   }
 }
 
