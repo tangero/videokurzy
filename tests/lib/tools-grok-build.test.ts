@@ -11,7 +11,9 @@ import type { LlmFn } from "../../src/lib/cc-news/llm";
 import {
   GITHUB_CHANGELOG_URL, GROK_BUILD_DOCS, nextVersionCandidates, parseGrokChangelog, syncGrokBuild,
 } from "../../src/lib/tools/grok-build";
-import { buildToolWeek, toolWeekKvKey } from "../../src/lib/tools/weekly-tool";
+import { buildToolWeek, parseToolSelectionId, toolSelectionId, toolWeekKvKey } from "../../src/lib/tools/weekly-tool";
+import { selectionKvKey, stripUnknownDocLinks, type WeekSelection } from "../../src/lib/cc-news/weekly";
+import { englishWeeklyMarkdown, englishWeeklyPath, englishWriter, ENGLISH_WRITER } from "../../src/lib/cc-news/english";
 
 const GITHUB_MD = `# Changelog
 
@@ -197,6 +199,25 @@ describe("buildToolWeek", () => {
     expect(await env.KV.get(toolWeekKvKey("grok-build", { year: 2026, week: 40 }))).toBeNull();
   });
 
+  it("uloží i výběr pro anglický přehled (cc-news:selection:grok-build-2026-w40)", async () => {
+    const db = drizzle(env.DB);
+    await syncGrokBuild(db, fakeFetch("1.0.45", {}).f);
+    const { llm } = fakeLlm();
+    await buildToolWeek(db, env as never, "grok-build", { year: 2026, week: 40 }, new Date("2026-10-05T03:00:00Z"), { classify: llm, write: llm });
+    const id = toolSelectionId("grok-build", { year: 2026, week: 40 });
+    expect(id).toBe("grok-build-2026-w40");
+    const sel = await env.KV.get<WeekSelection>(selectionKvKey(id), "json");
+    expect(sel).toMatchObject({
+      tool: "grok-build", itemId: id, weekLabel: "Week 40", range: { from: "1.0.44", to: "1.0.45" },
+      releases: 2, entries: 5, allowedVersions: ["1.0.44", "1.0.45"], docsBase: "https://docs.x.ai/build/",
+    });
+    expect(sel!.features[0]).toMatchObject({ title: "Legacy output removed", versions: ["1.0.44"] });
+    const md = englishWeeklyMarkdown(sel!, { title: "Grok Build: Legacy output removed", excerpt: "x", summaryPoints: [], body: "Body." });
+    expect(md).toContain("tool: grok-build\nweek: 2026-W40\ncategories:\n  - Grok Build\n");
+    expect(md).toContain('title: "Legacy output removed"');
+    expect(englishWeeklyPath(sel!)).toBe("src/content/english/grok-build-weekly-2026-w40.md");
+  });
+
   it("prázdný týden se uloží bez volání modelu", async () => {
     const db = drizzle(env.DB);
     const { llm, calls } = fakeLlm();
@@ -213,5 +234,28 @@ describe("třídění po nástrojích", () => {
     const { llm, calls } = fakeLlm();
     await classifyPending(db, env as never, new Date(), 100, llm);
     expect(calls.every((c) => c.system.includes("Grok Build"))).toBe(true);
+  });
+});
+
+describe("anglický přehled dalších nástrojů", () => {
+  it("ID týdne nástroje; Claude Code a cizí řetězce nejsou ID nástroje", () => {
+    expect(parseToolSelectionId("grok-build-2026-w41")).toEqual({ tool: "grok-build", week: { year: 2026, week: 41 } });
+    expect(parseToolSelectionId("claude-code-2026-w41")).toBeNull();
+    expect(parseToolSelectionId("d9Pw0S7IAWhYMTaw9fTL_")).toBeNull();
+  });
+
+  it("autor má jméno nástroje, Claude Code beze změny", () => {
+    expect(englishWriter("grok-build").system).toContain("weekly 'Grok Build weekly' update");
+    expect(englishWriter("grok-build").system).toContain("the Grok Build changelog");
+    expect(englishWriter("grok-build").system).not.toContain("Claude Code");
+    expect(ENGLISH_WRITER.system).toContain("advanced Claude Code user");
+  });
+
+  it("odkazy do dokumentace se kontrolují podle jejího kořene", () => {
+    const md = "[a](https://docs.x.ai/build/features/hooks) [b](https://docs.x.ai/build/nope) [c](https://code.claude.com/docs/en/x)";
+    expect(stripUnknownDocLinks(md, new Set(["features/hooks"]), "https://docs.x.ai/build/")).toEqual({
+      markdown: "[a](https://docs.x.ai/build/features/hooks) b [c](https://code.claude.com/docs/en/x)",
+      stripped: ["https://docs.x.ai/build/nope"],
+    });
   });
 });

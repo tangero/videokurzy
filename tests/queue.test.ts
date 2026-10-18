@@ -25,6 +25,19 @@ describe("queue message dispatch", () => {
     errSpy.mockRestore();
   });
 
+  it("cc-news.en-weekly pro týden nástroje se nehledá mezi vydáními", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const batch = {
+      messages: [{ body: { type: "cc-news.en-weekly", data: { itemId: "grok-build-2026-w30" } }, ack, retry }],
+    } as unknown as MessageBatch<never>;
+    await handleQueue(batch, env as never);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(logSpy).toHaveBeenCalledWith("[queue] cc-news.en-weekly grok-build-2026-w30: vydání nemá uložený výběr, přeskočeno");
+    logSpy.mockRestore();
+  });
+
   it("logs and acknowledges unknown webhook message types", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const ack = vi.fn();

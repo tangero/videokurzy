@@ -9,9 +9,9 @@ import { compareVersions, isoWeek, isoWeekBounds, weekKey } from "../cc-news/cha
 import { assertWeekClassified, classifyPending, linkFollowsForVersions } from "../cc-news/classify";
 import { diffDocsWeeks, docsIndexKey, docsWeekKey, type DocsIndex, type DocsSource } from "../cc-news/docs-snapshot";
 import { classifyModel, openRouterLlm, writeModel, type LlmEnv } from "../cc-news/llm";
-import { selectAndVerify, type WeeklyLlms } from "../cc-news/weekly";
+import { selectAndVerify, selectionKvKey, type WeekSelection, type WeeklyLlms } from "../cc-news/weekly";
 import { GROK_BUILD_DOCS } from "./grok-build";
-import type { ToolKey } from "./registry";
+import { CLAUDE_CODE, isToolKey, type ToolKey } from "./registry";
 
 type Db = ReturnType<typeof drizzle>;
 type Week = { year: number; week: number };
@@ -19,6 +19,16 @@ type Week = { year: number; week: number };
 export const TOOL_DOCS: Partial<Record<ToolKey, DocsSource>> = { "grok-build": GROK_BUILD_DOCS };
 
 export const toolWeekKvKey = (tool: ToolKey, w: Week) => `tools:week:${tool}:${weekKey(w)}`;
+
+/** ID výběru týdne nástroje pro anglický přehled (KV `cc-news:selection:<id>`), např. grok-build-2026-w41. */
+export const toolSelectionId = (tool: ToolKey, w: Week) => `${tool}-${w.year}-w${String(w.week).padStart(2, "0")}`;
+
+/** Rozpozná ID z toolSelectionId (jiné nástroje než Claude Code nemají vydání v cc_news_item). */
+export function parseToolSelectionId(id: string): { tool: ToolKey; week: Week } | null {
+  const m = id.match(/^([a-z0-9-]+)-(\d{4})-w(\d{2})$/);
+  if (!m || !isToolKey(m[1]!) || m[1] === CLAUDE_CODE) return null;
+  return { tool: m[1], week: { year: Number(m[2]), week: Number(m[3]) } };
+}
 
 export interface ToolWeek {
   tool: ToolKey;
@@ -110,5 +120,35 @@ export async function buildToolWeek(
     dropped: result?.dropped ?? [],
   };
   await env.KV.put(toolWeekKvKey(tool, week), JSON.stringify(out));
+
+  // Tentýž ověřený výběr ve tvaru Novinek v CC: z něj píše anglický přehled (english.ts).
+  if (result && result.kept.length > 0) {
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const versionsOf = (ids: string[]) => [...new Set(ids.map((id) => byId.get(id)?.version).filter((v): v is string => !!v))];
+    const dates = rows.map((r) => r.publishedAt.getTime());
+    const sel: WeekSelection = {
+      v: 1,
+      tool,
+      itemId: toolSelectionId(tool, week),
+      week,
+      weekLabel: `Week ${week.week}`,
+      range: { from: versions[0]!, to: versions[versions.length - 1]! },
+      from: new Date(Math.min(...dates)).toISOString(),
+      to: new Date(Math.max(...dates)).toISOString(),
+      releases: versions.length,
+      entries: rows.length,
+      features: result.kept.map((f) => ({
+        title: f.title, lede: f.lede, docLink: f.docLink,
+        versions: versionsOf(f.sourceIds).length ? versionsOf(f.sourceIds) : [f.version],
+        sources: f.sourceIds.map(result.lineOf),
+      })),
+      minorWins: result.selection.minorWins.map((w) => ({ text: w.text, versions: versionsOf(w.sourceIds) })),
+      topics: [...new Set(result.kept.flatMap((f) => f.sourceIds.map((id) => byId.get(id)?.topic).filter((t): t is string => !!t)))],
+      allowedVersions: versions,
+      knownPages,
+      ...(src ? { docsBase: src.prefix } : {}),
+    };
+    await env.KV.put(selectionKvKey(sel.itemId), JSON.stringify(sel));
+  }
   return out;
 }

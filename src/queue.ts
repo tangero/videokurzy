@@ -749,14 +749,25 @@ async function handleCcNewsEnglish(
   db: ReturnType<typeof drizzle>, env: Env, itemId: string, force: boolean, rebuildSelection: boolean,
 ): Promise<void> {
   const { publishEnglishWeekly, GithubError } = await import("./lib/cc-news/english");
+  // Další nástroje (Grok Build): ID týdne místo vydání, výběr z interního přehledu.
+  const { parseToolSelectionId } = await import("./lib/tools/weekly-tool");
+  const toolWeek = parseToolSelectionId(itemId);
+  if (toolWeek && rebuildSelection) {
+    const { selectionKvKey } = await import("./lib/cc-news/weekly");
+    if (!(await env.KV.get(selectionKvKey(itemId)))) {
+      const { buildToolWeek } = await import("./lib/tools/weekly-tool");
+      const w = await buildToolWeek(db, env, toolWeek.tool, toolWeek.week, new Date());
+      console.log(`[queue] cc-news.en-weekly ${itemId}: výběr doplněn (${w.features.length} novinek, vyřazeno ${w.dropped.length})`);
+    }
+  }
   // Neexistující vydání (překlep v ID) se opakováním nespraví: zalogovat a potvrdit.
   const { ccNewsItem } = await import("./db/schema");
-  const [row] = await db.select({ id: ccNewsItem.id }).from(ccNewsItem).where(eq(ccNewsItem.id, itemId)).limit(1);
+  const [row] = toolWeek ? [{ id: itemId }] : await db.select({ id: ccNewsItem.id }).from(ccNewsItem).where(eq(ccNewsItem.id, itemId)).limit(1);
   if (!row) {
     console.error(`[queue] cc-news.en-weekly: vydání ${itemId || "(prázdné ID)"} neexistuje, přeskočeno`);
     return;
   }
-  if (rebuildSelection) {
+  if (rebuildSelection && !toolWeek) {
     const { buildChangelogArticle, selectionKvKey } = await import("./lib/cc-news/weekly");
     if (!(await env.KV.get(selectionKvKey(itemId)))) {
       const art = await buildChangelogArticle(db, env, itemId, new Date(), undefined, { selectionOnly: true });
