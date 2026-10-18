@@ -168,6 +168,35 @@ describe("buildToolWeek", () => {
     expect(await db.select().from(ccNewsItem)).toEqual([]);
   });
 
+  it("obal {items: [...]} i vynechané položky se dotřídí", async () => {
+    const db = drizzle(env.DB);
+    await syncGrokBuild(db, fakeFetch("1.0.45", {}).f);
+    const { llm } = fakeLlm();
+    let first = true;
+    const flaky: LlmFn = async (system, user, o) => {
+      const out = await llm(system, user, o);
+      if (!system.startsWith("You classify")) return out;
+      // Poprvé jen první položka a v obalu, pak normálně.
+      if (first) { first = false; return JSON.stringify({ items: JSON.parse(out).slice(0, 1) }); }
+      return out;
+    };
+    const w = await buildToolWeek(db, env as never, "grok-build", { year: 2026, week: 40 }, new Date("2026-10-05T03:00:00Z"), { classify: flaky, write: llm });
+    expect(w.counts).toMatchObject({ collected: 5, classified: 5, unclassified: 0 });
+  });
+
+  it("trvale vynechaná položka: týden se neuloží", async () => {
+    const db = drizzle(env.DB);
+    await syncGrokBuild(db, fakeFetch("1.0.45", {}).f);
+    const { llm } = fakeLlm();
+    const lossy: LlmFn = async (system, user, o) => {
+      const out = await llm(system, user, o);
+      return system.startsWith("You classify") ? JSON.stringify(JSON.parse(out).filter((c: { id: string }) => !c.id.startsWith("grok-build:1.0.44"))) : out;
+    };
+    await expect(buildToolWeek(db, env as never, "grok-build", { year: 2026, week: 40 }, new Date("2026-10-05T03:00:00Z"), { classify: lossy, write: llm }))
+      .rejects.toThrow(/nezatříděných/);
+    expect(await env.KV.get(toolWeekKvKey("grok-build", { year: 2026, week: 40 }))).toBeNull();
+  });
+
   it("prázdný týden se uloží bez volání modelu", async () => {
     const db = drizzle(env.DB);
     const { llm, calls } = fakeLlm();

@@ -18,7 +18,7 @@
 import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { ccChangeItem, ccNewsItem } from "../../db/schema";
-import { classifyPending, linkFollowsForVersions } from "./classify";
+import { assertWeekClassified, classifyPending, linkFollowsForVersions } from "./classify";
 import { compareVersions, isoWeek, isoWeekBounds, parseVersionRange, weekFromSourceId } from "./changelog-source";
 import { DOCS_INDEX_KEY, diffDocsWeeks, docsWeekKey, type DocsChange, type DocsIndex, type DocsSignal } from "./docs-snapshot";
 import { publishedKvKey } from "./draft";
@@ -513,6 +513,7 @@ export async function buildChangelogArticle(
     .where(and(eq(ccChangeItem.tool, CLAUDE_CODE), inArray(ccChangeItem.version, versions.slice(0, 90)), isNull(ccChangeItem.classifiedAt))).limit(1);
   // Jen verze tohoto týdne: globální backlog by konzumenta zdržel před psaním.
   if (unclassified.length > 0) await classifyPending(db, env, now, 1000, llms.classify, { tool: CLAUDE_CODE, versions });
+  await assertWeekClassified(db, CLAUDE_CODE, versions);
   await linkFollowsForVersions(db, env, versions, llms.classify);
   const rows = await loadWeekRows(db, versions);
   const byId = new Map(rows.map((r) => [r.id, r]));

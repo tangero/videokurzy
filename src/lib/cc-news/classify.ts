@@ -92,10 +92,39 @@ const CLASSIFY_SYSTEM = (tool: string) => [
 interface Classified { id: string; topic: string; significance: number; reason: string }
 
 /** Dávka, která ani po opakování nevrátí platný JSON, se rozpůlí. */
+/** Odpověď modelu jako pole: samotné pole, jedna položka, nebo obal typu {"items": [...]}. */
+function asClassifiedList(out: unknown): Classified[] {
+  if (Array.isArray(out)) return out;
+  if (out && typeof out === "object") {
+    if ("id" in out) return [out as Classified];
+    const inner = Object.values(out).find(Array.isArray);
+    if (inner) return inner as Classified[];
+  }
+  return [];
+}
+
+/**
+ * Dávka se zopakuje pro položky, které model ve výsledku vynechal nebo jim
+ * pokazil ID (jinak by zůstaly tiše nezatříděné). Po půlkách, nejvýš `depth`×.
+ */
+async function classifyRows(llm: LlmFn, batch: Row[], depth = 2): Promise<Classified[]> {
+  const ids = new Set(batch.map((b) => b.id));
+  const results = (await classifyBatch(llm, batch)).filter((c) => c?.id && ids.has(c.id));
+  const matched = new Set(results.map((c) => c.id));
+  const missing = batch.filter((b) => !matched.has(b.id));
+  if (missing.length === 0) return results;
+  console.warn(`[cc-news] třídění: model vrátil ${matched.size}/${batch.length} položek (${batch[0]!.tool}), chybí např. ${missing[0]!.id}`);
+  if (depth === 0) return results;
+  const half = Math.ceil(missing.length / 2);
+  const parts = missing.length > 1 ? [missing.slice(0, half), missing.slice(half)] : [missing];
+  for (const part of parts) results.push(...await classifyRows(llm, part, depth - 1));
+  return results;
+}
+
 async function classifyBatch(llm: LlmFn, batch: Row[]): Promise<Classified[]> {
   try {
-    const out = await llmJson<Classified[] | Classified>(llm, CLASSIFY_SYSTEM(batch[0]!.tool), batch.map(line).join("\n"), 6000);
-    return Array.isArray(out) ? out : [out];
+    const out = await llmJson<Classified[] | Classified | Record<string, unknown>>(llm, CLASSIFY_SYSTEM(batch[0]!.tool), batch.map(line).join("\n"), 6000);
+    return asClassifiedList(out);
   } catch (err) {
     // Síťová chyba ani timeout se dávkou nespraví, rozpůlení by jen násobilo čekání.
     if (batch.length <= 5 || isTransportError(err)) throw err;
@@ -129,12 +158,13 @@ export async function classifyPending(
     else batches.push([r]);
   }
   for (const batch of batches) {
-    const ids = new Set(batch.map((b) => b.id));
     const byId = new Map(batch.map((b) => [b.id, b]));
-    const results = await classifyBatch(llm, batch);
+    const results = await classifyRows(llm, batch);
     const updates = [];
+    const seen = new Set<string>();
     for (const c of results) {
-      if (!c?.id || !ids.has(c.id)) continue;
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
       updates.push(db
         .update(ccChangeItem)
         .set({
@@ -254,6 +284,18 @@ export async function syncFloorVersion(db: Db, now: Date, days = 14, tool: ToolK
     .orderBy(desc(ccChangeItem.publishedAt), desc(ccChangeItem.version))
     .limit(1);
   return r?.version ?? null;
+}
+
+/**
+ * Pojistka před výběrem týdne: nezatříděná položka nemá význam, výběr by ji
+ * tiše vynechal (ani povinné MUST PLACE ji neuvidí). Vyhodí chybu, fronta zopakuje.
+ */
+export async function assertWeekClassified(db: Db, tool: ToolKey, versions: string[]): Promise<void> {
+  if (versions.length === 0) return;
+  const [r] = await db.select({ n: sql<number>`count(*)` }).from(ccChangeItem)
+    .where(and(eq(ccChangeItem.tool, tool), inArray(ccChangeItem.version, versions.slice(0, 90)), isNull(ccChangeItem.classifiedAt)));
+  const n = Number(r?.n ?? 0);
+  if (n > 0) throw new Error(`cc-news: ${n} položek ${tool} v ${versions[0]}–${versions[versions.length - 1]} zůstalo nezatříděných, výběr se neuloží`);
 }
 
 /** Počet dosud nezatříděných položek (pro cron: má smysl řadit další dávku?). */
