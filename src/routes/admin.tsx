@@ -2286,8 +2286,8 @@ async function runChangelogWeek(c: Context<{ Bindings: Env; Variables: Variables
     await enqueueCcNewsItem(c.env, outcome.itemId, outcome.sourceId, { manualTrigger: true, force });
   }
   const msg = {
-    created: `Vydání ${outcome.sourceId} založeno (${"versionRange" in outcome ? outcome.versionRange : ""}); článek se staví na pozadí, schvalovací e-mail dorazí za pár minut.`,
-    exists: `Vydání ${outcome.sourceId} už existuje; koncept se staví znovu na pozadí (pokud e-mail ještě neodešel, nebo s ?force=1).`,
+    created: `Vydání ${outcome.sourceId} založeno (${"versionRange" in outcome ? outcome.versionRange : ""}); článek se staví na pozadí. Při automatickém vydávání rovnou vyjde a přijde oznámení „Vydáno“, jinak schvalovací e-mail.`,
+    exists: `Vydání ${outcome.sourceId} už existuje; koncept se staví znovu na pozadí (pokud e-mail ještě neodešel, nebo s ?force=1). Nevydané vydání při automatickém vydávání rovnou vyjde; nový koncept vydaného článku (force) jde přes schvalovací e-mail.`,
     official: `Za týden ${outcome.sourceId} existuje oficiální přehled Anthropicu — ze changelogu nezakládám.`,
     empty: `V týdnu ${outcome.sourceId} nevyšla žádná nová verze (nebo ji už pokrývá dřívější vydání).`,
   }[outcome.kind];
@@ -2698,7 +2698,7 @@ ${saved.skipped.length ? `<h3>Vynechané zásadní změny</h3><ul>${saved.skippe
 <h3>Anglický přehled (vibecoding.cz/en)</h3>
 <p>Při automatickém vydávání vznikne a vyjde sám po postavení výběru. <a href="${e(enUrls.url)}">Článek na webu</a> · <a href="${e(enUrls.editUrl)}">Upravit v Keystatic</a></p>
 <p><a href="/admin/api/cc-news/english?itemId=${e(selId)}">Náhled nanečisto</a> (napíše článek, PR neotevře; trvá cca minutu)</p>
-<form method="post" action="/admin/api/cc-news/english"><input type="hidden" name="itemId" value="${e(selId)}"><input type="hidden" name="rebuildSelection" value="1"><button>Otevřít PR do webu ručně</button> <label><input type="checkbox" name="force" value="1"> napsat znovu a přepsat i vydaný článek</label></form>` : "<p class=muted>Výběr pro tento týden zatím není postavený.</p>"}
+<form method="post" action="/admin/api/cc-news/english"><input type="hidden" name="itemId" value="${e(selId)}"><input type="hidden" name="rebuildSelection" value="1"><button>Otevřít PR do webu ručně</button> <label><input type="checkbox" name="force" value="1"> napsat znovu a přepsat i vydaný článek (při automatickém vydávání se PR sám sloučí)</label></form>` : "<p class=muted>Výběr pro tento týden zatím není postavený.</p>"}
 <h2>Položky</h2><table><tr><th>verze</th><th>typ</th><th>téma</th><th>význam</th><th>text</th></tr>
 ${rows.map((r) => `<tr class="sig${r.significance ?? 0}"><td>${e(r.version)}</td><td>${e(r.type)}${r.scope ? ` [${e(r.scope)}]` : ""}</td><td>${e(r.topic ?? "–")}</td><td>${e(r.significance ?? "–")}</td><td>${e(r.text)}</td></tr>`).join("")}</table>`;
   return c.html(html);

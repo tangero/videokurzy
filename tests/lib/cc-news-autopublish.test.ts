@@ -56,7 +56,10 @@ describe("autoPublishDraft", () => {
 });
 
 /** Podvržené GitHub API pro sloučení PR: stav PR se mění podle pořadí volání. */
-function fakeGithubPr(states: string[], opts: { merged?: boolean; state?: string } = {}) {
+type Run = { name: string; status: string; conclusion: string | null };
+const GREEN: Run[] = [{ name: "Cloudflare Pages", status: "completed", conclusion: "success" }, { name: "GitGuardian Security Checks", status: "completed", conclusion: "success" }];
+
+function fakeGithubPr(states: string[], opts: { merged?: boolean; state?: string; runs?: Run[] | "forbidden" } = {}) {
   const calls: { method: string; path: string; body?: any }[] = [];
   let reads = 0;
   const f = (async (url: string, init: RequestInit = {}) => {
@@ -70,6 +73,9 @@ function fakeGithubPr(states: string[], opts: { merged?: boolean; state?: string
         state: opts.state ?? "open", merged: opts.merged ?? false, mergeable_state, title: "Grok Build weekly 2026-W42",
         html_url: "https://github.com/tangero/vibecoding-site/pull/301", head: { ref: "en-weekly/grok-build-2026-w42", sha: "head1" },
       });
+    }
+    if (method === "GET" && path.startsWith("/commits/head1/check-runs")) {
+      return opts.runs === "forbidden" ? j({ message: "Resource not accessible" }, 403) : j({ check_runs: opts.runs ?? GREEN });
     }
     if (method === "PUT" && path === "/pulls/301/merge") return j({ merged: true });
     if (method === "DELETE") return new Response(null, { status: 204 });
@@ -86,6 +92,21 @@ describe("mergeSitePullRequest", () => {
     const merge = calls.find((c) => c.method === "PUT")!;
     expect(merge.body).toMatchObject({ merge_method: "merge", sha: "head1" });
     expect(calls.some((c) => c.method === "DELETE" && c.path === "/git/refs/heads/en-weekly/grok-build-2026-w42")).toBe(true);
+  });
+
+  it("clean bez dokončeného buildu Cloudflare Pages nestačí; selhaný build se hlásí hned", async () => {
+    const pending = (runs: Run[]) => mergeSitePullRequest("t", "tangero/vibecoding-site", 301, fakeGithubPr(["clean"], { runs }).f);
+    expect(await pending([])).toEqual({ kind: "pending", state: "build ještě nezačal" });
+    expect(await pending([{ name: "Cloudflare Pages", status: "in_progress", conclusion: null }])).toEqual({ kind: "pending", state: "build in_progress" });
+    expect(await pending([{ name: "Cloudflare Pages", status: "completed", conclusion: "failure" }]))
+      .toMatchObject({ kind: "blocked", reason: "kontrola Cloudflare Pages skončila failure" });
+  });
+
+  it("token bez práva číst kontroly: sloučí až s allowWithoutChecks", async () => {
+    const run = (allow: boolean) => mergeSitePullRequest("t", "tangero/vibecoding-site", 301, fakeGithubPr(["clean"], { runs: "forbidden" }).f, { allowWithoutChecks: allow });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await run(false)).toMatchObject({ kind: "pending" });
+    expect(await run(true)).toMatchObject({ kind: "merged" });
   });
 
   it("konflikt, zavřený a už sloučený PR", async () => {
@@ -135,10 +156,35 @@ describe("fronta cc-news.en-merge", () => {
     expect(r.sent).toEqual([]);
   });
 
+  it("druhý řetězec téhož PR se nezaloží (zámek), po sloučení se zámek uvolní", async () => {
+    const { enqueueCcNewsEnMerge } = await import("../../src/queue");
+    const sent: unknown[] = [];
+    const fakeEnv = { KV: env.KV, WEBHOOK_QUEUE: { send: async (m: unknown) => { sent.push(m); } } } as never;
+    await enqueueCcNewsEnMerge(fakeEnv, { itemId: "grok-build-2026-w42", number: 301, attempt: 0 });
+    await enqueueCcNewsEnMerge(fakeEnv, { itemId: "grok-build-2026-w42", number: 301, attempt: 0 });
+    expect(sent).toHaveLength(1);
+    await run(1, ["clean"]);
+    expect(await env.KV.get("cc-news:en-merge:grok-build-2026-w42:301")).toBeNull();
+  });
+
   it("vypnuté automatické vydávání: nic nesloučí", async () => {
     await drizzle(env.DB).insert(siteConfig).values({ key: CC_NEWS_AUTOPUBLISH_KEY, value: "false" });
     const r = await run(0, ["clean"]);
     expect(r.calls).toEqual([]);
     expect(r.sent).toEqual([]);
+  });
+});
+
+describe("opakované doručení vydaného článku", () => {
+  it("vydaný týden se znovu nepíše (bez modelu), jen se doplní anglická verze", async () => {
+    const db = drizzle(env.DB);
+    await db.insert(ccNewsItem).values({
+      id: "item-41", sourceId: "/changelog/2026-w41", contentHash: "h", weekLabel: "Week 41", status: "published", createdAt: NOW, publishedAt: NOW,
+    } as never);
+    const { processCcNewsItem } = await import("../../src/lib/cc-news/pipeline");
+    const out = await processCcNewsItem(db, env as never, { itemId: "item-41", sourceId: "/changelog/2026-w41" }, NOW);
+    expect(out).toMatchObject({ autopublished: true, usedLlm: false, sent: false });
+    const [row] = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "item-41"));
+    expect(row!.approveNonce).toBeNull();
   });
 });

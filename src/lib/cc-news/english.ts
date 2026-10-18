@@ -255,17 +255,19 @@ export async function openSitePullRequest(
 
   const encodedPath = file.path.split("/").map(encodeURIComponent).join("/");
   const existing = await gh.call("GET", `/contents/${encodedPath}?ref=${encodeURIComponent(pr.branch)}`);
-  const sha = existing.ok ? (await existing.json() as { sha: string }).sha : undefined;
+  const current = existing.ok ? (await existing.json() as { sha: string; content?: string }) : undefined;
+  const sha = current?.sha;
   if (!existing.ok && existing.status !== 404) await gh.json(existing, "read file");
   // Soubor na větvi, který jsme nezapsali my (ruční úprava v PR), se bez overwrite nepřepíše.
   if (sha && sha !== guard.lastWrittenSha && !guard.overwrite) return { edited: true, branch: pr.branch, path: file.path };
-  const written = await gh.json<{ content?: { sha?: string } }>(await gh.call("PUT", `/contents/${encodedPath}`, {
+  // Stejný obsah se nezapisuje znovu: nový commit by znovu spustil build webu.
+  const unchanged = current?.content !== undefined && current.content.replace(/\s/g, "") === toBase64(file.content);
+  const writtenSha = unchanged ? sha : (await gh.json<{ content?: { sha?: string } }>(await gh.call("PUT", `/contents/${encodedPath}`, {
     message: pr.title,
     content: toBase64(file.content),
     branch: pr.branch,
     ...(sha ? { sha } : {}),
-  }), "write file");
-  const writtenSha = written.content?.sha;
+  }), "write file")).content?.sha;
 
   const owner = repo.split("/")[0]!;
   const open = await gh.json<{ html_url: string; number: number }[]>(
@@ -282,19 +284,40 @@ export type MergeOutcome =
   | { kind: "pending"; state: string }
   | { kind: "blocked"; reason: string; url: string };
 
+/** Kontrola buildu webu na GitHubu (check-run aplikace Cloudflare). */
+const BUILD_CHECK = /cloudflare pages/i;
+const FAILED = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure"]);
+
 /**
- * Sloučí PR, až projdou kontroly (build webu na Cloudflare Pages). Repo nemá
- * ochranu větví, takže se rozhoduje podle `mergeable_state` PR: `clean` = všechny
- * kontroly prošly, `unstable` = některá běží nebo selhala, `unknown` = GitHub ještě
- * počítá, `dirty` = konflikt. Po sloučení smaže větev.
+ * Sloučí PR, až projde build webu. Repo nemá ochranu větví ani povinné kontroly,
+ * takže `mergeable_state` `clean` sám nestačí (je „clean“ i bez jediné kontroly):
+ * pro aktuální head commit musí existovat check-run Cloudflare Pages se
+ * `success`. Neúspěšný build = `blocked` hned. Když token check-runs číst nesmí
+ * (403), rozhoduje jen `clean`, a to až s `allowWithoutChecks` (volající
+ * nechá uplynout čas na build). `dirty` = konflikt. Po sloučení smaže větev.
  */
-export async function mergeSitePullRequest(token: string, repo: string, number: number, f: GhFetch = fetch): Promise<MergeOutcome> {
+export async function mergeSitePullRequest(
+  token: string, repo: string, number: number, f: GhFetch = fetch, opts: { allowWithoutChecks?: boolean } = {},
+): Promise<MergeOutcome> {
   const gh = github(token, repo, f);
   const pr = await gh.json<{ state: string; merged: boolean; mergeable_state: string; html_url: string; head: { ref: string; sha: string }; title: string }>(
     await gh.call("GET", `/pulls/${number}`), "read pull");
   if (pr.merged) return { kind: "already-merged", url: pr.html_url };
   if (pr.state !== "open") return { kind: "blocked", reason: "PR je zavřený bez sloučení", url: pr.html_url };
   if (pr.mergeable_state === "dirty") return { kind: "blocked", reason: "konflikt s main", url: pr.html_url };
+
+  const checksRes = await gh.call("GET", `/commits/${pr.head.sha}/check-runs?per_page=100`);
+  if (checksRes.status === 403 || checksRes.status === 404) {
+    console.warn(`[cc-news] PR #${number}: token nesmí číst check-runs (${checksRes.status}), rozhoduje jen mergeable_state`);
+    if (!opts.allowWithoutChecks) return { kind: "pending", state: `${pr.mergeable_state}, kontroly nečitelné` };
+  } else {
+    const { check_runs: runs } = await gh.json<{ check_runs: { name: string; status: string; conclusion: string | null }[] }>(checksRes, "check runs");
+    const failed = runs.find((r) => r.status === "completed" && FAILED.has(r.conclusion ?? ""));
+    if (failed) return { kind: "blocked", reason: `kontrola ${failed.name} skončila ${failed.conclusion}`, url: pr.html_url };
+    const build = runs.find((r) => BUILD_CHECK.test(r.name));
+    if (!build || build.status !== "completed") return { kind: "pending", state: build ? `build ${build.status}` : "build ještě nezačal" };
+    if (runs.some((r) => r.status !== "completed")) return { kind: "pending", state: "běží další kontroly" };
+  }
   if (pr.mergeable_state !== "clean") return { kind: "pending", state: pr.mergeable_state };
   const res = await gh.call("PUT", `/pulls/${number}/merge`, { merge_method: "merge", sha: pr.head.sha, commit_title: `${pr.title} (#${number})` });
   // 405 = mezitím nesloučitelné, 409 = hlava PR se změnila: zkusit znovu později.

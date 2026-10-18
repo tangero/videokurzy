@@ -95,8 +95,17 @@ const EN_MERGE_FIRST_DELAY_S = 240;
 const EN_MERGE_DELAY_S = 300;
 const EN_MERGE_MAX_ATTEMPTS = 24;
 
-/** Zařadí (odložené) sloučení PR anglického přehledu. */
+/** Zámek řetězce slučování: jeden běžící řetězec na PR (opakované vydání ho nezdvojí). */
+const enMergeLockKey = (itemId: string, number: number) => `cc-news:en-merge:${itemId}:${number}`;
+const EN_MERGE_LOCK_TTL_S = 3 * 60 * 60;
+
+/** Zařadí (odložené) sloučení PR anglického přehledu. První pokus jen bez běžícího řetězce. */
 export async function enqueueCcNewsEnMerge(env: Env, data: { itemId: string; number: number; attempt: number }): Promise<void> {
+  if (data.attempt === 0) {
+    const key = enMergeLockKey(data.itemId, data.number);
+    if (await env.KV.get(key)) return;
+    await env.KV.put(key, "1", { expirationTtl: EN_MERGE_LOCK_TTL_S });
+  }
   await env.WEBHOOK_QUEUE.send(
     { type: "cc-news.en-merge", data },
     { delaySeconds: data.attempt === 0 ? EN_MERGE_FIRST_DELAY_S : EN_MERGE_DELAY_S },
@@ -854,14 +863,17 @@ async function handleCcNewsEnMerge(
       { to: await getCcNewsApprovalEmails(db), subject, html: ccNewsPublishedHtml({ intro, links, findings: [] }) })
       .catch((err) => console.error(`[queue] cc-news.en-merge ${itemId}: oznámení selhalo:`, err));
   };
+  const done = () => env.KV.delete(enMergeLockKey(itemId, number));
   let out;
   try {
-    out = await mergeSitePullRequest(token, repo, number);
+    // Bez čitelných check-runs (oprávnění tokenu) se slučuje až od 3. pokusu (~9 min na build).
+    out = await mergeSitePullRequest(token, repo, number, fetch, { allowWithoutChecks: attempt >= 2 });
   } catch (err) {
     if (err instanceof GithubError && err.permanent) {
       console.error(`[queue] cc-news.en-merge ${itemId}: trvalá chyba GitHubu u PR #${number}:`, err.message);
       await notify(`Nevydáno: anglický přehled ${itemId}`, `PR #${number} do webu se nepodařilo sloučit (${err.message.slice(0, 120)}). Sloučte ho ručně.`,
         [{ label: `PR #${number}`, url: `https://github.com/${repo}/pull/${number}` }]);
+      await done();
       return;
     }
     throw err;
@@ -871,6 +883,7 @@ async function handleCcNewsEnMerge(
       console.error(`[queue] cc-news.en-merge ${itemId}: PR #${number} ani po ${attempt + 1} pokusech není sloučitelný (${out.state})`);
       await notify(`Nevydáno: anglický přehled ${itemId}`, `Build PR #${number} do webu ani po dvou hodinách neprošel (stav ${out.state}). Zkontrolujte ho a sloučte ručně.`,
         [{ label: `PR #${number}`, url: `https://github.com/${repo}/pull/${number}` }]);
+      await done();
       return;
     }
     await enqueueCcNewsEnMerge(env, { itemId, number, attempt: attempt + 1 });
@@ -879,8 +892,10 @@ async function handleCcNewsEnMerge(
   if (out.kind === "blocked") {
     console.error(`[queue] cc-news.en-merge ${itemId}: PR #${number} nelze sloučit: ${out.reason}`);
     await notify(`Nevydáno: anglický přehled ${itemId}`, `PR #${number} do webu nelze sloučit: ${out.reason}.`, [{ label: `PR #${number}`, url: out.url }]);
+    await done();
     return;
   }
+  await done();
   console.log(`[queue] cc-news.en-merge ${itemId}: PR #${number} ${out.kind === "merged" ? "sloučen" : "už byl sloučen"}`);
   if (out.kind !== "merged") return;
   const { selectionKvKey } = await import("./lib/cc-news/weekly");

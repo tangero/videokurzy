@@ -48,19 +48,30 @@ export async function processCcNewsItem(
   env: PipelineEnv,
   ref: CcNewsRef,
   now: Date,
-  fetchers: Fetchers = defaultFetchers()
+  fetchers: Fetchers = defaultFetchers(),
+  opts: { redraft?: boolean } = {}
 ): Promise<PreparedDraft & { usedLlm: boolean }> {
   // Od Week 38/2026 vychází článek ze changelogu a dokumentace (oficiální
   // přehledy Anthropic nevydává). Stejné schvalování, jen jiný zdroj a styl.
   if (ref.sourceId.startsWith("/changelog/")) {
+    const [row] = await db.select({ status: ccNewsItem.status }).from(ccNewsItem).where(eq(ccNewsItem.id, ref.itemId)).limit(1);
+    const { getCcNewsAutopublish } = await import("./settings");
+    const autopublish = await getCcNewsAutopublish(db);
+    // Už vydaný článek (opakované doručení zprávy, retry po vydání) se znovu
+    // nepíše: jen se idempotentně doplní anglický přehled. Nový koncept vydaného
+    // článku vzniká jen vědomě (ruční spuštění s force) a jde přes schválení.
+    if (row?.status === "published" && autopublish && !opts.redraft) {
+      return {
+        itemId: ref.itemId, articlePath: "", approveUrl: "", email: { to: [], subject: "", html: "" },
+        mode: "dry-run", sent: false, autopublished: true, usedLlm: false,
+      };
+    }
     const { buildChangelogArticle, reviewKvKey } = await import("./weekly");
     const article = await buildChangelogArticle(db, env, ref.itemId, now);
     await env.KV.put(reviewKvKey(ref.itemId), JSON.stringify(article.review));
     // Automatické vydání: jen dosud nevydané vydání (nový koncept už vydaného
     // článku jde dál přes schválení, aby se živá verze tiše nepřepsala).
-    const [row] = await db.select({ status: ccNewsItem.status }).from(ccNewsItem).where(eq(ccNewsItem.id, ref.itemId)).limit(1);
-    const { getCcNewsAutopublish } = await import("./settings");
-    if (row?.status !== "published" && (await getCcNewsAutopublish(db))) {
+    if (row?.status !== "published" && autopublish) {
       const { autoPublishDraft, reviewFindings } = await import("./draft");
       const { weekFromSourceId } = await import("./changelog-source");
       const { englishWeeklyUrls } = await import("./english");
@@ -154,7 +165,7 @@ export async function triggerCcNewsApproval(
     }
   }
 
-  const prepared = await processCcNewsItem(db, env, ref, now, fetchers);
+  const prepared = await processCcNewsItem(db, env, ref, now, fetchers, { redraft: opts.force === true });
 
   // Pokud byly splněny obě live brány, prepareDraftAndApproval e-mail UŽ odeslala
   // (prepared.sent === true) — druhé odeslání by ho jen zduplikovalo. Tady
