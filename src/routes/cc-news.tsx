@@ -77,6 +77,24 @@ export function parseFrontMatter(md: string): { title: string | null; excerpt: s
 }
 
 /**
+ * Body `summary_points` z YAML front matteru českého článku (seznam `- …`,
+ * hodnoty v uvozovkách i bez). Bez front matteru / klíče → [].
+ */
+export function parseSummaryPoints(md: string): string[] {
+  const fm = md.match(/^\uFEFF?\s*---\n([\s\S]*?)\n---/)?.[1];
+  const block = fm?.match(/^summary_points:[ \t]*\n((?:[ \t]*- .*(?:\n|$))+)/m)?.[1];
+  if (!block) return [];
+  return [...block.matchAll(/^[ \t]*- (.+?)[ \t]*$/gm)]
+    .map((m) => {
+      const raw = m[1]!;
+      if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+      if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1);
+      return raw;
+    })
+    .filter((x) => x.trim().length > 0);
+}
+
+/**
  * Veřejné routy služby „Novinky v Claude Code", na které klikne ČLOVĚK z
  * e-mailu. NEjsou za `X-Internal-Secret` (to je service-to-service) — bezpečnost
  * nese podepsaný jednorázový HMAC token v query (viz lib/cc-news/approval.ts).
@@ -159,14 +177,20 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
         const slug = slugFromPath(r.articlePath);
         if (!slug) return null;
         let fm: { title: string | null; excerpt: string | null } = { title: null, excerpt: null };
-        // Výběr týdne (hlavní novinky + témata) existuje jen u vydání ze changelogu (od W38).
+        let points: string[] = [];
+        // Výběr týdne (témata) existuje jen u vydání ze changelogu (od W38). Jeho
+        // `features` jsou anglicky (pracovní podklad), hlavní body se proto berou
+        // z `summary_points` českého článku.
         let sel: WeekSelection | null = null;
         try {
           const [md, s] = await Promise.all([
             c.env.KV.get(publishedKvKey(r.id)),
             r.sourceId.startsWith("/changelog/") ? c.env.KV.get<WeekSelection>(selectionKvKey(r.id), "json") : null,
           ]);
-          if (md) fm = parseFrontMatter(md);
+          if (md) {
+            fm = parseFrontMatter(md);
+            points = parseSummaryPoints(md);
+          }
           sel = s;
         } catch (err) {
           console.error(`[cc-news] KV čtení selhalo pro ${r.id}, fallback na weekLabel:`, (err as Error)?.message);
@@ -178,7 +202,7 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
           versionRange: r.versionRange,
           publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
           topics: (sel?.topics ?? []).filter((k) => TOPIC_KEYS.has(k) && k !== "other").map((k) => ({ key: k, label: topicLabel(k) })),
-          features: (sel?.features ?? []).slice(0, 3).map((f) => ({ title: f.title, lede: f.lede })),
+          points: points.slice(0, 3),
         };
       }),
     )

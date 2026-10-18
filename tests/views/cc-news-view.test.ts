@@ -98,8 +98,8 @@ describe("CcNewsListPage — trendy, aktuální vydání a archiv", () => {
   trends.rising = [trends.topics[0]] as never[];
   const items = [
     { slug: "2026-w41-novinky", title: "Týden 41", excerpt: "Perex.", versionRange: "v2.1.290–v2.1.300", publishedAt: Date.UTC(2026, 9, 12),
-      topics: [{ key: "cloud", label: "Cloud a vzdálené relace" }], features: [{ title: "Rutiny", lede: "Plánovač v cloudu." }] },
-    { slug: "2026-w40-novinky", title: "Týden 40", excerpt: "Starší perex.", versionRange: null, publishedAt: Date.UTC(2026, 9, 5), topics: [], features: [] },
+      topics: [{ key: "cloud", label: "Cloud a vzdálené relace" }], points: ["Rutiny v cloudu mají `plánovač`."] },
+    { slug: "2026-w40-novinky", title: "Týden 40", excerpt: "Starší perex.", versionRange: null, publishedAt: Date.UTC(2026, 9, 5), topics: [], points: [] },
   ];
 
   it("pořadí trendy → aktuální vydání → archiv → materiály", () => {
@@ -126,7 +126,7 @@ describe("CcNewsListPage — trendy, aktuální vydání a archiv", () => {
 
   it("aktuální vydání nese hlavní novinky a štítky témat; starší jsou v kompaktním archivu", () => {
     const html = render(CcNewsListPage({ user: USER, items, trends }));
-    expect(html).toContain("Plánovač v cloudu.");
+    expect(html).toContain("Rutiny v cloudu mají <code>plánovač</code>.");
     expect(html).toContain("cc-chip");
     expect(html).toContain('href="/novinky-cc/2026-w40-novinky"');
     expect(html).toContain("cc-archive");

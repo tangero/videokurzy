@@ -16,8 +16,8 @@ export interface CcNewsListItem {
   publishedAt: number | null; // epoch ms
   /** Témata hlavních novinek z výběru týdne (jen vydání ze changelogu). */
   topics?: { key: string; label: string }[];
-  /** Hlavní novinky z výběru týdne, nejvýš tři. */
-  features?: { title: string; lede: string }[];
+  /** Hlavní body českého článku (`summary_points`), nejvýš tři. */
+  points?: string[];
 }
 
 /**
@@ -47,6 +47,11 @@ const fmtPct = (x: number) => `${x.toLocaleString("cs-CZ", { maximumFractionDigi
 const fmtPp = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : "±"}${Math.abs(x).toLocaleString("cs-CZ", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} b.`;
 const ARROW: Record<TopicTrend["direction"], string> = { up: "↑", down: "↓", flat: "→" };
 const ARROW_LABEL: Record<TopicTrend["direction"], string> = { up: "roste", down: "klesá", flat: "beze změny" };
+
+/** Text s `inline kódem` z markdownu: liché úseky mezi backticky jako <code>, zbytek jako text. */
+const InlineCode: FC<{ text: string }> = ({ text }) => (
+  <>{text.split("`").map((part, i) => (i % 2 === 1 ? <code>{part}</code> : part))}</>
+);
 
 const TopicChips: FC<{ topics: { key: string; label: string }[] }> = ({ topics }) =>
   topics.length ? (
@@ -172,12 +177,11 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; tre
                   )}
                 </div>
                 {latest.excerpt && <p class="cc-excerpt">{latest.excerpt}</p>}
-                {latest.features && latest.features.length > 0 && (
+                {latest.points && latest.points.length > 0 && (
                   <ul class="cc-features">
-                    {latest.features.map((f) => (
+                    {latest.points.map((p) => (
                       <li>
-                        <strong>{f.title}</strong>
-                        {f.lede ? ` ${f.lede}` : ""}
+                        <InlineCode text={p} />
                       </li>
                     ))}
                   </ul>

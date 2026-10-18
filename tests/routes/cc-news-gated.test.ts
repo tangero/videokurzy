@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ccNewsItem } from "../../src/db/schema";
 import { slugFromPath, weekSortKey } from "../../src/routes/cc-news";
 import { publishedKvKey } from "../../src/lib/cc-news/draft";
-import { stripFrontMatter, parseFrontMatter } from "../../src/routes/cc-news";
+import { stripFrontMatter, parseFrontMatter, parseSummaryPoints } from "../../src/routes/cc-news";
 
 const NOW = new Date("2026-06-21T12:00:00.000Z");
 
@@ -69,6 +69,17 @@ describe("stripFrontMatter", () => {
 
   it("leaves markdown without front matter untouched", () => {
     expect(stripFrontMatter("# Nadpis\ntělo")).toBe("# Nadpis\ntělo");
+  });
+});
+
+describe("parseSummaryPoints", () => {
+  it("vytáhne české body ze seznamu ve front matteru (s uvozovkami i bez)", () => {
+    const md = '---\ntitle: "T"\nsummary_points:\n- Haiku 5.5 je výchozí.\n- "Hooks s `onFailure: block` a \\"uvozovky\\""\n---\n\n# T\n- odrážka v těle\n';
+    expect(parseSummaryPoints(md)).toEqual(["Haiku 5.5 je výchozí.", 'Hooks s `onFailure: block` a "uvozovky"']);
+  });
+  it("bez front matteru nebo klíče → prázdné pole", () => {
+    expect(parseSummaryPoints("# Jen text\n- bod")).toEqual([]);
+    expect(parseSummaryPoints('---\ntitle: "T"\n---\n')).toEqual([]);
   });
 });
 
