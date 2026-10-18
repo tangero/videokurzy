@@ -50,9 +50,9 @@ admin `/admin/tools/grok-build?week=2026-w42`.
 
 Codex CLI (ověřeno 18. 10. 2026): `src/lib/tools/codex.ts`, denně v cronu po Grok Build,
 admin `/admin/tools/codex`. Dokumentaci zatím nesnímkujeme. Anglická řada na webu
-zatím není (`TOOLS.codex.englishWeekly = false`); zapnout až po přidání do WEEKLY_TOOLS webu.
+od 18. 10. 2026 (`TOOLS.codex.englishWeekly`, WEEKLY_TOOLS webu, vibecoding-site PR #277).
 Antigravity CLI (ověřeno 18. 10. 2026): `src/lib/tools/antigravity.ts`, stejný sběr z GitHub
-releases (`github-releases.ts`), admin `/admin/tools/antigravity`, anglická řada zatím také ne.
+releases (`github-releases.ts`), admin `/admin/tools/antigravity`, anglická řada také od 18. 10. 2026.
 
 Datum je povinné. Položka bez data se nezařadí do týdne a v revizi se ukáže jako
 „bez data“. Datum neodhadujeme.

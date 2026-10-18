@@ -108,7 +108,7 @@ návaznosti; stránky `/novinky-cc/temata`).
   Týdenní výběr se uloží i jako `cc-news:selection:<tool>-<rok>-w<NN>`; z něj tlačítko v adminu
   píše anglický přehled (PR do webu, nástroj musí být ve `WEEKLY_TOOLS` webu). Bez českého článku.
   Při automatickém vydávání se zařadí sám po sestavení týdne (fronta `tools.week`), jen u nástrojů
-  s `englishWeekly` v `src/lib/tools/registry.ts` (Codex CLI a Antigravity CLI zatím ne, chybí ve WEEKLY_TOOLS webu).
+  s `englishWeekly` v `src/lib/tools/registry.ts` (od 18. 10. 2026 všechny čtyři; nový nástroj nejdřív do WEEKLY_TOOLS webu).
   Codex a Antigravity se sbírají z GitHub releases (`src/lib/tools/github-releases.ts`).
 - Stránka tématu `/novinky-cc/temata/<téma>` (`topic-history.ts`, `views/cc-topic.tsx`): týdenní osa od vzniku
   tématu, detail týdne (`?tyden=2026-w41`), detail pojmu napříč nástroji (`?pojem=PreToolUse`), srovnání
