@@ -102,12 +102,17 @@ návaznosti; stránky `/novinky-cc/temata`).
   který se při automatickém vydávání sám sloučí po úspěšném buildu.
   Kontrakt souboru je v `docs/english-section.md` webu. Nanečisto:
   `GET /admin/api/cc-news/english?itemId=…`. Více nástrojů: `docs/cc-news-changelog/vice-zdroju.md`.
-- Další sledované nástroje (zatím Grok Build, jen interně): `cc_change_item.tool`
+- Další sledované nástroje (zatím Grok Build; čtenářům jen jako srovnání na stránkách témat): `cc_change_item.tool`
   (dotazy Novinek v CC VŽDY filtrují `tool = 'claude-code'`), sběr v `src/lib/tools/`,
   denní cron, týdenní výběr do KV `tools:week:<tool>:<týden>`, admin `/admin/tools/grok-build`.
   Týdenní výběr se uloží i jako `cc-news:selection:<tool>-<rok>-w<NN>`; z něj tlačítko v adminu
   píše anglický přehled (PR do webu, nástroj musí být ve `WEEKLY_TOOLS` webu). Bez českého článku.
   Při automatickém vydávání se zařadí sám po sestavení týdne (fronta `tools.week`).
+- Stránka tématu `/novinky-cc/temata/<téma>` (`topic-history.ts`, `views/cc-topic.tsx`): týdenní osa od vzniku
+  tématu, detail týdne (`?tyden=2026-w41`), detail pojmu napříč nástroji (`?pojem=PreToolUse`), srovnání
+  s ostatními nástroji podle podílu na jejich změnách, slovník identifikátorů z changelogu a milníky.
+  Cache v KV na hodinu. Box „Nejnovější na vibecoding.cz“ bere jen rubriku hlavního nástroje z RSS feedu
+  webu (`site-articles.ts`); odkazy na tahák vibecoding.cz mají přednost před anglickou dokumentací.
 
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,

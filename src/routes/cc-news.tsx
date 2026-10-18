@@ -7,7 +7,7 @@ import { fixDocLinksInMarkdown } from "../lib/cc-news/editor";
 import { ccNewsItem } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { renderMarkdown, escapeHtml } from "../lib/markdown";
-import { CcNewsListPage, CcNewsArticlePage, CcTopicsPage, CcTopicPage, type CcTopicSummary } from "../views/cc-news";
+import { CcNewsListPage, CcNewsArticlePage, CcTopicsPage, type CcTopicSummary } from "../views/cc-news";
 import type { Env, Variables } from "../types";
 import { selectionKvKey, type WeekSelection } from "../lib/cc-news/weekly";
 import { TOPIC_KEYS, topicLabel } from "../lib/cc-news/taxonomy";
@@ -292,31 +292,33 @@ ccNewsRoutes.get("/novinky-cc/temata", async (c) => {
 ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {
   const redirect = await gateOrRedirect(c);
   if (redirect) return redirect;
-  const { TOPICS } = await import("../lib/cc-news/taxonomy");
-  const { ccChangeItem } = await import("../db/schema");
+  const { TOPICS, TOPIC_ABOUT } = await import("../lib/cc-news/taxonomy");
   const t = TOPICS.find((x) => x.key === c.req.param("topic") && x.key !== "other");
   if (!t) return c.html(pageShell("Nenalezeno", "<p>Téma nenalezeno.</p>"), 404);
+  const { getTopicHistory, weekDetail } = await import("../lib/cc-news/topic-history");
+  const { TopicHistoryPage } = await import("../views/cc-topic");
   const db = drizzle(c.env.DB);
-  const rows = await db
-    .select()
-    .from(ccChangeItem)
-    .where(and(eq(ccChangeItem.tool, "claude-code"), eq(ccChangeItem.topic, t.key), gte(ccChangeItem.significance, 2)))
-    .orderBy(desc(ccChangeItem.publishedAt), desc(ccChangeItem.ord));
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  const entries = rows.map((r) => {
-    const f = r.followsId ? byId.get(r.followsId) : undefined;
-    return {
-      id: r.id, version: r.version, publishedAt: r.publishedAt.getTime(), significance: r.significance ?? 2,
-      text: r.text, reason: r.reason,
-      follows: f ? { id: f.id, version: f.version, relation: r.relation, reason: r.followReason } : null,
-    };
-  });
+  const history = await getTopicHistory(c.env, db, t.key, new Date());
+  const [main, ...others] = history.tools;
+  // Parametry jen v očekávaném tvaru; pojem musí být ve slovníku tématu.
+  const week = c.req.query("tyden");
+  const term = c.req.query("pojem");
+  const validTerm = term && history.terms.some((x) => x.term === term) ? term : null;
+  const { getLatestSiteArticles } = await import("../lib/cc-news/site-articles");
+  // Jen rubrika nástroje, kterému se stránka věnuje (srovnávané nástroje ne).
+  const articles = await getLatestSiteArticles(c.env, [main!.tool]);
   const user = c.get("user")!;
   return c.html(
-    <CcTopicPage
+    <TopicHistoryPage
       user={{ name: user.name ?? null, email: user.email }}
-      topic={{ key: t.key, label: t.label, description: t.description, count: entries.length, lastAt: entries[0]?.publishedAt ?? null }}
-      entries={entries}
+      topic={{ key: t.key, label: t.label, about: TOPIC_ABOUT[t.key] ?? "" }}
+      main={main!}
+      others={others}
+      terms={history.terms}
+      detail={weekDetail(main!, history.items, week && /^\d{4}-w\d{2}$/.test(week) ? week : null)}
+      term={validTerm}
+      items={history.items}
+      articles={articles}
     />,
   );
 });

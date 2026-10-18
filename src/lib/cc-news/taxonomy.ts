@@ -36,3 +36,38 @@ export const TOPIC_KEYS = new Set(TOPICS.map((t) => t.key));
 export function topicLabel(key: string): string {
   return TOPICS.find((t) => t.key === key)?.label ?? key;
 }
+
+/** Česká jednovětá charakteristika tématu pro čtenáře (popis v TOPICS je pro prompt). */
+export const TOPIC_ABOUT: Record<string, string> = {
+  prompt_cache: "Jak Claude Code znovu využívá už zpracovaný kontext, aby odpovídal rychleji a levněji.",
+  context: "Kontextové okno, automatická kompakce a limity délky konverzace.",
+  memory: "CLAUDE.md, paměť, pravidla a styly výstupu: co si agent nese mezi relacemi.",
+  models: "Výběr modelu, míra uvažování, rychlý režim a chování konkrétních modelů.",
+  permissions: "Co smí agent udělat sám: pravidla oprávnění, auto mode, sandbox a bezpečnostní opravy.",
+  tools: "Vestavěné nástroje agenta: čtení a úpravy souborů, shell, vyhledávání, web.",
+  mcp: "Napojení externích nástrojů a dat přes Model Context Protocol.",
+  hooks: "Vlastní skripty a kontroly, které se spustí při událostech agenta, třeba před voláním nástroje.",
+  agents: "Subagenti, týmy agentů, workflow a úlohy běžící na pozadí.",
+  plugins: "Pluginy, skills, marketplace a vlastní příkazy.",
+  sessions: "Relace, návrat ke konverzaci, checkpointy, worktree a práce s gitem.",
+  cloud: "Claude Code na webu, vzdálené relace, Slack a cloudové běhy.",
+  ide: "Rozšíření pro VS Code a JetBrains a desktopová aplikace.",
+  tui: "Terminálové rozhraní: vykreslování, klávesové zkratky, stavový řádek a nastavení.",
+  sdk: "Agent SDK a neinteraktivní běh v CI a skriptech.",
+  providers: "Přihlášení, Bedrock, Vertex a další poskytovatelé, limity a účtování.",
+  telemetry: "OpenTelemetry, metriky, sledování nákladů a logování.",
+  integrations: "Claude in Chrome, Claude Design, artefakty a další produktové integrace.",
+  performance: "Rychlost startu, spotřeba paměti, pády a zamrzání.",
+  other: "Změny, které nepatří do žádného jiného tématu.",
+};
+
+/** Oddíl českého taháku na vibecoding.cz pro téma (kotva v /cheat-sheet/claude-code). */
+const CHEAT_SHEET_SECTION: Record<string, string> = {
+  hooks: "hooks", plugins: "skills", tools: "tools", mcp: "mcp", sessions: "worktrees",
+  integrations: "integrations", tui: "shortcuts", sdk: "cli", memory: "files", permissions: "settings",
+};
+
+export function cheatSheetUrl(topic: string): string {
+  const section = CHEAT_SHEET_SECTION[topic];
+  return `https://www.vibecoding.cz/cheat-sheet/claude-code/?lang=cs${section ? `#${section}` : ""}`;
+}
