@@ -12,6 +12,7 @@
 import type { LlmEnv, LlmFn } from "./llm";
 import { openRouterLlm, writeModel } from "./llm";
 import { isoWeekBounds } from "./changelog-source";
+import { CLAUDE_CODE, toolName, type ToolKey } from "../tools/registry";
 import { selectionKvKey, writeWeeklyArticle, yamlQuote, type WeekSelection, type WriterLang } from "./weekly";
 
 export interface EnglishEnv extends LlmEnv {
@@ -31,11 +32,10 @@ export const englishMdKvKey = (itemId: string) => `cc-news:en-md:${itemId}`;
 /** sha souboru, který generátor naposledy zapsal na větev PR (pozná ruční úpravy). */
 export const englishShaKvKey = (itemId: string) => `cc-news:en-sha:${itemId}`;
 const EN_MD_TTL_SEC = 60 * 24 * 60 * 60;
-const TOOL_NAMES: Record<WeekSelection["tool"], string> = { "claude-code": "Claude Code" };
-
-export const WRITER_SYSTEM_EN = [
-  "You are Patrick Zandl, writing the weekly 'Claude Code weekly' update for the English section of vibecoding.cz.",
-  "The reader is an advanced Claude Code user; do not explain the basics of the tool. The text should be",
+/** Anglický prompt autora pro nástroj (pro Claude Code beze změny proti původnímu textu). */
+export const writerSystemEn = (name: string) => [
+  `You are Patrick Zandl, writing the weekly '${name} weekly' update for the English section of vibecoding.cz.`,
+  `The reader is an advanced ${name} user; do not explain the basics of the tool. The text should be`,
   "read to the end because it answers the reader's question and because a person with an opinion stands behind it.",
   "",
   "INPUT: the week's main features and minor wins with the cited changelog and documentation entries.",
@@ -55,7 +55,7 @@ export const WRITER_SYSTEM_EN = [
   "- 3) 'Technical notes': shorter paragraphs on integrations, tools and minor wins, grouped by area.",
   "- 4) 'What to take away', split by reader: terminal user, user of parallel sessions, admin of",
   "  integrations and company deployments. What each should try or check.",
-  "- At the end, in italics, a note on sources and period: the Claude Code changelog (versions from–to,",
+  `- At the end, in italics, a note on sources and period: the ${name} changelog (versions from–to,`,
   "  dates) and the documentation; for beta features note that availability may change.",
   "",
   "VOICE:",
@@ -83,6 +83,8 @@ export const WRITER_SYSTEM_EN = [
   "Do not use the double-quote character inside text values; use single quotes.",
 ].join("\n");
 
+export const WRITER_SYSTEM_EN = writerSystemEn("Claude Code");
+
 const VERSION_FIX_SYSTEM_EN = [
   "You fix version numbers in an English article. You get the ARTICLE, a list of WRONG VERSIONS (not on any",
   "cited entry) and the real versions of each feature (FEATURE VERSIONS). Replace each wrong version with the",
@@ -98,8 +100,8 @@ export function englishDateRange(a: Date, b: Date): string {
   return `${m(a)} ${a.getUTCDate()} – ${m(b)} ${b.getUTCDate()}, ${b.getUTCFullYear()}`;
 }
 
-export const ENGLISH_WRITER: WriterLang = {
-  system: WRITER_SYSTEM_EN,
+export const englishWriter = (tool: ToolKey): WriterLang => ({
+  system: writerSystemEn(toolName(tool)),
   versionFixSystem: VERSION_FIX_SYSTEM_EN,
   user: (sel) => [
     `WEEK: ${sel.weekLabel}, ${englishDateRange(new Date(sel.from), new Date(sel.to))}; versions ${sel.range.from} to ${sel.range.to} (${sel.releases} releases, ${sel.entries} changelog entries).`,
@@ -117,7 +119,9 @@ export const ENGLISH_WRITER: WriterLang = {
     "TOPICS (context, not a list to cover): " + sel.topics.join(", "),
   ].join("\n"),
   incomplete: (missing) => `THE PREVIOUS ANSWER WAS INCOMPLETE. Return JSON with all fields: ${missing}.`,
-};
+});
+
+export const ENGLISH_WRITER = englishWriter(CLAUDE_CODE);
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -137,8 +141,8 @@ export function englishWeeklyMarkdown(
   written: { title: string; excerpt: string; summaryPoints: string[]; body: string },
   date: Date = publicationDate(sel),
 ): string {
-  const toolName = TOOL_NAMES[sel.tool];
-  const headline = written.title.replace(new RegExp(`^${toolName}[,:]?\\s*(Week\\s*\\d+\\s*[:,-]\\s*)?`, "i"), "").trim();
+  const name = toolName(sel.tool);
+  const headline = written.title.replace(new RegExp(`^${name}[,:]?\\s*(Week\\s*\\d+\\s*[:,-]\\s*)?`, "i"), "").trim();
   // Titulek = jen headline; nástroj a týden web ukáže z polí tool a week.
   const title = headline || written.title.trim();
   // Nadpisy v těle od ##: případný # se sníží o úroveň (mimo bloky kódu).
@@ -158,7 +162,7 @@ export function englishWeeklyMarkdown(
     `tool: ${sel.tool}`,
     `week: ${sel.week.year}-W${pad(sel.week.week)}`,
     "categories:",
-    `  - ${toolName}`,
+    `  - ${name}`,
     `post_excerpt: ${yamlQuote(written.excerpt)}`,
     // Prázdný klíč by byl null a schéma webu by ho odmítlo.
     ...(points.length ? ["summary_points:", ...points.map((p) => `  - ${yamlQuote(p)}`)] : []),
@@ -296,7 +300,7 @@ export async function publishEnglishWeekly(
   type Cached = { markdown: string; review: string[] };
   let cached = opts.regenerate ? null : await env.KV.get<Cached>(englishMdKvKey(itemId), "json");
   if (!cached) {
-    const written = await writeWeeklyArticle(opts.llm ?? openRouterLlm(env, writeModel(env)), sel, ENGLISH_WRITER);
+    const written = await writeWeeklyArticle(opts.llm ?? openRouterLlm(env, writeModel(env)), sel, englishWriter(sel.tool));
     cached = {
       markdown: englishWeeklyMarkdown(sel, written),
       review: [
@@ -316,11 +320,11 @@ export async function publishEnglishWeekly(
     { path, content: cached.markdown },
     {
       branch: `en-weekly/${sel.tool}-${sel.week.year}-w${pad(sel.week.week)}`,
-      title: `${TOOL_NAMES[sel.tool]} weekly ${week}`,
+      title: `${toolName(sel.tool)} weekly ${week}`,
       body: [
-        `Anglický týdenní přehled ${TOOL_NAMES[sel.tool]} za ${week} (${sel.weekLabel}), verze ${sel.range.from}–${sel.range.to}.`,
+        `Anglický týdenní přehled ${toolName(sel.tool)} za ${week} (${sel.weekLabel}), verze ${sel.range.from}–${sel.range.to}.`,
         "",
-        `Napsáno rovnou anglicky z ověřeného výběru české verze (vydání \`${itemId}\`, KV \`${selectionKvKey(itemId)}\`): ${sel.features.length} hlavních novinek, ${sel.minorWins.length} drobností z ${sel.entries} položek changelogu.`,
+        `Napsáno rovnou anglicky z ověřeného výběru ${sel.tool === CLAUDE_CODE ? "české verze" : "interního týdenního přehledu"} (\`${itemId}\`, KV \`${selectionKvKey(itemId)}\`): ${sel.features.length} hlavních novinek, ${sel.minorWins.length} drobností z ${sel.entries} položek changelogu.`,
         "",
         "Kontroly v kódu:",
         ...(cached.review.length ? cached.review : ["- bez nálezů (verze, odkazy, poznámky)"]),

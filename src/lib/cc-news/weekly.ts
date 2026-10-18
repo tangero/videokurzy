@@ -81,11 +81,16 @@ export function versionViolations(md: string, allowed: Set<string>): string[] {
   return [...new Set(found.filter((v) => !allowed.has(v)))];
 }
 
-/** Odkazy na code.claude.com mimo existující stránky dokumentace převede na prostý text. */
-export function stripUnknownDocLinks(md: string, known: Set<string>): { markdown: string; stripped: string[] } {
+export const CLAUDE_CODE_DOCS_BASE = "https://code.claude.com/docs/en/";
+
+/** Odkazy na web dokumentace (`base`) mimo existující stránky převede na prostý text. */
+export function stripUnknownDocLinks(md: string, known: Set<string>, base = CLAUDE_CODE_DOCS_BASE): { markdown: string; stripped: string[] } {
   const stripped: string[] = [];
-  const markdown = md.replace(/\[([^\]]+)\]\((https:\/\/code\.claude\.com\/[^)\s]*)\)/g, (m, text: string, url: string) => {
-    const path = url.replace(/[#?].*$/, "").replace(/^https:\/\/code\.claude\.com\/docs\/en\//, "");
+  const origin = new URL(base).origin;
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  const linkRe = new RegExp(`\\[([^\\]]+)\\]\\((${esc(origin)}\\/[^)\\s]*)\\)`, "g");
+  const markdown = md.replace(linkRe, (m, text: string, url: string) => {
+    const path = url.replace(/[#?].*$/, "").replace(new RegExp(`^${esc(base)}`), "");
     if (known.has(path)) return m;
     stripped.push(url);
     return text;
@@ -215,7 +220,7 @@ const VERSION_FIX_SYSTEM = [
  */
 export interface WeekSelection {
   v: 1;
-  tool: "claude-code";
+  tool: ToolKey;
   itemId: string;
   week: { year: number; week: number };
   weekLabel: string;
@@ -229,6 +234,8 @@ export interface WeekSelection {
   topics: string[];
   allowedVersions: string[];
   knownPages: string[];
+  /** Kořen dokumentace, ke kterému jsou `knownPages` relativní (chybí = Claude Code). */
+  docsBase?: string;
 }
 
 export const selectionKvKey = (itemId: string) => `cc-news:selection:${itemId}`;
@@ -293,7 +300,7 @@ export async function writeWeeklyArticle(llm: LlmFn, sel: WeekSelection, lang: W
   const extracted = extractEditorNotes(body);
   body = extracted.markdown.replace(/—/g, " - ");
   const known = new Set(sel.knownPages);
-  const linkCheck = known.size > 0 ? stripUnknownDocLinks(body, known) : { markdown: body, stripped: [] };
+  const linkCheck = known.size > 0 ? stripUnknownDocLinks(body, known, sel.docsBase) : { markdown: body, stripped: [] };
   return {
     title: written.title.trim().replace(/—/g, "-"),
     excerpt: written.excerpt.trim(),
@@ -534,7 +541,7 @@ export async function buildChangelogArticle(
     console.log(`[cc-news] ${weekLabel}: chybí týdenní snímky dokumentace, článek jen ze changelogu`);
   }
   const knownPages = new Set(Object.keys((afterIdx ?? currentIdx)?.pages ?? {}));
-  const docLinks = [...knownPages].map((p) => `https://code.claude.com/docs/en/${p}`);
+  const docLinks = [...knownPages].map((p) => `${CLAUDE_CODE_DOCS_BASE}${p}`);
 
   // 3–4) Výběr s povinným pokrytím a kontrola faktů.
   const previous = await previousTopics(db, env.KV, itemId);

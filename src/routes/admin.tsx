@@ -2643,7 +2643,11 @@ admin.get("/admin/api/cc-news/english", async (c) => {
   if (!itemId) return c.json({ error: "itemId required" }, 400);
   const { publishEnglishWeekly } = await import("../lib/cc-news/english");
   const out = await publishEnglishWeekly(c.env, itemId, { dryRun: true, regenerate: c.req.query("regenerate") === "1" });
-  if (out.kind === "no-selection") return c.json({ error: "vydání nemá uložený výběr (postav koncept znovu)" }, 404);
+  if (out.kind === "no-selection") {
+    const { parseToolSelectionId } = await import("../lib/tools/weekly-tool");
+    const hint = parseToolSelectionId(itemId) ? "na stránce týdne nástroje klikni na „Postavit výběr znovu“" : "postav koncept znovu";
+    return c.json({ error: `vydání nemá uložený výběr (${hint})` }, 404);
+  }
   if (out.kind !== "no-token") return c.json({ error: "unexpected" }, 500);
   return c.text(`<!-- ${out.path} -->\n${out.markdown}`, 200, { "content-type": "text/markdown; charset=utf-8" });
 });
@@ -2656,11 +2660,12 @@ admin.get("/admin/tools/:tool", async (c) => {
   const tool = c.req.param("tool");
   if (!isToolKey(tool)) return c.text("Neznámý nástroj", 404);
   const { lastClosedWeek, isoWeekBounds } = await import("../lib/cc-news/changelog-source");
-  const { toolWeekKvKey } = await import("../lib/tools/weekly-tool");
+  const { toolWeekKvKey, toolSelectionId } = await import("../lib/tools/weekly-tool");
   const { ccChangeItem } = await import("../db/schema");
   const m = (c.req.query("week") ?? "").match(/^(\d{4})-w(\d{1,2})$/i);
   const week = m ? { year: Number(m[1]), week: Number(m[2]) } : lastClosedWeek(new Date());
   const wk = `${week.year}-w${String(week.week).padStart(2, "0")}`;
+  const selId = toolSelectionId(tool, week);
   const { start, end } = isoWeekBounds(week.year, week.week);
   const db = drizzle(c.env.DB);
   const rows = await db.select().from(ccChangeItem)
@@ -2687,7 +2692,10 @@ ${saved ? `<h2>Výběr (postaven ${e(saved.builtAt.slice(0, 16).replace("T", " "
 <ol>${saved.features.map((f) => `<li><b>${e(f.title)}</b>${f.docLink ? ` <a href="${e(f.docLink)}">dokumentace</a>` : ""}<br>${e(f.lede)}<br><small class=muted>${f.sources.map(e).join("<br>")}</small></li>`).join("")}</ol>
 <h3>Drobnosti</h3><ul>${saved.minorWins.map((w) => `<li>${e(w.text)}</li>`).join("")}</ul>
 ${saved.dropped.length ? `<h3>Vyřazeno kontrolou faktů</h3><ul>${saved.dropped.map((d) => `<li>${e(d.title)}: ${e(d.problem)}</li>`).join("")}</ul>` : ""}
-${saved.skipped.length ? `<h3>Vynechané zásadní změny</h3><ul>${saved.skipped.map((k) => `<li>${e(k.id)}: ${e(k.reason)}</li>`).join("")}</ul>` : ""}` : "<p class=muted>Výběr pro tento týden zatím není postavený.</p>"}
+${saved.skipped.length ? `<h3>Vynechané zásadní změny</h3><ul>${saved.skipped.map((k) => `<li>${e(k.id)}: ${e(k.reason)}</li>`).join("")}</ul>` : ""}
+<h3>Anglický přehled (vibecoding.cz/en)</h3>
+<p><a href="/admin/api/cc-news/english?itemId=${e(selId)}">Náhled nanečisto</a> (napíše článek, PR neotevře; trvá cca minutu)</p>
+<form method="post" action="/admin/api/cc-news/english"><input type="hidden" name="itemId" value="${e(selId)}"><input type="hidden" name="rebuildSelection" value="1"><button>Otevřít PR do webu</button> <label><input type="checkbox" name="force" value="1"> napsat znovu a přepsat</label></form>` : "<p class=muted>Výběr pro tento týden zatím není postavený.</p>"}
 <h2>Položky</h2><table><tr><th>verze</th><th>typ</th><th>téma</th><th>význam</th><th>text</th></tr>
 ${rows.map((r) => `<tr class="sig${r.significance ?? 0}"><td>${e(r.version)}</td><td>${e(r.type)}${r.scope ? ` [${e(r.scope)}]` : ""}</td><td>${e(r.topic ?? "–")}</td><td>${e(r.significance ?? "–")}</td><td>${e(r.text)}</td></tr>`).join("")}</table>`;
   return c.html(html);

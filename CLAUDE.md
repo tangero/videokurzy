@@ -98,6 +98,8 @@ návaznosti; stránky `/novinky-cc/temata`).
 - Další sledované nástroje (zatím Grok Build, jen interně): `cc_change_item.tool`
   (dotazy Novinek v CC VŽDY filtrují `tool = 'claude-code'`), sběr v `src/lib/tools/`,
   denní cron, týdenní výběr do KV `tools:week:<tool>:<týden>`, admin `/admin/tools/grok-build`.
+  Týdenní výběr se uloží i jako `cc-news:selection:<tool>-<rok>-w<NN>`; z něj tlačítko v adminu
+  píše anglický přehled (PR do webu, nástroj musí být ve `WEEKLY_TOOLS` webu). Bez českého článku.
 
 ## Secrets a externí API
 - `.dev.vars` obsahuje **placeholder** hodnoty (`BUNNY_LIBRARY_ID="smoke_test"`,
