@@ -76,6 +76,8 @@ export const writerSystemEn = (name: string) => [
   "- Keep practical details from the input: keyboard shortcuts, setting and variable names the reader uses",
   "  to turn a feature on or off. Mention versions only as listed for the cited entries.",
   "- Links only to documentation URLs given in the input (docLink field); never invent others.",
+  "- The reader never sees the input: never mention 'the input', 'the entries' or what they leave out.",
+  "  Skip a missing detail, or point to the documentation.",
   "",
   'OUTPUT: JSON {"title": "<headline naming the main feature, without the tool name or week number>",',
   ' "excerpt": "<1-2 sentences, used as meta description>", "summaryPoints": ["<4-6 sentences on what is new>"],',
