@@ -2643,7 +2643,11 @@ admin.get("/admin/api/cc-news/english", async (c) => {
   if (!itemId) return c.json({ error: "itemId required" }, 400);
   const { publishEnglishWeekly } = await import("../lib/cc-news/english");
   const out = await publishEnglishWeekly(c.env, itemId, { dryRun: true, regenerate: c.req.query("regenerate") === "1" });
-  if (out.kind === "no-selection") return c.json({ error: "vydání nemá uložený výběr (postav koncept znovu)" }, 404);
+  if (out.kind === "no-selection") {
+    const { parseToolSelectionId } = await import("../lib/tools/weekly-tool");
+    const hint = parseToolSelectionId(itemId) ? "na stránce týdne nástroje klikni na „Postavit výběr znovu“" : "postav koncept znovu";
+    return c.json({ error: `vydání nemá uložený výběr (${hint})` }, 404);
+  }
   if (out.kind !== "no-token") return c.json({ error: "unexpected" }, 500);
   return c.text(`<!-- ${out.path} -->\n${out.markdown}`, 200, { "content-type": "text/markdown; charset=utf-8" });
 });

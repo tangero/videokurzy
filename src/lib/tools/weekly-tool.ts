@@ -10,6 +10,7 @@ import { assertWeekClassified, classifyPending, linkFollowsForVersions } from ".
 import { diffDocsWeeks, docsIndexKey, docsWeekKey, type DocsIndex, type DocsSource } from "../cc-news/docs-snapshot";
 import { classifyModel, openRouterLlm, writeModel, type LlmEnv } from "../cc-news/llm";
 import { selectAndVerify, selectionKvKey, type WeekSelection, type WeeklyLlms } from "../cc-news/weekly";
+import { englishMdKvKey } from "../cc-news/english";
 import { GROK_BUILD_DOCS } from "./grok-build";
 import { CLAUDE_CODE, isToolKey, type ToolKey } from "./registry";
 
@@ -122,14 +123,19 @@ export async function buildToolWeek(
   await env.KV.put(toolWeekKvKey(tool, week), JSON.stringify(out));
 
   // Tentýž ověřený výběr ve tvaru Novinek v CC: z něj píše anglický přehled (english.ts).
-  if (result && result.kept.length > 0) {
+  // Nový výběr zneplatní dříve napsaný anglický text; prázdný týden výběr smaže.
+  const selId = toolSelectionId(tool, week);
+  await env.KV.delete(englishMdKvKey(selId));
+  if (!result || result.kept.length === 0) {
+    await env.KV.delete(selectionKvKey(selId));
+  } else {
     const byId = new Map(rows.map((r) => [r.id, r]));
     const versionsOf = (ids: string[]) => [...new Set(ids.map((id) => byId.get(id)?.version).filter((v): v is string => !!v))];
     const dates = rows.map((r) => r.publishedAt.getTime());
     const sel: WeekSelection = {
       v: 1,
       tool,
-      itemId: toolSelectionId(tool, week),
+      itemId: selId,
       week,
       weekLabel: `Week ${week.week}`,
       range: { from: versions[0]!, to: versions[versions.length - 1]! },

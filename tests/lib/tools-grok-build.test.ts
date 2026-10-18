@@ -13,7 +13,7 @@ import {
 } from "../../src/lib/tools/grok-build";
 import { buildToolWeek, parseToolSelectionId, toolSelectionId, toolWeekKvKey } from "../../src/lib/tools/weekly-tool";
 import { selectionKvKey, stripUnknownDocLinks, type WeekSelection } from "../../src/lib/cc-news/weekly";
-import { englishWeeklyMarkdown, englishWeeklyPath, englishWriter, ENGLISH_WRITER } from "../../src/lib/cc-news/english";
+import { englishMdKvKey, englishWeeklyMarkdown, englishWeeklyPath, englishWriter, ENGLISH_WRITER } from "../../src/lib/cc-news/english";
 
 const GITHUB_MD = `# Changelog
 
@@ -216,6 +216,14 @@ describe("buildToolWeek", () => {
     expect(md).toContain("tool: grok-build\nweek: 2026-W40\ncategories:\n  - Grok Build\n");
     expect(md).toContain('title: "Legacy output removed"');
     expect(englishWeeklyPath(sel!)).toBe("src/content/english/grok-build-weekly-2026-w40.md");
+
+    // Nové postavení zneplatní napsaný anglický text; týden bez novinek smaže i výběr.
+    await env.KV.put(englishMdKvKey(id), "{}");
+    const empty: LlmFn = async (system, user, o) =>
+      system.startsWith("You are the editor") ? JSON.stringify({ features: [], minorWins: [], skipped: [] }) : llm(system, user, o);
+    await buildToolWeek(db, env as never, "grok-build", { year: 2026, week: 40 }, new Date("2026-10-05T03:00:00Z"), { classify: empty, write: empty });
+    expect(await env.KV.get(englishMdKvKey(id))).toBeNull();
+    expect(await env.KV.get(selectionKvKey(id))).toBeNull();
   });
 
   it("prázdný týden se uloží bez volání modelu", async () => {
