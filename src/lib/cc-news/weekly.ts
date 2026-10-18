@@ -107,6 +107,16 @@ export function stripUnknownDocLinks(md: string, known: Set<string>, base = CLAU
   return { markdown, stripped };
 }
 
+/** Odstraní všechny markdownové odkazy http(s) a nechá jen jejich text. */
+export function stripAllLinks(md: string): { markdown: string; stripped: string[] } {
+  const stripped: string[] = [];
+  const markdown = md.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_m, text: string, url: string) => {
+    stripped.push(url);
+    return text;
+  });
+  return { markdown, stripped };
+}
+
 // ─── Prompty ──────────────────────────────────────────────────────
 
 const SELECT_SYSTEM = (docLinks: string[], tool: ToolKey = CLAUDE_CODE) => [
@@ -312,7 +322,9 @@ export async function writeWeeklyArticle(llm: LlmFn, sel: WeekSelection, lang: W
   const leaks = inputMentions([written.title, written.excerpt, ...written.summaryPoints, extracted.markdown].join("\n"));
   body = extracted.markdown.replace(/—/g, " - ");
   const known = new Set(sel.knownPages);
-  const linkCheck = known.size > 0 ? stripUnknownDocLinks(body, known, sel.docsBase) : { markdown: body, stripped: [] };
+  // Bez snímků dokumentace (Codex CLI, Antigravity CLI) nemáme čím odkazy ověřit:
+  // odstraní se všechny, aby v článku nezůstala vymyšlená adresa.
+  const linkCheck = known.size > 0 ? stripUnknownDocLinks(body, known, sel.docsBase) : stripAllLinks(body);
   return {
     title: written.title.trim().replace(/—/g, "-"),
     excerpt: written.excerpt.trim(),

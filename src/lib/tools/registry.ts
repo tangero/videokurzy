@@ -19,8 +19,8 @@ export interface ToolInfo {
 export const TOOLS: Record<ToolKey, ToolInfo> = {
   "claude-code": { name: "Claude Code", englishWeekly: true, siteFolder: "claude-code", rubricUrl: "https://www.vibecoding.cz/claude-code/" },
   "grok-build": { name: "Grok Build", englishWeekly: true, siteFolder: "grok-build" },
-  codex: { name: "Codex CLI", englishWeekly: false, siteFolder: "openai-codex", rubricUrl: "https://www.vibecoding.cz/openai-codex/" },
-  antigravity: { name: "Antigravity CLI", englishWeekly: false, siteFolder: "antigravity" },
+  codex: { name: "Codex CLI", englishWeekly: true, siteFolder: "openai-codex", rubricUrl: "https://www.vibecoding.cz/openai-codex/" },
+  antigravity: { name: "Antigravity CLI", englishWeekly: true, siteFolder: "antigravity" },
 };
 
 export const CLAUDE_CODE: ToolKey = "claude-code";

@@ -66,6 +66,29 @@ beforeEach(async () => {
   for (const k of (await env.KV.list({ prefix: "cc-news:" })).keys) await env.KV.delete(k.name);
 });
 
+describe("nástroje s anglickou řadou", () => {
+  it("Codex CLI a Antigravity CLI mají řadu zapnutou a soubor nese klíč nástroje z WEEKLY_TOOLS webu", async () => {
+    const { TOOLS } = await import("../../src/lib/tools/registry");
+    expect(Object.entries(TOOLS).filter(([, t]) => t.englishWeekly).map(([k]) => k)).toEqual(["claude-code", "grok-build", "codex", "antigravity"]);
+    for (const tool of ["codex", "antigravity"] as const) {
+      const sel = { ...SEL, tool, itemId: `${tool}-2026-w43` };
+      expect(englishWeeklyPath(sel)).toBe(`src/content/english/${tool}-weekly-2026-w43.md`);
+      const md = englishWeeklyMarkdown(sel, { title: "T", excerpt: "E", summaryPoints: [], body: "B" }, new Date("2026-10-26T09:00:00Z"));
+      expect(md).toContain(`tool: ${tool}\n`);
+    }
+  });
+});
+
+describe("odkazy u nástroje bez snímků dokumentace", () => {
+  it("stripAllLinks nechá text a vrátí odstraněné adresy", async () => {
+    const { stripAllLinks } = await import("../../src/lib/cc-news/weekly");
+    expect(stripAllLinks("See [the docs](https://developers.openai.com/codex/x) and `[a](b)`.")).toEqual({
+      markdown: "See the docs and `[a](b)`.",
+      stripped: ["https://developers.openai.com/codex/x"],
+    });
+  });
+});
+
 describe("formát souboru podle kontraktu webu", () => {
   it("cesta, front matter a titulek s týdnem", () => {
     expect(englishWeeklyPath({ tool: "claude-code", week: { year: 2026, week: 3 } })).toBe("src/content/english/claude-code-weekly-2026-w03.md");
