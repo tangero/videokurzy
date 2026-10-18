@@ -1,15 +1,10 @@
 // Nejnovější článek z rubriky nástroje na vibecoding.cz (rubrika = složka článku,
-// odkaz /articles/<nástroj>/…). Zdroj je veřejný RSS feed webu, takže web nic
+// odkaz /articles/<složka>/…, složka a stránka rubriky v registru nástrojů). Zdroj je veřejný RSS feed webu, takže web nic
 // nového vystavovat nemusí. Selhání feedu stránku nerozbije: box se nezobrazí.
 
 import { TOOLS, type ToolKey } from "../tools/registry";
 
 export const SITE_FEED_URL = "https://www.vibecoding.cz/vibecoding-feed.xml";
-
-/** Stránka rubriky na webu; jen pro nástroje, které ji mají. */
-const RUBRIC_URL: Partial<Record<ToolKey, string>> = {
-  "claude-code": "https://www.vibecoding.cz/claude-code/",
-};
 
 export interface SiteArticle {
   tool: ToolKey;
@@ -39,10 +34,10 @@ export function latestByTool(rss: string, tools: ToolKey[]): SiteArticle[] {
   const out: SiteArticle[] = [];
   for (const tool of tools) {
     const own = items
-      .filter((i) => i.title && /^https:\/\/www\.vibecoding\.cz\//.test(i.url) && i.url.includes(`/articles/${tool}/`))
+      .filter((i) => i.title && /^https:\/\/www\.vibecoding\.cz\//.test(i.url) && i.url.includes(`/articles/${TOOLS[tool].siteFolder}/`))
       .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0));
     const top = own[0];
-    if (top) out.push({ tool, toolName: TOOLS[tool].name, ...top, rubricUrl: RUBRIC_URL[tool] ?? null });
+    if (top) out.push({ tool, toolName: TOOLS[tool].name, ...top, rubricUrl: TOOLS[tool].rubricUrl ?? null });
   }
   return out;
 }

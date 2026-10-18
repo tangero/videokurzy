@@ -143,6 +143,7 @@ export async function handleScheduled(
  * Denní údržba dalších nástrojů: changelog Grok Build (CDN x.ai + první naplnění
  * z GitHubu), snímek docs.x.ai/build, zmrazení uzavřeného týdne a zařazení
  * interního týdenního přehledu. Mezera v řadě verzí = alert (žádný zdroj se neztratil).
+ * Pak Codex CLI z GitHub releases (bez snímků dokumentace).
  */
 async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: Date): Promise<void> {
   const { syncGrokBuild, GROK_BUILD, GROK_BUILD_DOCS } = await import("./lib/tools/grok-build");
@@ -186,6 +187,19 @@ async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: D
   // Jen po úspěšné synchronizaci, která dohnala stable: jinak by se uložil neúplný týden.
   if (caughtUp && (frozen || daysAfter >= 3) && !(await env.KV.get(toolWeekKvKey(GROK_BUILD, week)))) {
     await enqueueToolWeek(env, GROK_BUILD, week);
+  }
+
+  // Codex CLI (GitHub releases openai/codex). Dokumentaci zatím nesnímkujeme,
+  // týden se proto zařadí hned po úspěšné synchronizaci v pondělí a dál.
+  try {
+    const { syncCodex, CODEX } = await import("./lib/tools/codex");
+    const r = await syncCodex(db, { token: env.VIBECODING_SITE_GITHUB_TOKEN });
+    console.log(`[cron] codex: nejnovější ${r.newest}, uloženo do ${r.latest}, nových položek ${r.added}, stran ${r.pages}` +
+      (r.backfilled ? ", první naplnění" : ""));
+    if (r.added > 0 && (await countUnclassified(db)) > 0) await enqueueCcNewsClassify(env);
+    if (r.caughtUp && !(await env.KV.get(toolWeekKvKey(CODEX, week)))) await enqueueToolWeek(env, CODEX, week);
+  } catch (err) {
+    console.error("[cron] codex changelog failed:", err);
   }
 }
 

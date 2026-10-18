@@ -319,10 +319,11 @@ export const CompareView: FC<{ tools: ToolHistory[]; terms: Term[]; topicKey: st
     return { name: t.name, share: all ? (100 * n) / all : 0 };
   });
   const pctTxt = (x: number) => `${x.toLocaleString("cs-CZ", { maximumFractionDigits: 1 })} %`;
-  const [a, b] = overall;
-  const lead = a && b && b.share > 0 ? a.share / b.share : 0;
   const weeksAxis = series[0]!.weeks;
-  const majors = series.map(({ t, weeks }) => ({ name: t.name, n: weeks.reduce((s, w) => s + w.added + w.fixed, 0), major: weeks.reduce((s, w) => s + w.major, 0) })).reverse();
+  const majors = series.map(({ t, weeks }) => ({ name: t.name, n: weeks.reduce((s, w) => s + w.added + w.fixed, 0), major: weeks.reduce((s, w) => s + w.major, 0) }));
+  const [a, b] = overall;
+  // Pro dva nástroje poměr slovy, pro víc jen výčet podílů.
+  const lead = overall.length === 2 && a && b && a.share > 0 ? b.share / a.share : 0;
   return (
     <section class="cmp" aria-labelledby="cmp-h">
       <h2 id="cmp-h" class="th-h2">Srovnání nástrojů</h2>
@@ -330,13 +331,11 @@ export const CompareView: FC<{ tools: ToolHistory[]; terms: Term[]; topicKey: st
         Od týdne {day(from)}, odkdy sledujeme všechny nástroje. Výška sloupce = podíl tématu na všech změnách daného nástroje v týdnu,
         takže srovnání nezkresluje, že každý nástroj vydává jinak často.
       </p>
-      {a && b && (
-        <p class="cmp-take">
-          {b.name} věnuje tomuto tématu {pctTxt(b.share)} svých změn, {a.name} {pctTxt(a.share)}
-          {lead > 0 && (lead >= 1.2 ? `, tedy ${fmt1(lead)}× víc.` : lead <= 0.83 ? `, tedy ${fmt1(1 / lead)}× méně.` : ", tedy zhruba stejně.")}{" "}
-          {majors.map((m, i) => `${i ? ", " : "Zásadních změn: "}${m.name} ${m.major} z ${m.n} (${pctTxt(m.n ? (100 * m.major) / m.n : 0)})`).join("")}.
-        </p>
-      )}
+      <p class="cmp-take">
+        Podíl tématu na změnách: {overall.map((o, i) => `${i ? ", " : ""}${o.name} ${pctTxt(o.share)}`).join("")}
+        {lead > 0 && (lead >= 1.2 ? ` (${b!.name} ${fmt1(lead)}× víc)` : lead <= 0.83 ? ` (${b!.name} ${fmt1(1 / lead)}× méně)` : " (zhruba stejně)")}.{" "}
+        Zásadních změn: {majors.map((m, i) => `${i ? ", " : ""}${m.name} ${m.major} z ${m.n} (${pctTxt(m.n ? (100 * m.major) / m.n : 0)})`).join("")}.
+      </p>
       {series.map(({ t, weeks }) => {
         const n = weeks.reduce((s, w) => s + w.added + w.fixed, 0);
         const major = weeks.reduce((s, w) => s + w.major, 0);
@@ -366,21 +365,23 @@ export const CompareView: FC<{ tools: ToolHistory[]; terms: Term[]; topicKey: st
           })}
         </div>
       </div>
-      {a && b && (() => {
+      {(() => {
         const events = terms.filter((t) => t.kind === "event");
-        const [ta, tb] = [series[0]!.t.tool, series[1]!.t.tool];
-        const both = events.filter((t) => t.uses[ta] && t.uses[tb]);
-        const onlyA = events.filter((t) => t.uses[ta] && !t.uses[tb] && (t.uses[ta]?.count ?? 0) >= 2);
-        const onlyB = events.filter((t) => t.uses[tb] && !t.uses[ta]);
+        const keys = series.map(({ t }) => t.tool);
+        const all = events.filter((t) => keys.every((k) => t.uses[k]));
+        // U hlavního nástroje jen pojmy zmíněné aspoň dvakrát (jinak šum z jednorázových zmínek).
+        const only = series.map(({ t }, i) => ({
+          name: t.name,
+          list: events.filter((x) => x.uses[t.tool] && keys.every((k) => k === t.tool || !x.uses[k]) && (i > 0 || (x.uses[t.tool]?.count ?? 0) >= 2)),
+        }));
         const link = (t: Term) => <a href={`/novinky-cc/temata/${topicKey}?pojem=${encodeURIComponent(t.term)}#detail`}><code>{t.term}</code></a>;
         const list = (xs: Term[]) => xs.map((t, i) => <>{i ? ", " : ""}{link(t)}</>);
-        return both.length + onlyA.length + onlyB.length > 0 ? (
+        return all.length + only.reduce((s, o) => s + o.list.length, 0) > 0 ? (
           <dl class="cmp-terms">
-            {both.length > 0 && <><dt>Zmíněno u obou</dt><dd>{list(both)}</dd></>}
-            {onlyA.length > 0 && <><dt>Jen {a.name}</dt><dd>{list(onlyA)}</dd></>}
-            {onlyB.length > 0 && <><dt>Jen {b.name}</dt><dd>{list(onlyB)}</dd></>}
+            {all.length > 0 && <><dt>{keys.length === 2 ? "Zmíněno u obou" : "Zmíněno u všech"}</dt><dd>{list(all)}</dd></>}
+            {only.filter((o) => o.list.length).map((o) => <><dt>Jen {o.name}</dt><dd>{list(o.list)}</dd></>)}
             <dd class="cmp-note">
-              Podle zmínek v changelogu: u {a.name} od {day(series[0]!.t.since!)}, u {b.name} od {day(series[1]!.t.since!)}. Nástroj může funkci
+              Podle zmínek v changelogu: {series.map(({ t }, i) => `${i ? ", " : ""}u ${t.name} od ${day(t.since!)}`).join("")}. Nástroj může funkci
               mít, i když ji changelog nezmínil.
             </dd>
           </dl>

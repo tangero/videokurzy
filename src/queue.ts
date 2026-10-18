@@ -182,7 +182,9 @@ export async function handleQueue(
           console.log(`[queue] tools.week ${tool} ${w.week.year}-w${w.week.week}: ${w.features.length} novinek z ${w.counts.collected} položek, vyřazeno ${w.dropped.length}`);
           // Automatické vydání: anglický přehled týdne (už vydaný se nepřepíše).
           const { getCcNewsAutopublish } = await import("./lib/cc-news/settings");
-          if (w.features.length > 0 && (await getCcNewsAutopublish(db))) {
+          // Jen nástroje s anglickou řadou na webu (TOOLS[].englishWeekly, WEEKLY_TOOLS webu).
+          const { TOOLS } = await import("./lib/tools/registry");
+          if (w.features.length > 0 && TOOLS[tool].englishWeekly && (await getCcNewsAutopublish(db))) {
             const { toolSelectionId } = await import("./lib/tools/weekly-tool");
             await enqueueCcNewsEnglish(env, toolSelectionId(tool, w.week));
           }
