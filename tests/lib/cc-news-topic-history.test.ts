@@ -33,6 +33,19 @@ describe("buildToolHistory", () => {
   });
 });
 
+describe("fáze z týdenní historie", () => {
+  it("špička překrývající se s posledními týdny se počítá do vrcholu (bez falešného rekordu)", () => {
+    // Uzavřené týdny 2026-w34 až w41: [1,1,1,20,20,1,1,2]; poslední 4 týdny mají průměr 6, dřívější vrchol 10,5.
+    const counts = [1, 1, 1, 20, 20, 1, 1, 2];
+    const items = counts.flatMap((n, w) =>
+      Array.from({ length: n }, (_, k) => it_({ id: `w${w}-${k}`, publishedAt: Date.UTC(2026, 7, 17) + w * 7 * 86_400_000 })),
+    );
+    const h = buildToolHistory("claude-code", items, new Map(), NOW);
+    expect(h.recentPerWeek).toBe(6);
+    expect(h.phase).not.toBe("peak");
+  });
+});
+
 describe("phaseOf", () => {
   it("špička, růst, klid a dlouhé ticho", () => {
     expect(phaseOf(10, 3, 8, 0)).toBe("peak");

@@ -130,9 +130,10 @@ export function buildToolHistory(tool: ToolKey, items: HistoryItem[], totals: Ma
   const n = (w: HistoryWeek) => w.added + w.fixed;
   const recentPerWeek = recent.length ? recent.reduce((s, w) => s + n(w), 0) / recent.length : 0;
   const avgPerWeek = closed.length ? closed.reduce((s, w) => s + n(w), 0) / closed.length : 0;
-  // Vrchol = nejlepší čtyřtýdenní průměr před posledními čtyřmi týdny.
+  // Vrchol = nejlepší čtyřtýdenní průměr ze všech dřívějších oken, i těch, která
+  // se s posledními čtyřmi týdny překrývají (jinak by špička těsně před nimi unikla).
   let peakPerWeek = 0;
-  for (let i = 0; i + 4 <= closed.length - 4; i++) {
+  for (let i = 0; i + 4 <= closed.length - 1; i++) {
     peakPerWeek = Math.max(peakPerWeek, closed.slice(i, i + 4).reduce((s, w) => s + n(w), 0) / 4);
   }
   const lastAt = own[own.length - 1]!.publishedAt;
