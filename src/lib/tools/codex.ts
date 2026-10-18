@@ -7,22 +7,16 @@
 // „## Chores“ a seznam PR („## Changelog“, starší „### PRs Merged“), který se nesbírá.
 // Starší vydání (do 0.59) mají místo New Features oddíl „### Highlights“.
 // API vrací nejvýš 1000 vydání (10 stran po 100, včetně předběžných): historie
-// proto sahá zhruba do listopadu 2025.
+// proto sahá zhruba do listopadu 2025. Stahování stran: github-releases.ts.
 
-import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
-import { ccChangeItem } from "../../db/schema";
-import { compareVersions, sha8, type ChangeType, type ChangelogEntry } from "../cc-news/changelog-source";
-import { syncChangelogEntries } from "../cc-news/classify";
+import { sha8, type ChangeType, type ChangelogEntry } from "../cc-news/changelog-source";
+import { releasesUrl, syncGithubReleases, type GithubRelease, type ReleasesSource, type ReleasesSyncResult } from "./github-releases";
 import type { ToolKey } from "./registry";
 
 type Db = ReturnType<typeof drizzle>;
 
 export const CODEX: ToolKey = "codex";
-export const CODEX_RELEASES_URL = (page: number) => `https://api.github.com/repos/openai/codex/releases?per_page=100&page=${page}`;
-const FETCH_TIMEOUT_MS = 15_000;
-/** Strop stran na jeden běh; první naplnění projde všech 10 stran, které API vydá. */
-export const MAX_PAGES = 10;
 
 type Section = { type: ChangeType; scope?: string } | null;
 
@@ -44,14 +38,6 @@ const SECTION_TYPES: Record<string, Section> = {
 };
 
 const TAG_RE = /^rust-v(\d+\.\d+\.\d+)$/;
-
-export interface GithubRelease {
-  tag_name: string;
-  prerelease: boolean;
-  draft: boolean;
-  published_at: string | null;
-  body: string | null;
-}
 
 /** Text položky bez odkazů na PR na konci („(#123, #456)“, „— @autor“). */
 export function cleanItem(text: string): string {
@@ -99,65 +85,17 @@ export async function parseCodexRelease(r: GithubRelease): Promise<ChangelogEntr
   return out;
 }
 
-export async function latestStoredCodexVersion(db: Db): Promise<string | null> {
-  const rows = await db.selectDistinct({ v: ccChangeItem.version }).from(ccChangeItem).where(eq(ccChangeItem.tool, CODEX));
-  return rows.map((r) => r.v).sort(compareVersions).pop() ?? null;
+export const CODEX_SOURCE: ReleasesSource = {
+  tool: CODEX,
+  repo: "openai/codex",
+  version: (r) => r.tag_name.match(TAG_RE)?.[1] ?? null,
+  parse: parseCodexRelease,
+};
+
+export const CODEX_RELEASES_URL = (page: number) => releasesUrl(CODEX_SOURCE.repo, page);
+
+export function syncCodex(db: Db, opts: { token?: string; f?: typeof fetch } = {}): Promise<ReleasesSyncResult> {
+  return syncGithubReleases(db, CODEX_SOURCE, opts);
 }
 
-export interface CodexSyncResult {
-  /** Nejnovější stabilní verze podle GitHubu. */
-  newest: string | null;
-  latest: string | null;
-  added: number;
-  pages: number;
-  /** Seznam vydání se podařilo projít od nejnovějšího (podmínka pro týdenní přehled). */
-  caughtUp: boolean;
-  backfilled: boolean;
-}
-
-/**
- * Denní synchronizace: stáhne strany vydání od nejnovějšího, dokud nenarazí na
- * uloženou verzi (nebo na konec, který API vydá). `token` je volitelný: bez něj
- * platí limit 60 požadavků za hodinu na IP, který sdílí i ostatní.
- */
-export async function syncCodex(db: Db, opts: { token?: string; f?: typeof fetch } = {}): Promise<CodexSyncResult> {
-  const f = opts.f ?? fetch;
-  const headers: Record<string, string> = {
-    accept: "application/vnd.github+json",
-    "user-agent": "kurzy.vibecoding.cz cc-news",
-    "x-github-api-version": "2022-11-28",
-  };
-  if (opts.token) headers.authorization = `Bearer ${opts.token}`;
-  const stored = await latestStoredCodexVersion(db);
-  const collected: ChangelogEntry[] = [];
-  let newest: string | null = null;
-  let pages = 0;
-  let reachedStored = false;
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const res = await f(CODEX_RELEASES_URL(page), { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    if (!res.ok) throw new Error(`codex releases page ${page} failed: ${res.status}`);
-    const list = (await res.json()) as GithubRelease[];
-    pages++;
-    if (!Array.isArray(list) || list.length === 0) break;
-    for (const r of list) {
-      const v = r.tag_name.match(TAG_RE)?.[1];
-      if (!v || r.prerelease || r.draft) continue;
-      if (!newest || compareVersions(v, newest) > 0) newest = v;
-      if (stored && compareVersions(v, stored) <= 0) {
-        reachedStored = true;
-        continue;
-      }
-      collected.push(...(await parseCodexRelease(r)));
-    }
-    if (reachedStored) break;
-  }
-  const added = await syncChangelogEntries(db, collected, CODEX);
-  const latest = await latestStoredCodexVersion(db);
-  return {
-    newest, latest, added, pages,
-    // Uložená verze může zaostávat za nejnovější, když vydání nemá žádnou položku
-    // produktu (jen seznam PR); rozhoduje, že se seznam od nejnovějšího prošel.
-    caughtUp: newest !== null,
-    backfilled: !stored,
-  };
-}
+export type { GithubRelease };

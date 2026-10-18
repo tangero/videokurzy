@@ -2712,9 +2712,10 @@ admin.post("/admin/tools/:tool/sync", async (c) => {
     const { syncGrokBuild } = await import("../lib/tools/grok-build");
     const r = await syncGrokBuild(drizzle(c.env.DB));
     msg = `stable ${escapeHtml(r.stable)}, uloženo do ${escapeHtml(r.latest ?? "–")}, nových položek ${r.added}${r.backfilled ? " (historie z GitHubu)" : ""}${r.gap ? ", ⚠️ mezera v řadě verzí" : ""}`;
-  } else if (tool === "codex") {
-    const { syncCodex } = await import("../lib/tools/codex");
-    const r = await syncCodex(drizzle(c.env.DB), { token: c.env.VIBECODING_SITE_GITHUB_TOKEN });
+  } else if (tool === "codex" || tool === "antigravity") {
+    const { syncGithubReleases } = await import("../lib/tools/github-releases");
+    const src = tool === "codex" ? (await import("../lib/tools/codex")).CODEX_SOURCE : (await import("../lib/tools/antigravity")).ANTIGRAVITY_SOURCE;
+    const r = await syncGithubReleases(drizzle(c.env.DB), src, { token: c.env.VIBECODING_SITE_GITHUB_TOKEN });
     msg = `nejnovější ${escapeHtml(r.newest ?? "–")}, uloženo do ${escapeHtml(r.latest ?? "–")}, nových položek ${r.added}, stran ${r.pages}${r.backfilled ? " (první naplnění)" : ""}`;
   } else {
     return c.text("Neznámý nástroj", 404);
