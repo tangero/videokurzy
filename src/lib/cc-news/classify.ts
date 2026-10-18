@@ -91,7 +91,6 @@ const CLASSIFY_SYSTEM = (tool: string) => [
 
 interface Classified { id: string; topic: string; significance: number; reason: string }
 
-/** Dávka, která ani po opakování nevrátí platný JSON, se rozpůlí. */
 /** Odpověď modelu jako pole: samotné pole, jedna položka, nebo obal typu {"items": [...]}. */
 function asClassifiedList(out: unknown): Classified[] {
   if (Array.isArray(out)) return out;
@@ -121,6 +120,7 @@ async function classifyRows(llm: LlmFn, batch: Row[], depth = 2): Promise<Classi
   return results;
 }
 
+/** Dávka, která ani po opakování nevrátí platný JSON, se rozpůlí. */
 async function classifyBatch(llm: LlmFn, batch: Row[]): Promise<Classified[]> {
   try {
     const out = await llmJson<Classified[] | Classified | Record<string, unknown>>(llm, CLASSIFY_SYSTEM(batch[0]!.tool), batch.map(line).join("\n"), 6000);
