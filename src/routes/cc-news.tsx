@@ -7,8 +7,11 @@ import { fixDocLinksInMarkdown } from "../lib/cc-news/editor";
 import { ccNewsItem } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { renderMarkdown, escapeHtml } from "../lib/markdown";
-import { CcNewsListPage, CcNewsArticlePage, CcTopicsPage, CcTopicPage } from "../views/cc-news";
+import { CcNewsListPage, CcNewsArticlePage, CcTopicsPage, CcTopicPage, type CcTopicSummary } from "../views/cc-news";
 import type { Env, Variables } from "../types";
+import { selectionKvKey, type WeekSelection } from "../lib/cc-news/weekly";
+import { TOPIC_KEYS, topicLabel } from "../lib/cc-news/taxonomy";
+import { getTopicTrends, type TopicTrends } from "../lib/cc-news/trends";
 
 /** Slug z articlePath `src/content/novinky-cc/<slug>.md`. */
 export function slugFromPath(articlePath: string | null): string | null {
@@ -156,9 +159,15 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
         const slug = slugFromPath(r.articlePath);
         if (!slug) return null;
         let fm: { title: string | null; excerpt: string | null } = { title: null, excerpt: null };
+        // Výběr týdne (hlavní novinky + témata) existuje jen u vydání ze changelogu (od W38).
+        let sel: WeekSelection | null = null;
         try {
-          const md = await c.env.KV.get(publishedKvKey(r.id));
+          const [md, s] = await Promise.all([
+            c.env.KV.get(publishedKvKey(r.id)),
+            r.sourceId.startsWith("/changelog/") ? c.env.KV.get<WeekSelection>(selectionKvKey(r.id), "json") : null,
+          ]);
           if (md) fm = parseFrontMatter(md);
+          sel = s;
         } catch (err) {
           console.error(`[cc-news] KV čtení selhalo pro ${r.id}, fallback na weekLabel:`, (err as Error)?.message);
         }
@@ -168,16 +177,27 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
           excerpt: fm.excerpt,
           versionRange: r.versionRange,
           publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
+          topics: (sel?.topics ?? []).filter((k) => TOPIC_KEYS.has(k) && k !== "other").map((k) => ({ key: k, label: topicLabel(k) })),
+          features: (sel?.features ?? []).slice(0, 3).map((f) => ({ title: f.title, lede: f.lede })),
         };
       }),
     )
   ).filter((x): x is NonNullable<typeof x> => x !== null);
+
+  // Trendy jsou doplněk: jejich selhání nesmí shodit seznam vydání.
+  let trends: TopicTrends | null = null;
+  try {
+    trends = await getTopicTrends(c.env, db, new Date());
+  } catch (err) {
+    console.error("[cc-news] výpočet trendů selhal:", (err as Error)?.message);
+  }
 
   const user = c.get("user")!;
   return c.html(
     <CcNewsListPage
       user={{ name: user.name ?? null, email: user.email }}
       items={items}
+      trends={trends}
     />,
   );
 });
@@ -226,8 +246,21 @@ ccNewsRoutes.get("/novinky-cc/temata", async (c) => {
       key: t.key, label: t.label, description: t.description,
       count: Number(byTopic.get(t.key)?.n ?? 0),
       lastAt: byTopic.get(t.key)?.last ? Number(byTopic.get(t.key)!.last) * 1000 : null,
-    }))
-    .sort((a, b) => b.count - a.count);
+    }));
+  // Řazení podle aktuálního tempa (podíl za poslední 4 týdny), ne podle celkového počtu od 2025:
+  // jinak je nahoře napořád téma s nejdelší historií. Bez trendů zpět na celkový počet.
+  let trends: TopicTrends | null = null;
+  try {
+    trends = await getTopicTrends(c.env, db, new Date());
+  } catch (err) {
+    console.error("[cc-news] výpočet trendů selhal:", (err as Error)?.message);
+  }
+  const shareOf = new Map(trends?.topics.map((t) => [t.key, t]) ?? []);
+  for (const t of topics) {
+    const tr = shareOf.get(t.key);
+    if (tr && trends!.total > 0) Object.assign(t, { share: tr.share, direction: tr.direction });
+  }
+  topics.sort((a: CcTopicSummary, b: CcTopicSummary) => (b.share ?? -1) - (a.share ?? -1) || b.count - a.count);
   const user = c.get("user")!;
   return c.html(<CcTopicsPage user={{ name: user.name ?? null, email: user.email }} topics={topics} />);
 });

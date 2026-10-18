@@ -84,3 +84,57 @@ describe("CcNewsArticlePage — design serveru", () => {
     expect(html).toContain("tělo");
   });
 });
+
+describe("CcNewsListPage — trendy, aktuální vydání a archiv", () => {
+  const trends = {
+    from: Date.UTC(2026, 8, 14), to: Date.UTC(2026, 9, 12), total: 10, prevTotal: 10,
+    topics: [
+      { key: "cloud", label: "Cloud a vzdálené relace", share: 60, prevShare: 10, delta: 50, direction: "up" as const, added: 2, fixed: 4, major: 1, highlight: "Rutiny v cloudu dostaly plánovač." },
+      { key: "tui", label: "Terminál a ovládání", share: 40, prevShare: 90, delta: -50, direction: "down" as const, added: 0, fixed: 4, major: 0, highlight: null },
+      { key: "mcp", label: "MCP", share: 0, prevShare: 0, delta: 0, direction: "flat" as const, added: 0, fixed: 0, major: 0, highlight: null },
+    ],
+    rising: [] as never[],
+  };
+  trends.rising = [trends.topics[0]] as never[];
+  const items = [
+    { slug: "2026-w41-novinky", title: "Týden 41", excerpt: "Perex.", versionRange: "v2.1.290–v2.1.300", publishedAt: Date.UTC(2026, 9, 12),
+      topics: [{ key: "cloud", label: "Cloud a vzdálené relace" }], features: [{ title: "Rutiny", lede: "Plánovač v cloudu." }] },
+    { slug: "2026-w40-novinky", title: "Týden 40", excerpt: "Starší perex.", versionRange: null, publishedAt: Date.UTC(2026, 9, 5), topics: [], features: [] },
+  ];
+
+  it("pořadí trendy → aktuální vydání → archiv → materiály", () => {
+    const html = render(CcNewsListPage({ user: USER, items, trends }));
+    const at = (s: string) => html.indexOf(s);
+    expect(at("Kam teď míří vývoj")).toBeGreaterThan(-1);
+    expect(at("Kam teď míří vývoj")).toBeLessThan(at("Aktuální vydání"));
+    expect(at("Aktuální vydání")).toBeLessThan(at("Starší vydání"));
+    expect(at("Starší vydání")).toBeLessThan(at("Materiály ke stažení"));
+  });
+
+  it("panel ukazuje rostoucí téma s podílem, větou a pruhy nové/opravy", () => {
+    const html = render(CcNewsListPage({ user: USER, items, trends }));
+    expect(html).toContain("Rutiny v cloudu dostaly plánovač.");
+    expect(html).toContain("60,0 %");
+    expect(html).toContain("+50,0 b.");
+    expect(html).toContain('href="/novinky-cc/temata/cloud"');
+    expect(html).toContain("cc-bar-new");
+    expect(html).toContain("2 nových, 4 oprav");
+    // Téma bez změn v okně se v pruzích nezobrazí.
+    expect(html).not.toContain(">MCP<");
+    expect(html).toContain("jazykový model");
+  });
+
+  it("aktuální vydání nese hlavní novinky a štítky témat; starší jsou v kompaktním archivu", () => {
+    const html = render(CcNewsListPage({ user: USER, items, trends }));
+    expect(html).toContain("Plánovač v cloudu.");
+    expect(html).toContain("cc-chip");
+    expect(html).toContain('href="/novinky-cc/2026-w40-novinky"');
+    expect(html).toContain("cc-archive");
+  });
+
+  it("bez trendů se panel nevykreslí", () => {
+    const html = render(CcNewsListPage({ user: USER, items, trends: null }));
+    expect(html).not.toContain("Kam teď míří vývoj");
+    expect(html).toContain("Aktuální vydání");
+  });
+});
