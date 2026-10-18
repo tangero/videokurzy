@@ -7,7 +7,8 @@ a Muse Code (zatím interně, ne do newsletteru). Zapracovaná oponentura z téh
 
 Pipeline Claude Code je graf napsaný v kódu: sběr (kód) → třídění (Haiku) →
 výběr (Sonnet) → kontrola faktů (Haiku) → psaní (Sonnet) → kontroly v kódu →
-lidské schválení → publikace. Stav je v D1 a KV, spouští cron a fronta.
+publikace (automaticky od 18. 10. 2026, lidské schválení se nevyžaduje; autor
+upravuje zpětně). Stav je v D1 a KV, spouští cron a fronta.
 Přepis do grafového frameworku nic nepřinese. Přidáváme jen uzly, které dnes chybí.
 
 Od 17. 10. se ověřený výběr týdne ukládá (`cc-news:selection:<itemId>`) a psaní
@@ -91,7 +92,7 @@ rozhodnutí.
                  ▼            ▼
    [ověřovatel faktů, jiný výrobce] + [kontroly v kódu]
                  ▼
-          [lidská brána] → publikace / PR do webu
+          publikace / PR do webu → sloučení po buildu (automaticky)
 ```
 
 ## Analytik trendů

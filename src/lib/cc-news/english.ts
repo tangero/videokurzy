@@ -132,6 +132,14 @@ export function publicationDate(sel: Pick<WeekSelection, "week">): Date {
   return new Date(isoWeekBounds(sel.week.year, sel.week.week).end.getTime() + 1);
 }
 
+const SITE_URL = "https://www.vibecoding.cz";
+
+/** Adresa vydaného přehledu a jeho úprava v Keystatic (GitHub režim, větev main). */
+export function englishWeeklyUrls(sel: Pick<WeekSelection, "tool" | "week">): { url: string; editUrl: string } {
+  const slug = `${sel.tool}-weekly-${sel.week.year}-w${pad(sel.week.week)}`;
+  return { url: `${SITE_URL}/en/${slug}/`, editUrl: `${SITE_URL}/keystatic/branch/main/collection/english/item/${slug}` };
+}
+
 /** Cesta souboru podle kontraktu: src/content/english/<tool>-weekly-<rok>-w<NN>.md. */
 export function englishWeeklyPath(sel: Pick<WeekSelection, "tool" | "week">): string {
   return `src/content/english/${sel.tool}-weekly-${sel.week.year}-w${pad(sel.week.week)}.md`;
@@ -215,7 +223,7 @@ function toBase64(text: string): string {
   return btoa(bin);
 }
 
-export interface SitePr { url: string; branch: string; path: string; created: boolean; sha?: string }
+export interface SitePr { url: string; number?: number; branch: string; path: string; created: boolean; sha?: string }
 
 /** Existuje soubor na výchozí větvi repa (tj. už je vydaný)? */
 export async function fileOnDefaultBranch(token: string, repo: string, path: string, f: GhFetch = fetch): Promise<boolean> {
@@ -260,12 +268,40 @@ export async function openSitePullRequest(
   const writtenSha = written.content?.sha;
 
   const owner = repo.split("/")[0]!;
-  const open = await gh.json<{ html_url: string }[]>(
+  const open = await gh.json<{ html_url: string; number: number }[]>(
     await gh.call("GET", `/pulls?state=open&head=${encodeURIComponent(`${owner}:${pr.branch}`)}`), "list pulls");
-  if (open[0]) return { url: open[0].html_url, branch: pr.branch, path: file.path, created: false, sha: writtenSha };
-  const created = await gh.json<{ html_url: string }>(
+  if (open[0]) return { url: open[0].html_url, number: open[0].number, branch: pr.branch, path: file.path, created: false, sha: writtenSha };
+  const created = await gh.json<{ html_url: string; number: number }>(
     await gh.call("POST", "/pulls", { title: pr.title, head: pr.branch, base, body: pr.body }), "create pull");
-  return { url: created.html_url, branch: pr.branch, path: file.path, created: true, sha: writtenSha };
+  return { url: created.html_url, number: created.number, branch: pr.branch, path: file.path, created: true, sha: writtenSha };
+}
+
+export type MergeOutcome =
+  | { kind: "merged"; url: string }
+  | { kind: "already-merged"; url: string }
+  | { kind: "pending"; state: string }
+  | { kind: "blocked"; reason: string; url: string };
+
+/**
+ * Sloučí PR, až projdou kontroly (build webu na Cloudflare Pages). Repo nemá
+ * ochranu větví, takže se rozhoduje podle `mergeable_state` PR: `clean` = všechny
+ * kontroly prošly, `unstable` = některá běží nebo selhala, `unknown` = GitHub ještě
+ * počítá, `dirty` = konflikt. Po sloučení smaže větev.
+ */
+export async function mergeSitePullRequest(token: string, repo: string, number: number, f: GhFetch = fetch): Promise<MergeOutcome> {
+  const gh = github(token, repo, f);
+  const pr = await gh.json<{ state: string; merged: boolean; mergeable_state: string; html_url: string; head: { ref: string; sha: string }; title: string }>(
+    await gh.call("GET", `/pulls/${number}`), "read pull");
+  if (pr.merged) return { kind: "already-merged", url: pr.html_url };
+  if (pr.state !== "open") return { kind: "blocked", reason: "PR je zavřený bez sloučení", url: pr.html_url };
+  if (pr.mergeable_state === "dirty") return { kind: "blocked", reason: "konflikt s main", url: pr.html_url };
+  if (pr.mergeable_state !== "clean") return { kind: "pending", state: pr.mergeable_state };
+  const res = await gh.call("PUT", `/pulls/${number}/merge`, { merge_method: "merge", sha: pr.head.sha, commit_title: `${pr.title} (#${number})` });
+  // 405 = mezitím nesloučitelné, 409 = hlava PR se změnila: zkusit znovu později.
+  if (res.status === 405 || res.status === 409) return { kind: "pending", state: `merge ${res.status}` };
+  await gh.json(res, "merge pull");
+  await gh.call("DELETE", `/git/refs/heads/${pr.head.ref.split("/").map(encodeURIComponent).join("/")}`).catch(() => undefined);
+  return { kind: "merged", url: pr.html_url };
 }
 
 // ─── Celý krok ────────────────────────────────────────────────────

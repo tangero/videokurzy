@@ -2666,6 +2666,8 @@ admin.get("/admin/tools/:tool", async (c) => {
   const week = m ? { year: Number(m[1]), week: Number(m[2]) } : lastClosedWeek(new Date());
   const wk = `${week.year}-w${String(week.week).padStart(2, "0")}`;
   const selId = toolSelectionId(tool, week);
+  const { englishWeeklyUrls } = await import("../lib/cc-news/english");
+  const enUrls = englishWeeklyUrls({ tool, week });
   const { start, end } = isoWeekBounds(week.year, week.week);
   const db = drizzle(c.env.DB);
   const rows = await db.select().from(ccChangeItem)
@@ -2694,8 +2696,9 @@ ${saved ? `<h2>Výběr (postaven ${e(saved.builtAt.slice(0, 16).replace("T", " "
 ${saved.dropped.length ? `<h3>Vyřazeno kontrolou faktů</h3><ul>${saved.dropped.map((d) => `<li>${e(d.title)}: ${e(d.problem)}</li>`).join("")}</ul>` : ""}
 ${saved.skipped.length ? `<h3>Vynechané zásadní změny</h3><ul>${saved.skipped.map((k) => `<li>${e(k.id)}: ${e(k.reason)}</li>`).join("")}</ul>` : ""}
 <h3>Anglický přehled (vibecoding.cz/en)</h3>
+<p>Při automatickém vydávání vznikne a vyjde sám po postavení výběru. <a href="${e(enUrls.url)}">Článek na webu</a> · <a href="${e(enUrls.editUrl)}">Upravit v Keystatic</a></p>
 <p><a href="/admin/api/cc-news/english?itemId=${e(selId)}">Náhled nanečisto</a> (napíše článek, PR neotevře; trvá cca minutu)</p>
-<form method="post" action="/admin/api/cc-news/english"><input type="hidden" name="itemId" value="${e(selId)}"><input type="hidden" name="rebuildSelection" value="1"><button>Otevřít PR do webu</button> <label><input type="checkbox" name="force" value="1"> napsat znovu a přepsat</label></form>` : "<p class=muted>Výběr pro tento týden zatím není postavený.</p>"}
+<form method="post" action="/admin/api/cc-news/english"><input type="hidden" name="itemId" value="${e(selId)}"><input type="hidden" name="rebuildSelection" value="1"><button>Otevřít PR do webu ručně</button> <label><input type="checkbox" name="force" value="1"> napsat znovu a přepsat i vydaný článek</label></form>` : "<p class=muted>Výběr pro tento týden zatím není postavený.</p>"}
 <h2>Položky</h2><table><tr><th>verze</th><th>typ</th><th>téma</th><th>význam</th><th>text</th></tr>
 ${rows.map((r) => `<tr class="sig${r.significance ?? 0}"><td>${e(r.version)}</td><td>${e(r.type)}${r.scope ? ` [${e(r.scope)}]` : ""}</td><td>${e(r.topic ?? "–")}</td><td>${e(r.significance ?? "–")}</td><td>${e(r.text)}</td></tr>`).join("")}</table>`;
   return c.html(html);
@@ -3379,6 +3382,8 @@ async function loadSettings(db: ReturnType<typeof drizzle>) {
     ccNewsLiveSend: cfg.cc_news_live_send === "true",
     // Prázdné = fallback na ADMIN_EMAILS (řeší getCcNewsApprovalEmails za běhu).
     ccNewsApprovalEmails: cfg.cc_news_approval_emails ?? "",
+    // Výchozí zapnuto (chybějící řádek), viz getCcNewsAutopublish.
+    ccNewsAutopublish: cfg.cc_news_autopublish !== "false",
     discount: {
       active: cfg.discount_active === "true",
       percent: parseInt(cfg.discount_percent ?? "0", 10),
@@ -3423,6 +3428,7 @@ admin.post("/admin/settings", async (c) => {
 
   const activeBank = body.active_bank === "creditas" ? "creditas" : "fio";
   const ccNewsLiveSend = body.cc_news_live_send === "on";
+  const ccNewsAutopublish = body.cc_news_autopublish === "on";
   // Příjemci schvalovacího e-mailu — normalizuj na čistý seznam (po řádcích),
   // zahoď neplatné tvary. Prázdné = fallback na ADMIN_EMAILS za běhu.
   const { parseApprovalEmails } = await import("../lib/cc-news/settings");
@@ -3434,6 +3440,7 @@ admin.post("/admin/settings", async (c) => {
     ["active_bank", activeBank],
     ["cc_news_live_send", ccNewsLiveSend ? "true" : "false"],
     ["cc_news_approval_emails", ccNewsApprovalEmails],
+    ["cc_news_autopublish", ccNewsAutopublish ? "true" : "false"],
     ["price_individual", String(priceIndividual)],
     ["price_organization", String(priceOrganization)],
     ["benefits_individual", benefitsIndividual],

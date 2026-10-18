@@ -1,7 +1,7 @@
 // Hromadné doplnění posledních N týdnů „Novinky v Claude Code" rovnou na web
 // (gated sekce /novinky-cc) — BEZ schvalovacího e-mailu a BEZ newsletteru.
 //
-// Běžný tok (cron → fronta → schvalovací e-mail → lidské schválení) řeší JEDEN
+// Běžný tok (cron → fronta → automatické vydání, případně schválení) řeší JEDEN
 // nejnovější týden. Tady doplníme více týdnů najednou: detekce posledních N
 // digestů → redakční zpracování (vč. LLM překladu dle CC_NEWS_LLM) → přímá
 // publikace do KV. Žádný e-mail neodejde; newsletterSentAt zůstává prázdné, takže

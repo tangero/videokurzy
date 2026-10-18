@@ -5,7 +5,9 @@
 // Defaultně se NIC neodesílá ani nepublikuje — jen se uloží koncept a připraví
 // dry-run schvalovací e-mail. Reálné odeslání e-mailu vyžaduje obě brány
 // (env CC_NEWS_DRY_RUN=0 + admin přepínač cc_news_live_send) — viz settings.ts.
-// Publikace článku nastává vždy až po lidském kliknutí na schvalovací link.
+// Publikace: lidské schválení před publikací se nevyžaduje (Patrick, 18. 10. 2026).
+// S přepínačem cc_news_autopublish (výchozí) vyjde týdenní článek ze changelogu
+// sám a autor ho upravuje zpětně; po vypnutí přepínače se vrací schvalovací link.
 
 import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
@@ -54,6 +56,29 @@ export async function processCcNewsItem(
     const { buildChangelogArticle, reviewKvKey } = await import("./weekly");
     const article = await buildChangelogArticle(db, env, ref.itemId, now);
     await env.KV.put(reviewKvKey(ref.itemId), JSON.stringify(article.review));
+    // Automatické vydání: jen dosud nevydané vydání (nový koncept už vydaného
+    // článku jde dál přes schválení, aby se živá verze tiše nepřepsala).
+    const [row] = await db.select({ status: ccNewsItem.status }).from(ccNewsItem).where(eq(ccNewsItem.id, ref.itemId)).limit(1);
+    const { getCcNewsAutopublish } = await import("./settings");
+    if (row?.status !== "published" && (await getCcNewsAutopublish(db))) {
+      const { autoPublishDraft, reviewFindings } = await import("./draft");
+      const { weekFromSourceId } = await import("./changelog-source");
+      const { englishWeeklyUrls } = await import("./english");
+      const week = weekFromSourceId(ref.sourceId);
+      const published = await autoPublishDraft(
+        db,
+        env,
+        ref.itemId,
+        article.markdown,
+        {
+          slug: articleSlug(ref.sourceId), weekLabel: article.weekLabel, versionRange: article.versionRange,
+          findings: reviewFindings(article.review),
+          ...(week ? { english: englishWeeklyUrls({ tool: "claude-code", week }) } : {}),
+        },
+        now
+      );
+      return { ...published, usedLlm: true };
+    }
     const prepared = await prepareDraftAndApproval(
       db,
       env,

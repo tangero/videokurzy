@@ -3,7 +3,8 @@
 // Tok: redakční editor (W-004) vyrobí markdown → tady ho uložíme jako draft a
 // vygenerujeme JEDNORÁZOVÝ podepsaný schvalovací link (W-005). V dry-run režimu
 // (výchozí; mantinel kontraktu) se e-mail NEodesílá — jen sestaví a vrátí, aby
-// šel ověřit v testu. Publikace nastává až po lidském kliknutí na link (W-006).
+// šel ověřit v testu. Publikace nastává rovnou, když je zapnuté automatické
+// vydávání (autoPublishDraft, výchozí), jinak po kliknutí na link (W-006).
 //
 // „Uložení do repa": skutečný markdown se v běhu ukládá do KV (artefakt), na
 // řádce cc_news_item se zapíše `articlePath` (zamýšlená cesta v repu) a
@@ -14,7 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { ccNewsItem } from "../../db/schema";
-import { ccNewsApprovalHtml, sendEmail } from "../email";
+import { ccNewsApprovalHtml, ccNewsPublishedHtml, sendEmail } from "../email";
 import { isCcNewsLiveSend } from "./settings";
 import {
   APPROVAL_TOKEN_TTL_MS,
@@ -54,6 +55,8 @@ export interface PreparedDraft {
   email: { to: string[]; subject: string; html: string };
   mode: "dry-run" | "live";
   sent: boolean;
+  /** Vydáno automaticky (bez schválení); volající zařadí anglický přehled. */
+  autopublished?: boolean;
 }
 
 const baseUrl = (env: DraftEnv): string =>
@@ -145,6 +148,75 @@ export async function prepareDraftAndApproval(
   return { itemId, articlePath, approveUrl, email, mode: "live", sent };
 }
 
+/** Nálezy revize článku jako řádky pro oznámení (prázdné = bez nálezů). */
+export function reviewFindings(review: {
+  versionIssues: string[]; strippedLinks: string[]; editorNotes: string[];
+  skipped: { id: string; reason: string }[]; dropped: { title: string; problem: string }[];
+}): string[] {
+  return [
+    ...(review.versionIssues.length ? [`Verze mimo citované položky: ${review.versionIssues.join(", ")}`] : []),
+    ...review.dropped.map((d) => `Vyřazeno kontrolou faktů: ${d.title} (${d.problem})`),
+    ...review.skipped.map((k) => `Nezařazená zásadní změna: ${k.id} (${k.reason})`),
+    ...review.editorNotes.map((n) => `Poznámka modelu: ${n}`),
+    ...(review.strippedLinks.length ? [`Odstraněné odkazy: ${review.strippedLinks.join(", ")}`] : []),
+  ];
+}
+
+/**
+ * Automatické vydání (přepínač cc_news_autopublish): koncept se rovnou stane živou
+ * verzí, bez schvalovacího odkazu. Místo e-mailu „Ke schválení“ přijde oznámení
+ * s odkazy na článek a jeho úpravu a s nálezy kontrol. Selhání oznámení se jen
+ * zaloguje: článek už vyšel a retry fronty by ho stavěl znovu.
+ * Volá se jen pro dosud nevydané vydání (publikované se znovu nepublikuje).
+ */
+export async function autoPublishDraft(
+  db: Db,
+  env: DraftEnv,
+  itemId: string,
+  markdown: string,
+  meta: { slug: string; weekLabel: string; versionRange: string | null; findings: string[]; english?: { url: string; editUrl: string } },
+  now: Date
+): Promise<PreparedDraft> {
+  await env.KV.put(draftKvKey(itemId), markdown);
+  await env.KV.put(publishedKvKey(itemId), markdown);
+  const articlePath = articleRepoPath(meta.slug);
+  await db
+    .update(ccNewsItem)
+    .set({ articlePath, status: "published", publishedAt: now, approveNonce: null })
+    .where(eq(ccNewsItem.id, itemId));
+
+  const base = baseUrl(env);
+  const html = ccNewsPublishedHtml({
+    intro: `Článek Novinky v Claude Code — ${meta.weekLabel}${meta.versionRange ? ` (${meta.versionRange})` : ""} vyšel automaticky.`,
+    links: [
+      { label: "Článek na kurzy.vibecoding.cz", url: `${base}/novinky-cc/${meta.slug}` },
+      { label: "Upravit český text (admin → Newsletter)", url: `${base}/admin/newsletter` },
+      ...(meta.english
+        ? [
+          { label: "Anglická verze (vyjde během ~15 minut)", url: meta.english.url },
+          { label: "Upravit anglickou verzi (Keystatic)", url: meta.english.editUrl },
+        ]
+        : []),
+    ],
+    findings: meta.findings,
+  });
+  const { getCcNewsApprovalEmails } = await import("./settings");
+  const email = {
+    to: await getCcNewsApprovalEmails(db),
+    subject: `Vydáno: Novinky v Claude Code — ${meta.weekLabel}${meta.findings.length ? " ⚠️ s nálezy" : ""}`,
+    html,
+  };
+  const isLive = await isCcNewsLiveSend(db, env);
+  let sent = false;
+  if (isLive) {
+    sent = await sendEmail({ RESEND_API_KEY: env.RESEND_API_KEY ?? "" }, { to: email.to, subject: email.subject, html: email.html })
+      .catch(() => false);
+    if (!sent) console.error(`[cc-news] oznámení o vydání ${meta.weekLabel} (item ${itemId}) se neodeslalo; článek je vydaný`);
+  }
+  console.log(`[cc-news] ${meta.weekLabel} (item ${itemId}) vydáno automaticky, oznámení ${isLive ? (sent ? "odesláno" : "SELHALO") : "dry-run"}`);
+  return { itemId, articlePath, approveUrl: "", email, mode: isLive ? "live" : "dry-run", sent, autopublished: true };
+}
+
 export type ApproveResult =
   | { ok: true; itemId: string; status: "published" }
   | { ok: false; reason: "invalid-token" | "unknown-item" | "nonce-mismatch" | "already-published" };
@@ -155,8 +227,8 @@ export type ApproveResult =
  * `approveNonce` na řádce. Při shodě PROMOTUJE rozpracovaný draft na živou
  * publikovanou verzi (zkopíruje draft KV blob → published KV), nastaví
  * `status=published`, `publishedAt`, srovná `contentHash` (z pending) a nonce
- * SMAŽE (druhý klik už neprojde → already-published). Lidské schválení je
- * jediná cesta k publikaci (mantinel).
+ * SMAŽE (druhý klik už neprojde → already-published). Druhá cesta k publikaci
+ * je automatické vydání (autoPublishDraft), lidské schválení se nevyžaduje.
  */
 export async function approveItem(
   db: Db,

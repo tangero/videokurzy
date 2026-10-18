@@ -264,6 +264,31 @@ export function ccNewsApprovalHtml(opts: {
     </p>`);
 }
 
+const escHtml = (x: string) =>
+  x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/**
+ * Oznámení o automatickém vydání (místo schvalovacího e-mailu): co vyšlo, kde to
+ * upravit a co našly kontroly v kódu. Nálezy jsou text od modelu, proto escapované.
+ */
+export function ccNewsPublishedHtml(opts: {
+  intro: string;
+  links: { label: string; url: string }[];
+  findings: string[];
+}): string {
+  const links = opts.links
+    .map((l) => `<li><a href="${escHtml(l.url)}">${escHtml(l.label)}</a></li>`)
+    .join("");
+  const findings = opts.findings.length
+    ? `<p style="font-size: 15px; line-height: 1.5;"><strong>Nálezy kontrol v kódu</strong> (článek přesto vyšel, opravte zpětně):</p>
+       <ul style="font-size: 14px; line-height: 1.5;">${opts.findings.map((f) => `<li>${escHtml(f)}</li>`).join("")}</ul>`
+    : `<p style="font-size: 14px; color: #4b5563;">Kontroly v kódu bez nálezů.</p>`;
+  return emailWrapper(`
+    <p style="font-size: 16px; line-height: 1.5;">${escHtml(opts.intro)}</p>
+    <ul style="font-size: 15px; line-height: 1.7;">${links}</ul>
+    ${findings}`);
+}
+
 /**
  * HTML rozesílaného newsletteru „Novinky v Claude Code". Skládá volitelný
  * úvodník (osobní komentář redaktora, jen do e-mailu — ne na web) NAD vlastní
