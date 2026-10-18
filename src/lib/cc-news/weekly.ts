@@ -75,6 +75,15 @@ export function extractEditorNotes(md: string): { markdown: string; notes: strin
   return { markdown, notes };
 }
 
+/**
+ * Věty, které čtenáři mluví o vstupu modelu („The input says nothing…“, „ve vstupu není…“).
+ * Prompt to zakazuje; kontrola v kódu je ukáže v revizi.
+ */
+export function inputMentions(md: string): string[] {
+  const re = /\b(the input|in the input|ve vstupu|ze vstupu|vstup neuvádí|podklady neuvádějí|v podkladech)\b/i;
+  return md.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter((x) => re.test(x));
+}
+
 /** Čísla verzí v textu (2.1.274, v2.1.274), která nejsou mezi povolenými. */
 export function versionViolations(md: string, allowed: Set<string>): string[] {
   const found = [...md.matchAll(/\bv?(\d+\.\d+\.\d+)\b/g)].map((m) => m[1]!);
@@ -199,6 +208,8 @@ export const WRITER_SYSTEM = [
   "  čtenář funkci zapne, vypne nebo vrátí původní chování. Neuváděj ale konfiguraci samoúčelně.",
   "  Verze uváděj jen ty, které jsou u citovaných položek.",
   "- Odkazy jen na URL dokumentace uvedené ve vstupu (pole docLink); žádné jiné nevymýšlej.",
+  "- Čtenář vstup nevidí: nikdy nepiš o „vstupu“, „podkladech“ ani o tom, co v nich chybí. Chybějící",
+  "  detail vynech, nebo odkaž na dokumentaci.",
   "",
   'VÝSTUP: JSON {"title": "<český nadpis, výstižný, bez „Week N“>", "excerpt": "<1–2 věty pro výpis článků>",',
   ' "summaryPoints": ["<4–6 vět, co je nového>"], "body": "<markdown článku BEZ nadpisu, začíná perexem>"}.',
@@ -298,6 +309,7 @@ export async function writeWeeklyArticle(llm: LlmFn, sel: WeekSelection, lang: W
   // Titulek, perex a shrnutí se neopravují, jen se chybné verze ukážou v revizi.
   versionIssues = [...new Set([...versionIssues, ...versionViolations([written.title, written.excerpt, ...written.summaryPoints].join("\n"), allowedVersions)])];
   const extracted = extractEditorNotes(body);
+  const leaks = inputMentions([written.title, written.excerpt, ...written.summaryPoints, extracted.markdown].join("\n"));
   body = extracted.markdown.replace(/—/g, " - ");
   const known = new Set(sel.knownPages);
   const linkCheck = known.size > 0 ? stripUnknownDocLinks(body, known, sel.docsBase) : { markdown: body, stripped: [] };
@@ -306,7 +318,7 @@ export async function writeWeeklyArticle(llm: LlmFn, sel: WeekSelection, lang: W
     excerpt: written.excerpt.trim(),
     summaryPoints: written.summaryPoints.map((p) => p.trim()),
     body: linkCheck.markdown,
-    editorNotes: extracted.notes,
+    editorNotes: [...extracted.notes, ...leaks.map((x) => `⚠️ zmínka o vstupu modelu: ${x.slice(0, 200)}`)],
     versionIssues,
     strippedLinks: linkCheck.stripped,
   };

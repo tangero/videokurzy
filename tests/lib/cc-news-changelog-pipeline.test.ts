@@ -11,7 +11,7 @@ import {
   DOCS_INDEX_KEY, contentLines, docsPageKey, docsWeekKey, freezeWeek, parseSitemap, snapshotDocs, type DocsIndex,
 } from "../../src/lib/cc-news/docs-snapshot";
 import {
-  buildChangelogArticle, czechDateRange, extractEditorNotes, selectionKvKey, stripUnknownDocLinks, versionViolations,
+  buildChangelogArticle, czechDateRange, extractEditorNotes, inputMentions, selectionKvKey, stripUnknownDocLinks, versionViolations,
   type WeekSelection,
 } from "../../src/lib/cc-news/weekly";
 import { prepareDraftAndApproval, publishedKvKey } from "../../src/lib/cc-news/draft";
@@ -387,5 +387,12 @@ describe("opravy z code review", () => {
     const [row] = await db.select().from(ccNewsItem).where(eq(ccNewsItem.id, "p1"));
     expect(row!.status).toBe("published");
     expect(row!.approveNonce).toBeTruthy();
+  });
+});
+
+describe("zmínky o vstupu modelu", () => {
+  it("najde věty, které čtenáři mluví o vstupu", () => {
+    expect(inputMentions("Ctrl+E is faster. The input gives no numbers, so I cannot say.\nVe vstupu není cena. Input validation got better."))
+      .toEqual(["The input gives no numbers, so I cannot say.", "Ve vstupu není cena."]);
   });
 });
