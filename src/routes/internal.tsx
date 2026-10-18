@@ -143,11 +143,16 @@ async function validateMagicLinkToken(
 }
 
 internal.post("/internal/auth/magic-link", async (c) => {
+  type MagicLinkBody = { email?: string; callbackUrl?: string; purpose?: string; name?: string };
   const body = await c.req
-    .json<{ email?: string; callbackUrl?: string }>()
-    .catch(() => ({}) as { email?: string; callbackUrl?: string });
+    .json<MagicLinkBody>()
+    .catch(() => ({}) as MagicLinkBody);
 
   const email = body.email?.trim().toLowerCase();
+  // purpose "comments" = přihlášení do diskuse pod články (jiný text e-mailu).
+  const purpose = body.purpose === "comments" ? "comments" : undefined;
+  // Jméno použije Better Auth jen při založení nového účtu.
+  const name = typeof body.name === "string" ? body.name.trim().slice(0, 60) || undefined : undefined;
   const callbackUrl = body.callbackUrl;
 
   if (!email || !callbackUrl) {
@@ -160,7 +165,7 @@ internal.post("/internal/auth/magic-link", async (c) => {
   const auth = createAuth(c.env, c.executionCtx);
   try {
     await auth.api.signInMagicLink({
-      body: { email, callbackURL: callbackUrl },
+      body: { email, callbackURL: callbackUrl, name, metadata: purpose ? { purpose } : undefined },
       headers: new Headers(),
     });
   } catch (err) {

@@ -8,6 +8,43 @@ import type { Env } from "../types";
 import { ensureUserEmailRecord } from "./user-emails";
 import { sendResendEvent } from "./resend";
 
+/** Origins, kam smí magic link po ověření přesměrovat (kromě BETTER_AUTH_URL). */
+export const COMMENTS_TRUSTED_ORIGINS = ["https://www.vibecoding.cz", "https://vibecoding.cz"];
+
+function courseMagicLinkEmail(url: string) {
+  return {
+    from: "Videokurzy <andrea@vibecoding.cz>",
+    subject: "Přihlášení do kurzu",
+    html: `
+                <h2>Přihlášení do videokurzu</h2>
+                <p>Klikněte na tlačítko níže pro přihlášení:</p>
+                <a href="${url}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">
+                  Přihlásit se
+                </a>
+                <p style="margin-top:16px;color:#666;font-size:14px;">
+                  Odkaz je platný 10 minut. Pokud jste o přihlášení nežádali, tento email ignorujte.
+                </p>
+              `,
+  };
+}
+
+function commentsMagicLinkEmail(url: string) {
+  return {
+    from: "Vibecoding.cz <andrea@vibecoding.cz>",
+    subject: "Přihlášení do diskuse na Vibecoding.cz",
+    html: `
+                <h2>Přihlášení do diskuse</h2>
+                <p>Klikněte na tlačítko níže. Vrátíte se k článku a můžete komentovat pod svým jménem.</p>
+                <a href="${url}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">
+                  Přihlásit se do diskuse
+                </a>
+                <p style="margin-top:16px;color:#666;font-size:14px;">
+                  Účet je společný s videokurzy Vibecoding.cz. Odkaz je platný 10 minut. Pokud jste o přihlášení nežádali, tento email ignorujte.
+                </p>
+              `,
+  };
+}
+
 export function createAuth(env: Env, ctx: ExecutionContext) {
   const db = drizzle(env.DB, { schema: authSchema });
 
@@ -16,6 +53,11 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
     secret: env.BETTER_AUTH_SECRET,
+    // Weby, na které se smí po ověření magic linku vracet (callbackURL).
+    // Better Auth na /magic-link/verify kontroluje callbackURL proti tomuto
+    // seznamu; bez něj projde jen vlastní origin BETTER_AUTH_URL. Diskuse
+    // pod články na www.vibecoding.cz vrací čtenáře zpět na článek.
+    trustedOrigins: COMMENTS_TRUSTED_ORIGINS,
     database: drizzleAdapter(db, { provider: "sqlite" }),
 
     emailAndPassword: {
@@ -61,7 +103,10 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
 
     plugins: [
       magicLink({
-        sendMagicLink: async ({ email, url }) => {
+        sendMagicLink: async ({ email, url, metadata }) => {
+          const mail = metadata?.purpose === "comments"
+            ? commentsMagicLinkEmail(url)
+            : courseMagicLinkEmail(url);
           const res = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: {
@@ -69,19 +114,10 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              from: "Videokurzy <andrea@vibecoding.cz>",
+              from: mail.from,
               to: email,
-              subject: "Přihlášení do kurzu",
-              html: `
-                <h2>Přihlášení do videokurzu</h2>
-                <p>Klikněte na tlačítko níže pro přihlášení:</p>
-                <a href="${url}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">
-                  Přihlásit se
-                </a>
-                <p style="margin-top:16px;color:#666;font-size:14px;">
-                  Odkaz je platný 10 minut. Pokud jste o přihlášení nežádali, tento email ignorujte.
-                </p>
-              `,
+              subject: mail.subject,
+              html: mail.html,
             }),
           });
           if (!res.ok) {

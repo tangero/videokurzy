@@ -8,6 +8,7 @@ nasazení na produkci.
 
 ### Přidáno
 
+- **Přihlášení do diskuse pod články na www.vibecoding.cz.** Better Auth má `trustedOrigins` (`https://www.vibecoding.cz`, `https://vibecoding.cz`), takže magic link může po ověření vrátit čtenáře na článek. Bez toho `/api/auth/magic-link/verify` callback mimo `kurzy.vibecoding.cz` odmítal. `/internal/auth/magic-link` přijímá `purpose: "comments"` (e-mail „Přihlášení do diskuse na Vibecoding.cz“) a nepovinné `name` pro nový účet.
 - **Přehled aktivity uživatelů při sledování videí** na hlavním admin dashboardu (`/admin`). Nové karty:
   - „Aktivní posledních 7 dní“ — kolik uživatelů mělo reálnou aktivitu u videa
   - „Nikdy nezačali sledovat“ — uživatelé bez jediného záznamu o sledování
