@@ -31,11 +31,26 @@ Body:
 ```json
 {
   "email": "user@example.cz",
-  "callbackUrl": "https://vibecoding.cz/auth/verify"
+  "callbackUrl": "https://vibecoding.cz/auth/verify",
+  "purpose": "comments",
+  "name": "Jana Nováková"
 }
 ```
 
 Callback URL must be on `vibecoding.cz`, a subdomain, or `http://localhost:*`.
+
+- `purpose` (optional): `"comments"` sends the discussion login e-mail
+  ("Přihlášení do diskuse na Vibecoding.cz") instead of the course one.
+- `name` (optional, max 60 chars): display name, used by Better Auth only
+  when the account is created by this login.
+
+The link in the e-mail points to `/api/auth/magic-link/verify` on kurzy. Better
+Auth verifies the token there, sets the session cookie (`Domain=.vibecoding.cz`
+in production) and redirects to `callbackUrl`. It checks `callbackUrl` against
+`trustedOrigins`, so a consumer outside `BETTER_AUTH_URL` must be listed in
+`COMMENTS_TRUSTED_ORIGINS` in `src/lib/auth.ts` (currently
+`https://www.vibecoding.cz` and `https://vibecoding.cz`). The same list is
+trusted for the `Origin` check of cookie-authenticated POSTs to `/api/auth/*`.
 
 Responses:
 - `200 { "ok": true }` — magic link queued for delivery
