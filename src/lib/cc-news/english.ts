@@ -22,7 +22,7 @@ export interface EnglishEnv extends LlmEnv {
   VIBECODING_SITE_REPO?: string;
 }
 
-const DEFAULT_REPO = "tangero/vibecoding-site";
+export const DEFAULT_REPO = "tangero/vibecoding-site";
 
 /**
  * Napsaný anglický markdown. Retry fronty i ostrý běh po náhledu ho použijí znovu:
@@ -185,7 +185,7 @@ export function englishWeeklyMarkdown(
 
 // ─── GitHub ───────────────────────────────────────────────────────
 
-type GhFetch = typeof fetch;
+export type GhFetch = typeof fetch;
 
 /** Chyba GitHub API. Trvalé chyby (špatný token, repo, oprávnění) se neopakují. */
 export class GithubError extends Error {
@@ -232,6 +232,16 @@ export async function fileOnDefaultBranch(token: string, repo: string, path: str
   if (res.status === 404) return false;
   await gh.json(res, "read file on default branch");
   return true;
+}
+
+/** Obsah souboru na výchozí větvi repa (UTF-8), nebo null, když neexistuje. */
+export async function readSiteFile(token: string, repo: string, path: string, f: GhFetch = fetch): Promise<string | null> {
+  const gh = github(token, repo, f);
+  const res = await gh.call("GET", `/contents/${path.split("/").map(encodeURIComponent).join("/")}`);
+  if (res.status === 404) return null;
+  const { content = "" } = await gh.json<{ content?: string }>(res, "read file on default branch");
+  const bin = atob(content.replace(/\s/g, ""));
+  return new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)));
 }
 
 /**

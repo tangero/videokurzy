@@ -71,3 +71,27 @@ export function cheatSheetUrl(topic: string): string {
   const section = CHEAT_SHEET_SECTION[topic];
   return `https://www.vibecoding.cz/cheat-sheet/claude-code/?lang=cs${section ? `#${section}` : ""}`;
 }
+
+/** Anglický název a jednovětá charakteristika tématu (snímek trendů na vibecoding.cz/en). */
+export const TOPIC_EN: Record<string, { label: string; about: string }> = {
+  prompt_cache: { label: "Prompt cache", about: "How Claude Code reuses context it has already processed, to answer faster and cheaper." },
+  context: { label: "Context and compaction", about: "The context window, automatic compaction and conversation length limits." },
+  memory: { label: "Memory and instructions", about: "CLAUDE.md, memory, rules and output styles: what the agent carries between sessions." },
+  models: { label: "Models and reasoning", about: "Model choice, reasoning effort, fast mode and model-specific behavior." },
+  permissions: { label: "Permissions and security", about: "What the agent may do on its own: permission rules, auto mode, sandbox and security fixes." },
+  tools: { label: "Built-in tools", about: "The agent's built-in tools: reading and editing files, the shell, search and the web." },
+  mcp: { label: "MCP", about: "Connecting external tools and data through the Model Context Protocol." },
+  hooks: { label: "Hooks", about: "Your own scripts and checks that run on agent events, for example before a tool call." },
+  agents: { label: "Subagents and workflows", about: "Subagents, agent teams, workflows and background tasks." },
+  plugins: { label: "Plugins and skills", about: "Plugins, skills, marketplaces and custom commands." },
+  sessions: { label: "Sessions and files", about: "Sessions, resuming conversations, checkpoints, worktrees and git." },
+  cloud: { label: "Cloud and remote sessions", about: "Claude Code on the web, remote sessions, Slack and cloud runs." },
+  ide: { label: "IDE and desktop", about: "VS Code and JetBrains extensions and the desktop app." },
+  tui: { label: "Terminal and controls", about: "The terminal UI: rendering, keyboard shortcuts, status line and settings." },
+  sdk: { label: "SDK and headless", about: "The Agent SDK and non-interactive runs in CI and scripts." },
+  providers: { label: "Login, providers and billing", about: "Login, Bedrock, Vertex and other providers, usage limits and billing." },
+  telemetry: { label: "Telemetry and costs", about: "OpenTelemetry, metrics, cost tracking and logging." },
+  integrations: { label: "Chrome, Design, Artifacts", about: "Claude in Chrome, Claude Design, artifacts and other product integrations." },
+  performance: { label: "Performance and stability", about: "Startup time, memory use, crashes and hangs." },
+  other: { label: "Other", about: "Everything that fits no other topic." },
+};
