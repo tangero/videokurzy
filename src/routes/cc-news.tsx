@@ -12,6 +12,7 @@ import type { Env, Variables } from "../types";
 import { selectionKvKey, type WeekSelection } from "../lib/cc-news/weekly";
 import { TOPIC_KEYS, topicLabel } from "../lib/cc-news/taxonomy";
 import { getTopicTrends, type TopicTrends } from "../lib/cc-news/trends";
+import { getTopicsOverview, type TopicsOverview } from "../lib/cc-news/topics-overview";
 
 /** Slug z articlePath `src/content/novinky-cc/<slug>.md`. */
 export function slugFromPath(articlePath: string | null): string | null {
@@ -256,7 +257,7 @@ ccNewsRoutes.get("/novinky-cc/unsubscribe", async (c) => {
 ccNewsRoutes.get("/novinky-cc/temata", async (c) => {
   const redirect = await gateOrRedirect(c);
   if (redirect) return redirect;
-  const { TOPICS } = await import("../lib/cc-news/taxonomy");
+  const { TOPICS, TOPIC_ABOUT } = await import("../lib/cc-news/taxonomy");
   const { ccChangeItem } = await import("../db/schema");
   const db = drizzle(c.env.DB);
   const stats = await db
@@ -267,26 +268,20 @@ ccNewsRoutes.get("/novinky-cc/temata", async (c) => {
   const byTopic = new Map(stats.map((s) => [s.topic, s]));
   const topics = TOPICS.filter((t) => t.key !== "other")
     .map((t) => ({
-      key: t.key, label: t.label, description: t.description,
+      key: t.key, label: t.label, description: TOPIC_ABOUT[t.key] ?? t.description,
       count: Number(byTopic.get(t.key)?.n ?? 0),
       lastAt: byTopic.get(t.key)?.last ? Number(byTopic.get(t.key)!.last) * 1000 : null,
     }));
-  // Řazení podle aktuálního tempa (podíl za poslední 4 týdny), ne podle celkového počtu od 2025:
-  // jinak je nahoře napořád téma s nejdelší historií. Bez trendů zpět na celkový počet.
-  let trends: TopicTrends | null = null;
+  // Přehled (podíl, směr, týdenní průběh, ostatní nástroje); bez něj záložní seznam.
+  let overview: TopicsOverview | null = null;
   try {
-    trends = await getTopicTrends(c.env, db, new Date());
+    overview = await getTopicsOverview(c.env, db, new Date());
   } catch (err) {
-    console.error("[cc-news] výpočet trendů selhal:", (err as Error)?.message);
+    console.error("[cc-news] výpočet přehledu témat selhal:", (err as Error)?.message);
   }
-  const shareOf = new Map(trends?.topics.map((t) => [t.key, t]) ?? []);
-  for (const t of topics) {
-    const tr = shareOf.get(t.key);
-    if (tr && trends!.total > 0) Object.assign(t, { share: tr.share, direction: tr.direction });
-  }
-  topics.sort((a: CcTopicSummary, b: CcTopicSummary) => (b.share ?? -1) - (a.share ?? -1) || b.count - a.count);
+  topics.sort((a, b) => b.count - a.count);
   const user = c.get("user")!;
-  return c.html(<CcTopicsPage user={{ name: user.name ?? null, email: user.email }} topics={topics} />);
+  return c.html(<CcTopicsPage user={{ name: user.name ?? null, email: user.email }} overview={overview} topics={topics} />);
 });
 
 ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {
