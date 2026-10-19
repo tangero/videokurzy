@@ -45,8 +45,10 @@ Muse Code (ověřeno 19. 10. 2026, `src/lib/tools/muse-code.ts`): changelog v do
 se za vydáním zpožďuje asi o den (aktuální verze je na `api.meta.ai/muse-code/channels/muse-stable`).
 Týden se proto zařadí, až changelog obsahuje všechny verze vydané do jeho konce. Historie
 od 0.1.0 (31. 8. 2026); data odhadem (horní mez) mají 1.4.5, 1.4.3, 1.4.1, 1.4.0, 1.2.1, 1.1.1
-a 0.2.1. `CHANGELOG.md` v repu SDK končí u 1.4.2, nepoužívá se. Dokumentace se zatím
-nesnímkuje: sitemap `dev.meta.ai` nemá `<lastmod>` (stránky mají `.md` verze).
+a 0.2.1. `CHANGELOG.md` v repu SDK končí u 1.4.2, nepoužívá se. Dokumentace se snímkuje
+(`MUSE_CODE_DOCS`, 11 stránek `.md`): sitemap `dev.meta.ai` nemá `<lastmod>`, `snapshotDocs`
+proto stránky bez lastmod stahuje jednou denně (nejdéle nestažené první) a změnu pozná
+podle hashe obsahu; `.md` verze jsou stabilní (dvě stažení = stejný hash, ověřeno 19. 10.).
 
 Grok Build (ověřeno 17. 10. 2026): stránka `x.ai/changelog/build` je za ochranou
 Cloudflare proti botům (403) a je redakčně zkrácená a pozadu za CDN, proto ji

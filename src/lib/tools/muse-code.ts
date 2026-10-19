@@ -10,11 +10,13 @@
 // Datum verze = nejdřívější z npm a commitu. Verze bez něj (1.4.5, 1.4.0 …) dostane datum
 // nejbližší vyšší verze s datem (vydáno nejpozději tehdy; Patrick odsouhlasil 19. 10. 2026),
 // nejnovější verze bez data den, kdy ji cron poprvé uviděl (KV, aby se neposouvalo).
-// Dokumentace se zatím nesnímkuje: sitemap dev.meta.ai nemá <lastmod>.
+// Dokumentace: sitemap dev.meta.ai nemá <lastmod>, stránky se proto stahují denně (.md)
+// a změnu pozná hash obsahu (snapshotDocs).
 
 import type { drizzle } from "drizzle-orm/d1";
 import { compareVersions, sha8, type ChangeType, type ChangelogEntry } from "../cc-news/changelog-source";
 import { syncChangelogEntries } from "../cc-news/classify";
+import type { DocsSource } from "../cc-news/docs-snapshot";
 import type { ToolKey } from "./registry";
 
 type Db = ReturnType<typeof drizzle>;
@@ -24,6 +26,15 @@ export const CHANGELOG_MD_URL = "https://dev.meta.ai/docs/muse-code/changelog.md
 export const NPM_URL = "https://registry.npmjs.org/@muse-code%2fsdk";
 export const COMMITS_URL = "https://api.github.com/repos/meta-models/muse-code-sdk/commits?per_page=100";
 export const FIRST_SEEN_KV = "tools:muse-code:first-seen";
+
+export const MUSE_CODE_DOCS: DocsSource = {
+  name: "Muse Code",
+  sitemapUrl: "https://dev.meta.ai/sitemap.xml",
+  // Bez lomítka: úvodní stránka /docs/muse-code má cestu "", ostatní „/auth“ atd.
+  prefix: "https://dev.meta.ai/docs/muse-code",
+  kv: "tool-docs:muse-code",
+  skip: ["/changelog"],
+};
 const FETCH_TIMEOUT_MS = 15_000;
 
 const SECTION_TYPES: Record<string, ChangeType> = {
