@@ -2665,6 +2665,17 @@ admin.post("/admin/api/cc-news/catchup", async (c) => {
   await enqueueCcNewsCatchup(c.env);
   return c.json({ queued: true });
 });
+// Anglický snímek trendů (/en/trends/ na webu). GET = JSON nanečisto, POST = PR do fronty.
+admin.get("/admin/api/cc-news/en-trends", async (c) => {
+  const { publishEnglishTrends } = await import("../lib/cc-news/trends-en");
+  const out = await publishEnglishTrends(c.env, drizzle(c.env.DB), new Date(), { dryRun: true });
+  return c.text(out.kind === "dry-run" ? out.json : "{}", 200, { "content-type": "application/json; charset=utf-8" });
+});
+admin.post("/admin/api/cc-news/en-trends", async (c) => {
+  const { enqueueCcNewsEnTrends } = await import("../queue");
+  await enqueueCcNewsEnTrends(c.env);
+  return c.json({ queued: true });
+});
 // Interní sledování dalších nástrojů (Grok Build). Stránka ukáže týden: verze,
 // počty (invariant sebráno = zatříděno + nezatříděno), uložený výběr s kontrolou
 // faktů a položky podle významu. Nic se nepublikuje.

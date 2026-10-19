@@ -34,6 +34,8 @@ type WebhookMessageType =
   | "tools.week"
   // Kdo koho dohání: kandidáti z pravidel a jejich ověření modelem. Bez payloadu; idempotentní.
   | "cc-news.catchup"
+  // Anglický snímek trendů (témata + dohánění) → PR do webu, /en/trends/. Bez payloadu; idempotentní.
+  | "cc-news.en-trends"
   // Automatické vydání anglického přehledu: sloučí PR do webu, až projde build.
   // Odkládá se (delaySeconds) a znovu zařazuje, dokud kontroly běží.
   | "cc-news.en-merge";
@@ -122,6 +124,10 @@ export async function enqueueCcNewsCatchup(env: Env): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.catchup", data: {} });
 }
 
+export async function enqueueCcNewsEnTrends(env: Env): Promise<void> {
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.en-trends", data: {} });
+}
+
 /**
  * Zařadí rozeslání newsletteru daného vydání do fronty. Vlastní odeslání
  * (sestavení příjemců + dávkové volání Resend) běží asynchronně v konzumentovi —
@@ -181,6 +187,10 @@ export async function handleQueue(
 
         case "cc-news.catchup":
           await handleCcNewsCatchup(db, env);
+          break;
+
+        case "cc-news.en-trends":
+          await handleCcNewsEnTrends(db, env);
           break;
 
         case "tools.week": {
@@ -910,6 +920,12 @@ async function handleCcNewsEnMerge(
   await done();
   console.log(`[queue] cc-news.en-merge ${itemId}: PR #${number} ${out.kind === "merged" ? "sloučen" : "už byl sloučen"}`);
   if (out.kind !== "merged") return;
+  if (itemId.startsWith(EN_TRENDS_PREFIX)) {
+    await notify(`Vydáno na vibecoding.cz/en: trendy ${itemId.slice(EN_TRENDS_PREFIX.length).toUpperCase()}`,
+      "Anglický snímek trendů vyšel automaticky (stránka bude aktuální po nasazení webu, do pár minut).",
+      [{ label: "Trendy", url: "https://www.vibecoding.cz/en/trends/" }, { label: `PR #${number}`, url: out.url }]);
+    return;
+  }
   const { selectionKvKey } = await import("./lib/cc-news/weekly");
   const sel = await env.KV.get<import("./lib/cc-news/weekly").WeekSelection>(selectionKvKey(itemId), "json");
   const { toolName } = await import("./lib/tools/registry");
@@ -945,7 +961,27 @@ async function handleCcNewsCatchup(db: ReturnType<typeof drizzle>, env: Env): Pr
   const counts = await catchupCounts(db);
   console.log(`[queue] cc-news.catchup: nových kandidátů ${fresh}, ověřeno ${checked}, stav ${JSON.stringify(counts)}`);
   if (checked > 0 && (counts.pending ?? 0) > 0) await enqueueCcNewsCatchup(env);
+  // Hotovo: anglický snímek trendů (stejný obsah se do webu znovu neposílá).
+  else await enqueueCcNewsEnTrends(env).catch((err) => console.error("[queue] zařazení cc-news.en-trends selhalo:", (err as Error)?.message));
 }
+
+/** Anglický snímek trendů do webu; při automatickém vydávání se PR sám sloučí. */
+async function handleCcNewsEnTrends(db: ReturnType<typeof drizzle>, env: Env): Promise<void> {
+  const { publishEnglishTrends } = await import("./lib/cc-news/trends-en");
+  const out = await publishEnglishTrends(env, db, new Date());
+  if (out.kind === "pr") {
+    console.log(`[queue] cc-news.en-trends ${out.week}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}`);
+    const { getCcNewsAutopublish } = await import("./lib/cc-news/settings");
+    if (out.pr.number && (await getCcNewsAutopublish(db))) {
+      await enqueueCcNewsEnMerge(env, { itemId: `${EN_TRENDS_PREFIX}${out.week.toLowerCase()}`, number: out.pr.number, attempt: 0 });
+    }
+  } else if (out.kind === "unchanged") console.log(`[queue] cc-news.en-trends ${out.week}: beze změny, PR se nezakládá`);
+  else if (out.kind === "no-token") console.warn("[queue] cc-news.en-trends: chybí VIBECODING_SITE_GITHUB_TOKEN");
+  else console.log(`[queue] cc-news.en-trends: ${out.kind}`);
+}
+
+/** itemId řetězce slučování pro snímek trendů (ne vydání ani výběr týdne). */
+const EN_TRENDS_PREFIX = "en-trends-";
 
 /**
  * Konzument zprávy cc-news.detected — napojuje detekci (W-003) na redakční
