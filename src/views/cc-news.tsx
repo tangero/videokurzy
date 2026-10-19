@@ -139,7 +139,7 @@ const TrendsPanel: FC<{ trends: TopicTrends }> = ({ trends }) => {
 /**
  * Seznam publikovaných vydání „Novinky v Claude Code" v designu serveru.
  * Gated (řeší routa), takže Layout vždy dostane přihlášeného uživatele.
- * Pořadí: trendy → aktuální vydání → archiv → materiály.
+ * Pořadí: aktuální vydání → trendy → archiv → materiály.
  */
 export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; trends?: TopicTrends | null }> = ({
   user,
@@ -156,10 +156,11 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; tre
         <a href="/novinky-cc/temata">Vývoj jednotlivých témat →</a>
       </p>
 
-      {trends && trends.total > 0 && <TrendsPanel trends={trends} />}
-
       {!latest ? (
-        <p style="color: var(--muted)">Zatím žádný publikovaný článek.</p>
+        <>
+          <p style="color: var(--muted)">Zatím žádný publikovaný článek.</p>
+          {trends && trends.total > 0 && <TrendsPanel trends={trends} />}
+        </>
       ) : (
         <>
           <h2 class="cc-section-h">Aktuální vydání</h2>
@@ -191,6 +192,8 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; tre
               {latest.topics && <TopicChips topics={latest.topics} />}
             </li>
           </ul>
+
+          {trends && trends.total > 0 && <TrendsPanel trends={trends} />}
 
           {archive.length > 0 && (
             <>
