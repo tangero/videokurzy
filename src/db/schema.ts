@@ -469,6 +469,34 @@ export const ccChangeItem = sqliteTable(
   ],
 );
 
+// Dohánění mezi nástroji (src/lib/cc-news/catchup.ts): pojem, který Claude Code
+// měl dřív a jiný sledovaný nástroj ho později zavedl. id = `<nástroj>:<pojem>`.
+// verdict: pending (čeká na model) | yes | no.
+export const ccCatchup = sqliteTable(
+  "cc_catchup",
+  {
+    id: text("id").primaryKey(),
+    tool: text("tool").notNull(),
+    term: text("term").notNull(),
+    topic: text("topic").notNull(),
+    ccItemId: text("ccItemId").notNull(),
+    ccAt: integer("ccAt", { mode: "timestamp" }).notNull(),
+    ccVersion: text("ccVersion").notNull(),
+    // Typ první zmínky u Claude Code; jiný než Added = funkce existovala nejpozději od ccAt.
+    ccType: text("ccType").notNull(),
+    otherItemId: text("otherItemId").notNull(),
+    otherAt: integer("otherAt", { mode: "timestamp" }).notNull(),
+    otherVersion: text("otherVersion").notNull(),
+    verdict: text("verdict").notNull().default("pending"),
+    title: text("title"),
+    reason: text("reason"),
+    checkedAt: integer("checkedAt", { mode: "timestamp" }),
+    promptVersion: text("promptVersion"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("cc_catchup_verdict_idx").on(t.verdict, t.tool)],
+);
+
 // Odhlášení z newsletteru „Novinky v Claude Code" (GDPR, W-007). ZÁMĚRNĚ NEdrží
 // plain e-mail: klíč je `emailHash` = HMAC-SHA256(normalizovaný e-mail, účel
 // `claude_code_news`). Výběr příjemců spočítá stejný hash a udělá anti-join.

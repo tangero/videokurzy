@@ -4,6 +4,8 @@ import { fmtDate } from "../lib/dates";
 import { TREND_THRESHOLD_PP, type TopicTrend } from "../lib/cc-news/trends";
 import { STRIP_WEEKS, type TopicOverview, type TopicsOverview, type ToolFocus } from "../lib/cc-news/topics-overview";
 import { zmen } from "./cc-topic";
+import { CatchupBlock } from "./cc-catchup";
+import type { Catchup } from "../lib/cc-news/catchup";
 
 type LayoutUser = { name: string | null; email: string } | null;
 
@@ -151,7 +153,7 @@ const PlainList: FC<{ topics: CcTopicSummary[] }> = ({ topics }) => (
 );
 
 /** Přehled témat: co je teď v centru vývoje Claude Code, co roste a co ustupuje. */
-export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | null; topics: CcTopicSummary[] }> = ({ user, overview, topics }) => {
+export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | null; topics: CcTopicSummary[]; catchup?: Catchup | null }> = ({ user, overview, topics, catchup }) => {
   const o = overview && overview.total > 0 ? overview : null;
   const shown = o?.topics.filter((t) => t.share > 0 || t.prevShare > 0) ?? [];
   const max = Math.max(...shown.flatMap((t) => t.weeks.map((w) => w ?? 0)), 1);
@@ -191,6 +193,7 @@ export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | nul
                 ) : null;
               })}
             </section>
+            {catchup && catchup.tools.length > 0 && <CatchupBlock catchup={catchup} />}
             {o.tools.length > 0 && <Tools tools={o.tools} />}
             <p class="tp-note tp-method">
               Podíl počítá všechny položky changelogu včetně oprav; rozpracovaný týden se nepočítá. Témata

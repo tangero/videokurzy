@@ -279,9 +279,32 @@ ccNewsRoutes.get("/novinky-cc/temata", async (c) => {
   } catch (err) {
     console.error("[cc-news] výpočet přehledu témat selhal:", (err as Error)?.message);
   }
+  // Dohánění mezi nástroji; vlastní try/catch (tabulka nemusí po nasazení ještě existovat).
+  const catchup = overview ? await loadCatchup(c.env, db, overview) : null;
   topics.sort((a, b) => b.count - a.count);
   const user = c.get("user")!;
-  return c.html(<CcTopicsPage user={{ name: user.name ?? null, email: user.email }} overview={overview} topics={topics} />);
+  return c.html(<CcTopicsPage user={{ name: user.name ?? null, email: user.email }} overview={overview} topics={topics} catchup={catchup} />);
+});
+
+async function loadCatchup(env: Env, db: ReturnType<typeof drizzle>, overview?: TopicsOverview | null) {
+  try {
+    const o = overview ?? (await getTopicsOverview(env, db, new Date()));
+    const { getCatchup } = await import("../lib/cc-news/catchup");
+    return await getCatchup(env, db, o.tools, o.to);
+  } catch (err) {
+    console.error("[cc-news] výpočet dohánění selhal:", (err as Error)?.message);
+    return null;
+  }
+}
+
+// Kdo koho dohání: časová osa ověřených párů. Před /novinky-cc/:slug.
+ccNewsRoutes.get("/novinky-cc/dohanani", async (c) => {
+  const redirect = await gateOrRedirect(c);
+  if (redirect) return redirect;
+  const catchup = await loadCatchup(c.env, drizzle(c.env.DB));
+  const { CcCatchupPage } = await import("../views/cc-catchup");
+  const user = c.get("user")!;
+  return c.html(<CcCatchupPage user={{ name: user.name ?? null, email: user.email }} catchup={catchup} />);
 });
 
 ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {
@@ -302,6 +325,7 @@ ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {
   const { getLatestSiteArticles } = await import("../lib/cc-news/site-articles");
   // Jen rubrika nástroje, kterému se stránka věnuje (srovnávané nástroje ne).
   const articles = await getLatestSiteArticles(c.env, [main!.tool]);
+  const catchup = await loadCatchup(c.env, db);
   const user = c.get("user")!;
   return c.html(
     <TopicHistoryPage
@@ -314,6 +338,7 @@ ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {
       term={validTerm}
       items={history.items}
       articles={articles}
+      catchup={catchup}
     />,
   );
 });
