@@ -73,7 +73,7 @@ describe("findCandidates", () => {
 
 const row = (o: Partial<typeof ccCatchup.$inferSelect>): typeof ccCatchup.$inferSelect => ({
   id: "grok-build:X", tool: "grok-build", term: "X", topic: "hooks", ccItemId: "a", ccAt: new Date(T0), ccVersion: "2.0.0", ccType: "Added",
-  otherItemId: "b", otherAt: new Date(T0 + 300 * DAY), otherVersion: "1.0.0", verdict: "yes", title: "t", reason: null,
+  otherItemId: "b", otherAt: new Date(T0 + 300 * DAY), otherVersion: "1.0.0", verdict: "yes", title: "t", titleEn: "t", reason: null,
   checkedAt: null, promptVersion: CATCHUP_PROMPT_VERSION, createdAt: new Date(), ...o,
 });
 const focus = (tool: string, deltas: Record<string, number>): ToolFocus => ({ tool: tool as ToolFocus["tool"], name: tool, total: 10, top: [], deltas });
@@ -133,7 +133,7 @@ describe("syncCandidates + verifyPending", () => {
       prompt = user;
       // Model vrátí jen jeden z kandidátů a jedno vymyšlené ID.
       return JSON.stringify([
-        { id: "grok-build:PreToolUse", verdict: "yes", title: "hook může přepsat vstup nástroje", reason: "zavádí stejnou událost" },
+        { id: "grok-build:PreToolUse", verdict: "yes", title: "hook může přepsat vstup nástroje", title_en: "hook can rewrite tool input", reason: "zavádí stejnou událost" },
         { id: "grok-build:neexistuje", verdict: "yes" },
       ]);
     };
@@ -142,6 +142,7 @@ describe("syncCandidates + verifyPending", () => {
     const all = await db.select().from(ccCatchup).orderBy(ccCatchup.id);
     expect(all.map((r) => [r.id, r.verdict])).toEqual([["grok-build:/compact", "pending"], ["grok-build:PreToolUse", "yes"]]);
     expect(all[1]!.title).toBe("hook může přepsat vstup nástroje");
+    expect(all[1]!.titleEn).toBe("hook can rewrite tool input");
 
     const no: LlmFn = async () => JSON.stringify({ id: "grok-build:/compact", verdict: "no", reason: "jen rozšiřuje existující příkaz" });
     expect(await verifyPending(db, {}, now, 60, no)).toBe(1);

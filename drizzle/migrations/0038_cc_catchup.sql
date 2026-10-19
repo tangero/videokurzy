@@ -15,6 +15,7 @@ CREATE TABLE `cc_catchup` (
   `otherVersion` text NOT NULL,
   `verdict` text NOT NULL DEFAULT 'pending',
   `title` text,
+  `titleEn` text,
   `reason` text,
   `checkedAt` integer,
   `promptVersion` text,

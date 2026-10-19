@@ -14,7 +14,8 @@ const funkce = (n: number) => (n === 1 ? "funkci" : n >= 2 && n <= 4 ? "funkce" 
 const toolClass = (tool: string) => `cu-${tool}`;
 const topicHref = (key: string) => `/novinky-cc/temata/${encodeURIComponent(key)}`;
 
-const joinCs = (xs: string[]) => xs.join(", ").replace(/, ([^,]*)$/, " a $1");
+/** „A, B a C“; prvky mohou obsahovat čárky (názvy témat). */
+export const joinCs = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} a ${xs[xs.length - 1]}` : xs.join(""));
 
 /** Slovní shrnutí jednoho nástroje. */
 const ToolSummary: FC<{ t: ToolCatchup }> = ({ t }) => {

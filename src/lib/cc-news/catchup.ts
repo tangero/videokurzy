@@ -110,12 +110,12 @@ const VERIFY_SYSTEM = [
   "for the first time, with essentially the same purpose as in Claude Code).",
   "Answer no when the entry only changes, fixes, restricts, disables or extends a feature that evidently",
   "already existed, or mentions the term only in passing, or the term means something different there.",
-  'Return a JSON array: {"id": "<candidate id>", "verdict": "yes"|"no", "title": "<what the feature does, Czech, max 8 words, lowercase start>", "reason": "<why, Czech, max 15 words>"}',
+  'Return a JSON array: {"id": "<candidate id>", "verdict": "yes"|"no", "title": "<what the feature does, Czech, max 8 words, lowercase start>", "title_en": "<the same in English, lowercase start>", "reason": "<why, Czech, max 15 words>"}',
   "One object per candidate. Never invent ids.",
   "Never use the double-quote character inside title or reason; use „ “ if you must quote.",
 ].join("\n");
 
-interface Verdict { id: string; verdict: string; title?: string; reason?: string }
+interface Verdict { id: string; verdict: string; title?: string; title_en?: string; reason?: string }
 
 type CandidateRow = typeof ccCatchup.$inferSelect;
 
@@ -169,6 +169,7 @@ export async function verifyPending(db: Db, env: LlmEnv, now: Date, limit = 60, 
       updates.push(db.update(ccCatchup).set({
         verdict: v.verdict,
         title: String(v.title ?? "").slice(0, 120) || null,
+        titleEn: String(v.title_en ?? "").slice(0, 120) || null,
         reason: String(v.reason ?? "").slice(0, 300) || null,
         checkedAt: now,
         promptVersion: CATCHUP_PROMPT_VERSION,
@@ -217,6 +218,7 @@ export interface CatchupPair {
   topic: string;
   topicLabel: string;
   title: string | null;
+  titleEn: string | null;
   ccAt: number;
   ccVersion: string;
   /** První zmínka u CC nebyla Added: funkce existovala nejpozději od ccAt. */
@@ -257,7 +259,7 @@ export function buildCatchup(rows: CandidateRow[], lead: Partial<Record<ToolKey,
     const pairs: CatchupPair[] = rows
       .filter((r) => r.tool === tool && r.verdict === "yes")
       .map((r) => ({
-        tool, term: r.term, topic: r.topic, topicLabel: label.get(r.topic) ?? r.topic, title: r.title,
+        tool, term: r.term, topic: r.topic, topicLabel: label.get(r.topic) ?? r.topic, title: r.title, titleEn: r.titleEn,
         ccAt: r.ccAt.getTime(), ccVersion: r.ccVersion, ccExact: r.ccType === "Added",
         otherAt: r.otherAt.getTime(), otherVersion: r.otherVersion,
         lagDays: Math.round((r.otherAt.getTime() - r.ccAt.getTime()) / DAY),

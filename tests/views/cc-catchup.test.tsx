@@ -6,7 +6,7 @@ const user = { name: "Test", email: "t@example.com" };
 const DAY = 86_400_000;
 const TO = Date.UTC(2026, 9, 12);
 const pair = (o: Partial<CatchupPair>): CatchupPair => ({
-  tool: "grok-build", term: "PreToolUse", topic: "hooks", topicLabel: "Hooks", title: "hook před nástrojem může přepsat vstup",
+  tool: "grok-build", term: "PreToolUse", topic: "hooks", topicLabel: "Hooks", title: "hook před nástrojem může přepsat vstup", titleEn: "hook can rewrite tool input",
   ccAt: Date.UTC(2025, 9, 8), ccVersion: "2.0.10", ccExact: false, otherAt: Date.UTC(2026, 7, 13), otherVersion: "1.0.4", lagDays: 309, ...o,
 });
 const catchup: Catchup = {

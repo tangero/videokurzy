@@ -489,6 +489,8 @@ export const ccCatchup = sqliteTable(
     otherVersion: text("otherVersion").notNull(),
     verdict: text("verdict").notNull().default("pending"),
     title: text("title"),
+    // Anglický popis funkce pro snímek na vibecoding.cz/en.
+    titleEn: text("titleEn"),
     reason: text("reason"),
     checkedAt: integer("checkedAt", { mode: "timestamp" }),
     promptVersion: text("promptVersion"),

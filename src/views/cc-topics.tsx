@@ -4,7 +4,7 @@ import { fmtDate } from "../lib/dates";
 import { TREND_THRESHOLD_PP, type TopicTrend } from "../lib/cc-news/trends";
 import { STRIP_WEEKS, type TopicOverview, type TopicsOverview, type ToolFocus } from "../lib/cc-news/topics-overview";
 import { zmen } from "./cc-topic";
-import { CatchupBlock } from "./cc-catchup";
+import { CatchupBlock, joinCs } from "./cc-catchup";
 import type { Catchup } from "../lib/cc-news/catchup";
 
 type LayoutUser = { name: string | null; email: string } | null;
@@ -40,7 +40,8 @@ function headline(o: TopicsOverview): string {
   const [top] = o.topics;
   const up = o.topics.filter((t) => t.direction === "up").sort((a, b) => b.delta - a.delta).slice(0, 3);
   const down = o.topics.filter((t) => t.direction === "down").sort((a, b) => a.delta - b.delta)[0];
-  const list = (ts: TopicOverview[]) => ts.map((t) => `${t.label} (${fmtPp(t.delta)})`).join(", ").replace(/, ([^,]*)$/, " a $1");
+  // Spojka před posledním prvkem; názvy témat samy obsahují čárky, proto ne regex nad hotovým textem.
+  const list = (ts: TopicOverview[]) => joinCs(ts.map((t) => `${t.label} (${fmtPp(t.delta)})`));
   let s = top ? `Nejvíc změn šlo do tématu ${top.label}: ${fmtPct(top.share)}.` : "";
   if (up.length) s += ` Nejvíc přidává ${list(up)}.`;
   if (down) s += ` Nejvíc ubírá ${down.label} (${fmtPp(down.delta)}).`;
