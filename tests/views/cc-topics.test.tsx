@@ -23,8 +23,8 @@ describe("stránky vývoje témat", () => {
         { ...base, key: "agents", label: "Subagenti a workflow", share: 7, prevShare: 15, delta: -8, direction: "down" as const, weeks: weeks(7) },
       ],
       tools: [
-        { tool: "grok-build" as const, name: "Grok Build", total: 30, top: [{ key: "tui", label: "Terminál a ovládání", share: 21, ccShare: 11 }] },
-        { tool: "codex" as const, name: "Codex CLI", total: 0, top: [] },
+        { tool: "grok-build" as const, name: "Grok Build", total: 30, top: [{ key: "tui", label: "Terminál a ovládání", share: 21, ccShare: 11 }], deltas: {} },
+        { tool: "codex" as const, name: "Codex CLI", total: 0, top: [], deltas: {} },
       ],
     };
     const html = String(<CcTopicsPage user={user} overview={overview} topics={[]} />);

@@ -2,6 +2,8 @@ import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { cheatSheetUrl } from "../lib/cc-news/taxonomy";
 import type { SiteArticle } from "../lib/cc-news/site-articles";
+import type { Catchup } from "../lib/cc-news/catchup";
+import { CatchupTimeline } from "./cc-catchup";
 import { fmtDate } from "../lib/dates";
 import { docsLink, termMentions, weekOf, type HistoryItem, type Phase, type Term, type TermKind, type ToolHistory, type WeekDetail } from "../lib/cc-news/topic-history";
 
@@ -403,6 +405,8 @@ export interface TopicHistoryPageProps {
   /** Nejnovější článek rubriky hlavního nástroje na vibecoding.cz (box v detailu týdne). */
   articles?: SiteArticle[];
   items: HistoryItem[];
+  /** Ověřené dohánění mezi nástroji; na stránce jen řádky tématu. */
+  catchup?: Catchup | null;
 }
 
 
@@ -415,7 +419,7 @@ function lede(h: ToolHistory): string {
   return ratio >= 1.5 ? `${base}, tedy ${fmt1(ratio)}× víc.` : ratio <= 0.5 && ratio > 0 ? `${base}, tedy méně než polovina.` : `${base}.`;
 }
 
-export const TopicHistoryPage: FC<TopicHistoryPageProps> = ({ user, topic, main, others, terms, detail, term, items, articles = [] }) => {
+export const TopicHistoryPage: FC<TopicHistoryPageProps> = ({ user, topic, main, others, terms, detail, term, items, articles = [], catchup }) => {
   const byId = new Map(items.map((i) => [i.id, i]));
   const tools = [main, ...others];
   const docs = docsLink(items, main.tool);
@@ -460,6 +464,13 @@ export const TopicHistoryPage: FC<TopicHistoryPageProps> = ({ user, topic, main,
 
         {term ? <TermDetailView term={term} items={items} tools={tools} topicKey={topic.key} /> : detail && <WeekDetailView detail={detail} byId={byId} topicKey={topic.key} articles={articles} />}
         <CompareView tools={tools} terms={terms} topicKey={topic.key} />
+        {catchup?.tools.some((t) => t.pairs.some((p) => p.topic === topic.key)) && (
+          <section class="cu-topic" aria-labelledby="cu-topic-h">
+            <h2 id="cu-topic-h" class="th-h2">Dohánění v tématu</h2>
+            <p class="th-sub">Funkce Claude Code z tohoto tématu, které jiný nástroj zavedl později. <a href="/novinky-cc/dohanani">Všechny nástroje a témata →</a></p>
+            <CatchupTimeline catchup={catchup} onlyTopic={topic.key} />
+          </section>
+        )}
         <TermsView terms={terms} tools={tools} topicKey={topic.key} recentFrom={recentFrom} />
         {main.milestones.length > 0 && <Milestones history={main} topicKey={topic.key} />}
       </article>

@@ -902,3 +902,53 @@ a.tl-week:hover .tl-col, a.tl-week:focus-visible .tl-col { outline: 2px solid va
   .tp-row .tp-delta { grid-area: d; }
   .tp-row .tp-major { grid-area: m; }
 }
+
+/* ─── Kdo koho dohání (/novinky-cc/temata, /novinky-cc/dohanani) ─── */
+.cu { margin-top: 2.25rem; }
+.cu-claude-code { --cu: var(--ink); --cu-soft: rgba(20,20,19,0.12); }
+.cu-grok-build { --cu: #2f7a5b; --cu-soft: rgba(47,122,91,0.16); }
+.cu-antigravity { --cu: #b7791f; --cu-soft: rgba(183,121,31,0.18); }
+.cu-codex { --cu: #3d6a96; --cu-soft: rgba(61,106,150,0.16); }
+.cu-key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--cu); flex: none; }
+.cu-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; border-top: 2px solid var(--ink); }
+.cu-tool { padding: 14px 0 16px; border-bottom: 1px solid var(--border); min-width: 0; display: grid; gap: 10px; align-content: start; }
+.cu-tool-wide { grid-column: 1 / -1; }
+.cu-tool h3 { font-size: 1.05rem; margin: 0; display: flex; align-items: center; gap: 8px; }
+.cu-sum { margin: 0; font-size: 0.92rem; line-height: 1.5; color: var(--ink-soft); max-width: 65ch; }
+.cu-sum b { font-variant-numeric: tabular-nums; }
+.cu-more { font-size: 0.9rem; font-weight: 500; justify-self: start; }
+.cu-lead { font-size: 0.82rem; color: var(--muted); margin: 0; line-height: 1.5; }
+.cu-lead b { color: var(--ink-soft); font-weight: 600; }
+.cu-timeline { margin-top: 0.75rem; }
+.cu-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.8rem; color: var(--muted); margin: 0 0 14px; align-items: center; }
+.cu-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.cu-axis, .cu-row { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 14px; align-items: center; }
+.cu-axis { border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.cu-ticks { position: relative; height: 1.2em; font-size: 0.72rem; color: var(--muted); }
+.cu-tick { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.cu-tick:first-child { transform: none; }
+.cu-group { margin-top: 14px; }
+.cu-group h3 { font-size: 0.92rem; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cu-group h3 .tp-muted { font-size: 0.78rem; font-weight: 400; }
+.cu-plot { list-style: none; margin: 0; padding: 0; }
+.cu-row { min-height: 44px; border-bottom: 1px solid var(--border); padding: 6px 0; }
+.cu-lbl { display: grid; font-size: 0.86rem; line-height: 1.3; min-width: 0; }
+.cu-lbl code { font-size: 0.82rem; justify-self: start; }
+.cu-lbl span { color: var(--ink-soft); }
+.cu-lbl a { font-size: 0.74rem; color: var(--muted); justify-self: start; }
+.cu-track { position: relative; height: 34px; }
+.cu-before, .cu-grid { position: absolute; top: -6px; bottom: -7px; pointer-events: none; }
+.cu-before { left: 0; background: repeating-linear-gradient(135deg, transparent 0 5px, var(--border-strong) 5px 6px); opacity: 0.45; }
+.cu-grid { width: 1px; background: var(--border); }
+.cu-line { position: absolute; top: 16px; height: 3px; border-radius: 2px; background: var(--cu-soft); box-shadow: inset 0 0 0 1px var(--cu); opacity: 0.8; }
+.cu-dot { position: absolute; top: 11px; width: 13px; height: 13px; border-radius: 50%; transform: translateX(-50%); border: 2px solid var(--bg); background: var(--cu); }
+.cu-lag { position: absolute; top: 0; transform: translateX(-50%); font-size: 0.72rem; font-weight: 600; color: var(--ink-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cu-topic { margin-top: 2.5rem; }
+@media (max-width: 760px) {
+  .cu-tools { grid-template-columns: 1fr; }
+  .cu-axis, .cu-row { grid-template-columns: 1fr; gap: 2px; }
+  .cu-axis > span:first-child { display: none; }
+}
+.cu-timeline > .tp-note { margin-top: 12px; }
+.cu-page-tl { margin-top: 2.5rem; }
+.cu + .tp-tools { margin-top: 2.5rem; }

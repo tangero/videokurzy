@@ -32,6 +32,8 @@ type WebhookMessageType =
   | "cc-news.en-weekly"
   // Interní týdenní přehled dalšího sledovaného nástroje (Grok Build). Idempotentní.
   | "tools.week"
+  // Kdo koho dohání: kandidáti z pravidel a jejich ověření modelem. Bez payloadu; idempotentní.
+  | "cc-news.catchup"
   // Automatické vydání anglického přehledu: sloučí PR do webu, až projde build.
   // Odkládá se (delaySeconds) a znovu zařazuje, dokud kontroly běží.
   | "cc-news.en-merge";
@@ -116,6 +118,10 @@ export async function enqueueCcNewsClassify(env: Env): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "cc-news.classify", data: {} });
 }
 
+export async function enqueueCcNewsCatchup(env: Env): Promise<void> {
+  await env.WEBHOOK_QUEUE.send({ type: "cc-news.catchup", data: {} });
+}
+
 /**
  * Zařadí rozeslání newsletteru daného vydání do fronty. Vlastní odeslání
  * (sestavení příjemců + dávkové volání Resend) běží asynchronně v konzumentovi —
@@ -171,6 +177,10 @@ export async function handleQueue(
 
         case "cc-news.classify":
           await handleCcNewsClassify(db, env);
+          break;
+
+        case "cc-news.catchup":
+          await handleCcNewsCatchup(db, env);
           break;
 
         case "tools.week": {
@@ -920,6 +930,21 @@ async function handleCcNewsClassify(db: ReturnType<typeof drizzle>, env: Env): P
   const left = await countUnclassified(db);
   console.log(`[queue] cc-news.classify: zatříděno ${done}, zbývá ${left}`);
   if (done > 0 && left > 0) await enqueueCcNewsClassify(env);
+  // Po dotřídění přepočítat dohánění; chyba zařazení nesmí shodit třídění.
+  if (done > 0 && left === 0) await enqueueCcNewsCatchup(env).catch((err) => console.error("[queue] zařazení cc-news.catchup selhalo:", (err as Error)?.message));
+}
+
+/** Kandidáti na dohánění z pravidel, ověření modelem a zneplatnění cache stránek. */
+async function handleCcNewsCatchup(db: ReturnType<typeof drizzle>, env: Env): Promise<void> {
+  const { syncCandidates, verifyPending, catchupCounts, catchupKvKey } = await import("./lib/cc-news/catchup");
+  const { isoWeekStart } = await import("./lib/cc-news/trends");
+  const now = new Date();
+  const fresh = await syncCandidates(db, env.KV, now);
+  const checked = await verifyPending(db, env, now, 60);
+  await env.KV.delete(catchupKvKey(isoWeekStart(now)));
+  const counts = await catchupCounts(db);
+  console.log(`[queue] cc-news.catchup: nových nebo znovu otevřených kandidátů ${fresh}, ověřeno ${checked}, stav ${JSON.stringify(counts)}`);
+  if (checked > 0 && (counts.pending ?? 0) > 0) await enqueueCcNewsCatchup(env);
 }
 
 /**

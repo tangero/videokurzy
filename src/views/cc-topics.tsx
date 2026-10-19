@@ -4,6 +4,8 @@ import { fmtDate } from "../lib/dates";
 import { TREND_THRESHOLD_PP, type TopicTrend } from "../lib/cc-news/trends";
 import { STRIP_WEEKS, type TopicOverview, type TopicsOverview, type ToolFocus } from "../lib/cc-news/topics-overview";
 import { zmen } from "./cc-topic";
+import { CatchupBlock, joinCs } from "./cc-catchup";
+import type { Catchup } from "../lib/cc-news/catchup";
 
 type LayoutUser = { name: string | null; email: string } | null;
 
@@ -38,7 +40,8 @@ function headline(o: TopicsOverview): string {
   const [top] = o.topics;
   const up = o.topics.filter((t) => t.direction === "up").sort((a, b) => b.delta - a.delta).slice(0, 3);
   const down = o.topics.filter((t) => t.direction === "down").sort((a, b) => a.delta - b.delta)[0];
-  const list = (ts: TopicOverview[]) => ts.map((t) => `${t.label} (${fmtPp(t.delta)})`).join(", ").replace(/, ([^,]*)$/, " a $1");
+  // Spojka před posledním prvkem; názvy témat samy obsahují čárky, proto ne regex nad hotovým textem.
+  const list = (ts: TopicOverview[]) => joinCs(ts.map((t) => `${t.label} (${fmtPp(t.delta)})`));
   let s = top ? `Nejvíc změn šlo do tématu ${top.label}: ${fmtPct(top.share)}.` : "";
   if (up.length) s += ` Nejvíc přidává ${list(up)}.`;
   if (down) s += ` Nejvíc ubírá ${down.label} (${fmtPp(down.delta)}).`;
@@ -151,7 +154,7 @@ const PlainList: FC<{ topics: CcTopicSummary[] }> = ({ topics }) => (
 );
 
 /** Přehled témat: co je teď v centru vývoje Claude Code, co roste a co ustupuje. */
-export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | null; topics: CcTopicSummary[] }> = ({ user, overview, topics }) => {
+export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | null; topics: CcTopicSummary[]; catchup?: Catchup | null }> = ({ user, overview, topics, catchup }) => {
   const o = overview && overview.total > 0 ? overview : null;
   const shown = o?.topics.filter((t) => t.share > 0 || t.prevShare > 0) ?? [];
   const max = Math.max(...shown.flatMap((t) => t.weeks.map((w) => w ?? 0)), 1);
@@ -191,6 +194,7 @@ export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | nul
                 ) : null;
               })}
             </section>
+            {catchup && catchup.tools.length > 0 && <CatchupBlock catchup={catchup} />}
             {o.tools.length > 0 && <Tools tools={o.tools} />}
             <p class="tp-note tp-method">
               Podíl počítá všechny položky changelogu včetně oprav; rozpracovaný týden se nepočítá. Témata

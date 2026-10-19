@@ -2651,6 +2651,20 @@ admin.get("/admin/api/cc-news/english", async (c) => {
   if (out.kind !== "no-token") return c.json({ error: "unexpected" }, 500);
   return c.text(`<!-- ${out.path} -->\n${out.markdown}`, 200, { "content-type": "text/markdown; charset=utf-8" });
 });
+// Kdo koho dohání: GET vypíše kandidáty s verdiktem modelu (kontrola), POST zařadí
+// přepočet do fronty (kandidáti z pravidel + ověření čekajících).
+admin.get("/admin/api/cc-news/catchup", async (c) => {
+  const { ccCatchup } = await import("../db/schema");
+  const { catchupCounts } = await import("../lib/cc-news/catchup");
+  const db = drizzle(c.env.DB);
+  const rows = await db.select().from(ccCatchup).orderBy(ccCatchup.tool, ccCatchup.otherAt);
+  return c.json({ counts: await catchupCounts(db), candidates: rows });
+});
+admin.post("/admin/api/cc-news/catchup", async (c) => {
+  const { enqueueCcNewsCatchup } = await import("../queue");
+  await enqueueCcNewsCatchup(c.env);
+  return c.json({ queued: true });
+});
 // Interní sledování dalších nástrojů (Grok Build). Stránka ukáže týden: verze,
 // počty (invariant sebráno = zatříděno + nezatříděno), uložený výběr s kontrolou
 // faktů a položky podle významu. Nic se nepublikuje.
