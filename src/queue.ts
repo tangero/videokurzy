@@ -943,7 +943,7 @@ async function handleCcNewsCatchup(db: ReturnType<typeof drizzle>, env: Env): Pr
   const checked = await verifyPending(db, env, now, 60);
   await env.KV.delete(catchupKvKey(isoWeekStart(now)));
   const counts = await catchupCounts(db);
-  console.log(`[queue] cc-news.catchup: nových kandidátů ${fresh}, ověřeno ${checked}, stav ${JSON.stringify(counts)}`);
+  console.log(`[queue] cc-news.catchup: nových nebo znovu otevřených kandidátů ${fresh}, ověřeno ${checked}, stav ${JSON.stringify(counts)}`);
   if (checked > 0 && (counts.pending ?? 0) > 0) await enqueueCcNewsCatchup(env);
 }
 

@@ -50,20 +50,16 @@ export interface ToolLead { since: number; topics: LeadTopic[] }
 /**
  * Kandidáti na dohánění a náskok Claude Code. Kandidát = pojem, který Claude Code
  * zmínil dřív a nástroj ho poprvé zmíní u položky Added aspoň GRACE_MS po začátku
- * sledování. Stejný pojem ve více tématech se počítá jednou (nejdřívější zmínka CC).
+ * sledování. Pojmy se porovnávají napříč tématy (každá položka se třídí zvlášť, stejná
+ * funkce může u nástrojů skončit v různých tématech); téma páru i náskoku určuje
+ * nejdřívější zmínka CC.
  */
 export type TopicItem = HistoryItem & { topic: string | null };
 
 export function findCandidates(items: TopicItem[]): { candidates: CatchupCandidate[]; lead: Partial<Record<ToolKey, ToolLead>> } {
   const byId = new Map(items.map((i) => [i.id, i]));
   const label = new Map(TOPICS.map((t) => [t.key, t.label]));
-  const byTopic = new Map<string, TopicItem[]>();
-  for (const i of items) {
-    if (!i.topic || i.topic === "other") continue;
-    const list = byTopic.get(i.topic);
-    if (list) list.push(i);
-    else byTopic.set(i.topic, [i]);
-  }
+  const topical = items.filter((i) => i.topic && i.topic !== "other");
   const best = new Map<string, CatchupCandidate>();
   const lead: Partial<Record<ToolKey, ToolLead>> = {};
   for (const tool of (Object.keys(TOOLS) as ToolKey[]).filter((t) => t !== CLAUDE_CODE)) {
@@ -71,25 +67,22 @@ export function findCandidates(items: TopicItem[]): { candidates: CatchupCandida
     if (!own.length) continue;
     const since = Math.min(...own.map((i) => i.publishedAt));
     const leadCounts = new Map<string, number>();
-    for (const [topic, its] of byTopic) {
-      const pair = its.filter((i) => i.tool === CLAUDE_CODE || i.tool === tool);
-      for (const term of extractTerms(pair)) {
-        if (GENERIC.has(term.term)) continue;
-        const a = term.uses[CLAUDE_CODE];
-        const b = term.uses[tool];
-        if (a && b) {
-          if (b.first <= a.first || b.first < since + GRACE_MS || byId.get(b.itemId)?.type !== "Added") continue;
-          const id = `${tool}:${term.term}`;
-          const prev = best.get(id);
-          if (prev && prev.ccAt <= a.first) continue;
-          best.set(id, {
-            id, tool, term: term.term, topic,
-            ccItemId: a.itemId, ccAt: a.first, ccVersion: a.version, ccType: byId.get(a.itemId)?.type ?? "",
-            otherItemId: b.itemId, otherAt: b.first, otherVersion: b.version,
-          });
-        } else if (a && !b && a.first >= since && byId.get(a.itemId)?.type === "Added") {
-          leadCounts.set(topic, (leadCounts.get(topic) ?? 0) + 1);
-        }
+    for (const term of extractTerms(topical.filter((i) => i.tool === CLAUDE_CODE || i.tool === tool))) {
+      if (GENERIC.has(term.term)) continue;
+      const a = term.uses[CLAUDE_CODE];
+      const b = term.uses[tool];
+      const topic = a && byId.get(a.itemId)?.topic;
+      if (!a || !topic) continue;
+      if (b) {
+        if (b.first <= a.first || b.first < since + GRACE_MS || byId.get(b.itemId)?.type !== "Added") continue;
+        const id = `${tool}:${term.term}`;
+        best.set(id, {
+          id, tool, term: term.term, topic,
+          ccItemId: a.itemId, ccAt: a.first, ccVersion: a.version, ccType: byId.get(a.itemId)?.type ?? "",
+          otherItemId: b.itemId, otherAt: b.first, otherVersion: b.version,
+        });
+      } else if (a.first >= since && byId.get(a.itemId)?.type === "Added") {
+        leadCounts.set(topic, (leadCounts.get(topic) ?? 0) + 1);
       }
     }
     lead[tool] = {
@@ -196,18 +189,44 @@ async function loadItems(db: Db): Promise<TopicItem[]> {
   return rows.map((r) => ({ ...r, topic: r.topic!, publishedAt: r.publishedAt.getTime(), significance: 1, reason: null, followsId: null, relation: null, followReason: null }));
 }
 
-/** Uloží nové kandidáty (existující nechá být) a náskok CC do KV. Vrací počet nových. */
+/**
+ * Srovná uložené páry s kandidáty z aktuálních dat a náskok CC uloží do KV. Nové
+ * kandidáty přidá, páry, které po opravě changelogu nebo přetřídění zanikly, smaže
+ * a u párů s jinými podkladovými položkami vrátí verdikt k novému ověření.
+ * Vrací počet nových a znovu otevřených.
+ */
 export async function syncCandidates(db: Db, kv: KVNamespace, now: Date): Promise<number> {
   const { candidates, lead } = findCandidates(await loadItems(db));
   await kv.put(catchupLeadKvKey, JSON.stringify(lead));
-  const known = new Set((await db.select({ id: ccCatchup.id }).from(ccCatchup)).map((r) => r.id));
-  const fresh = candidates.filter((c) => !known.has(c.id));
+  const stored = new Map((await db.select().from(ccCatchup)).map((r) => [r.id, r]));
+  const current = new Set(candidates.map((c) => c.id));
+
+  const gone = [...stored.keys()].filter((id) => !current.has(id));
+  for (let i = 0; i < gone.length; i += 90) await db.delete(ccCatchup).where(inArray(ccCatchup.id, gone.slice(i, i + 90)));
+
+  let reopened = 0;
+  for (const c of candidates) {
+    const r = stored.get(c.id);
+    if (!r) continue;
+    const fields = { topic: c.topic, ccAt: new Date(c.ccAt), ccVersion: c.ccVersion, ccType: c.ccType, otherAt: new Date(c.otherAt), otherVersion: c.otherVersion };
+    if (r.ccItemId !== c.ccItemId || r.otherItemId !== c.otherItemId) {
+      await db.update(ccCatchup).set({
+        ...fields, ccItemId: c.ccItemId, otherItemId: c.otherItemId,
+        verdict: "pending", title: null, titleEn: null, reason: null, checkedAt: null, promptVersion: null,
+      }).where(eq(ccCatchup.id, c.id));
+      reopened++;
+    } else if (r.topic !== c.topic || r.ccType !== c.ccType || r.ccAt.getTime() !== c.ccAt || r.otherAt.getTime() !== c.otherAt || r.ccVersion !== c.ccVersion || r.otherVersion !== c.otherVersion) {
+      await db.update(ccCatchup).set(fields).where(eq(ccCatchup.id, c.id));
+    }
+  }
+
+  const fresh = candidates.filter((c) => !stored.has(c.id));
   for (let i = 0; i < fresh.length; i += INSERT_CHUNK) {
     await db.insert(ccCatchup).values(fresh.slice(i, i + INSERT_CHUNK).map((c) => ({
       ...c, ccAt: new Date(c.ccAt), otherAt: new Date(c.otherAt), createdAt: now,
     }))).onConflictDoNothing();
   }
-  return fresh.length;
+  return fresh.length + reopened;
 }
 
 // ─── Souhrn pro stránky ───────────────────────────────────────────
