@@ -110,7 +110,8 @@ návaznosti; stránky `/novinky-cc/temata`).
   Při automatickém vydávání se zařadí sám po sestavení týdne (fronta `tools.week`), jen u nástrojů
   s `englishWeekly` v `src/lib/tools/registry.ts` (od 18. 10. 2026 všechny čtyři, Muse Code od 19. 10.; nový nástroj nejdřív do WEEKLY_TOOLS webu).
   Codex a Antigravity se sbírají z GitHub releases (`src/lib/tools/github-releases.ts`), Muse Code
-  z `changelog.md` dokumentace s daty z npm a GitHubu (`src/lib/tools/muse-code.ts`).
+  z `changelog.md` dokumentace s daty z npm a GitHubu (`src/lib/tools/muse-code.ts`); jeho dokumentace
+  nemá v sitemap `lastmod`, snímek ji proto stahuje denně a změnu pozná podle hashe obsahu.
 - Stránka tématu `/novinky-cc/temata/<téma>` (`topic-history.ts`, `views/cc-topic.tsx`): týdenní osa od vzniku
   tématu, detail týdne (`?tyden=2026-w41`), detail pojmu napříč nástroji (`?pojem=PreToolUse`), srovnání
   s ostatními nástroji podle podílu na jejich změnách, slovník identifikátorů z changelogu a milníky.

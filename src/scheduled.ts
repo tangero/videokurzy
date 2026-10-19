@@ -143,8 +143,8 @@ export async function handleScheduled(
  * Denní údržba dalších nástrojů: changelog Grok Build (CDN x.ai + první naplnění
  * z GitHubu), snímek docs.x.ai/build, zmrazení uzavřeného týdne a zařazení
  * interního týdenního přehledu. Mezera v řadě verzí = alert (žádný zdroj se neztratil).
- * Pak Codex CLI a Antigravity CLI z GitHub releases a Muse Code z changelog.md
- * (všechny bez snímků dokumentace).
+ * Pak Codex CLI a Antigravity CLI z GitHub releases (bez snímků dokumentace) a Muse Code
+ * z changelog.md se snímky dokumentace podle hashe obsahu.
  */
 async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: Date): Promise<void> {
   const { syncGrokBuild, GROK_BUILD, GROK_BUILD_DOCS } = await import("./lib/tools/grok-build");
@@ -211,14 +211,29 @@ async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: D
   // Muse Code: text z changelogu v dokumentaci, data z npm a GitHubu. Changelog se
   // za vydáním zpožďuje, týden se proto zařadí, až obsahuje všechny verze do jeho konce.
   try {
-    const { syncMuseCode, MUSE_CODE } = await import("./lib/tools/muse-code");
+    const { syncMuseCode, MUSE_CODE, MUSE_CODE_DOCS } = await import("./lib/tools/muse-code");
     const r = await syncMuseCode(db, env.KV, { token: env.VIBECODING_SITE_GITHUB_TOKEN, now });
     console.log(`[cron] muse-code: changelog do ${r.latest}, verzí ${r.versions}, nových položek ${r.added}` +
       (r.missing.length ? `, v changelogu zatím chybí ${r.missing.map((m) => m.version).join(", ")}` : ""));
     if (r.added > 0 && (await countUnclassified(db)) > 0) await enqueueCcNewsClassify(env);
     const weekEnd = isoWeekBounds(week.year, week.week).end;
     const caughtUp = r.missing.every((m) => m.at > weekEnd);
-    if (caughtUp && !(await env.KV.get(toolWeekKvKey(MUSE_CODE, week)))) await enqueueToolWeek(env, MUSE_CODE, week);
+    // Dokumentace (bez lastmod, denně podle hashe) a zmrazení týdne jako u Grok Build.
+    let museFrozen = false;
+    try {
+      museFrozen = !!(await env.KV.get(docsWeekKey(week, MUSE_CODE_DOCS)));
+      const snap = await snapshotDocs(env.KV, now, MUSE_CODE_DOCS, 30);
+      if (snap.fetched) console.log(`[cron] muse-code docs: staženo ${snap.fetched}, změněno ${snap.changed}, odloženo ${snap.pending}`);
+      if (!museFrozen && snap.pending === 0 && (await freezeWeek(env.KV, week, snap.pending, MUSE_CODE_DOCS))) {
+        museFrozen = true;
+        console.log(`[cron] muse-code docs: zmrazen týden ${week.year}-w${week.week}`);
+      }
+    } catch (err) {
+      console.error("[cron] muse-code docs failed:", err);
+    }
+    if (caughtUp && (museFrozen || daysAfter >= 3) && !(await env.KV.get(toolWeekKvKey(MUSE_CODE, week)))) {
+      await enqueueToolWeek(env, MUSE_CODE, week);
+    }
   } catch (err) {
     console.error("[cron] muse-code changelog failed:", err);
   }

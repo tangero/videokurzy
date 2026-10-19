@@ -4,7 +4,7 @@
 // velký nový oddíl je signál, že jde o důležité téma (např. Projects ve W38).
 //
 // KV:
-//   cc-docs:index                 aktuální stav {path: {lastmod, hash}}
+//   cc-docs:index                 aktuální stav {path: {lastmod, hash, checked}}
 //   cc-docs:page:<path>:<hash>    obsah stránky (.md), adresovaný obsahem
 //   cc-docs:week:<YYYY-wNN>       index zmrazený na konci týdne (pondělní běh)
 
@@ -40,8 +40,12 @@ export const MAX_PAGES_PER_RUN = 80;
 
 export interface DocsIndex {
   takenAt: string;
-  pages: Record<string, { lastmod: string; hash: string }>;
+  /** `lastmod` null = sitemap ho nemá; `checked` = kdy se stránka naposledy stáhla. */
+  pages: Record<string, { lastmod: string | null; hash: string; checked?: string }>;
 }
+
+/** Stránku bez lastmod v sitemap stáhni znovu nejdřív po této době (cron běží denně). */
+export const REFETCH_WITHOUT_LASTMOD_MS = 20 * 60 * 60 * 1000;
 
 export const docsIndexKey = (src: DocsSource = CLAUDE_CODE_DOCS) => `${src.kv}:index`;
 export const DOCS_INDEX_KEY = docsIndexKey();
@@ -53,15 +57,22 @@ async function sha16(s: string): Promise<string> {
   return [...new Uint8Array(d)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Anglické stránky dokumentace se svým lastmod ze sitemap.xml. */
-export function parseSitemap(xml: string, src: DocsSource = CLAUDE_CODE_DOCS): { path: string; lastmod: string }[] {
+/**
+ * Stránky dokumentace se svým lastmod ze sitemap.xml. Sitemap bez lastmod (dev.meta.ai)
+ * dá `lastmod: null`; o změně pak rozhodne hash obsahu při denním stažení. Prefix bez
+ * koncového lomítka zahrne i stránku na adrese prefixu (cesta "", ostatní začínají „/“).
+ */
+export function parseSitemap(xml: string, src: DocsSource = CLAUDE_CODE_DOCS): { path: string; lastmod: string | null }[] {
   const prefix = src.prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-  return [...xml.matchAll(new RegExp(`<loc>${prefix}([^<]+)</loc>\\s*<lastmod>([^<]+)</lastmod>`, "g"))]
-    .map((m) => ({ path: m[1]!, lastmod: m[2]! }));
+  return [...xml.matchAll(new RegExp(`<loc>${prefix}([^<]*)</loc>(?:\\s*<lastmod>([^<]+)</lastmod>)?`, "g"))]
+    .map((m) => ({ path: m[1]!, lastmod: m[2] ?? null }))
+    // Prázdná cesta = stránka na adrese prefixu; jen u prefixu bez lomítka (úvod Muse Code).
+    .filter((p) => p.path !== "" || !src.prefix.endsWith("/"));
 }
 
 /**
- * Denní snímek: stáhne jen stránky se změněným lastmod (nejvýš MAX_PAGES_PER_RUN),
+ * Denní snímek: stáhne stránky se změněným lastmod, a stránky bez lastmod jednou denně
+ * (nejdéle nestažené první; nejvýš MAX_PAGES_PER_RUN),
  * uloží obsah a aktualizuje index. Stránky, které ze sitemap zmizely, z indexu vypadnou.
  */
 export async function snapshotDocs(
@@ -74,7 +85,15 @@ export async function snapshotDocs(
 
   const prev = (await kv.get<DocsIndex>(docsIndexKey(src), "json")) ?? { takenAt: "", pages: {} };
   const next: DocsIndex = { takenAt: now.toISOString(), pages: {} };
-  const stale = pages.filter((p) => prev.pages[p.path]?.lastmod !== p.lastmod);
+  const due = (p: { path: string; lastmod: string | null }) => {
+    const old = prev.pages[p.path];
+    if (p.lastmod !== null) return old?.lastmod !== p.lastmod;
+    return !old?.checked || now.getTime() - Date.parse(old.checked) >= REFETCH_WITHOUT_LASTMOD_MS;
+  };
+  const checkedAt = (path: string) => prev.pages[path]?.checked ?? "";
+  // Změněný lastmod má přednost; stránky bez lastmod od nejdéle nestažené.
+  const stale = pages.filter(due).sort((a, b) =>
+    Number(a.lastmod === null) - Number(b.lastmod === null) || checkedAt(a.path).localeCompare(checkedAt(b.path)));
   const todo = stale.slice(0, maxPages);
   const todoSet = new Set(todo.map((p) => p.path));
   let changed = 0;
@@ -98,7 +117,7 @@ export async function snapshotDocs(
       await kv.put(docsPageKey(p.path, hash, src), md);
       changed++;
     }
-    next.pages[p.path] = { lastmod: p.lastmod, hash };
+    next.pages[p.path] = { lastmod: p.lastmod, hash, checked: now.toISOString() };
   }
   await kv.put(docsIndexKey(src), JSON.stringify(next));
   return { fetched: todo.length, changed, pending: stale.length - todo.length };

@@ -12,12 +12,13 @@ import { classifyModel, openRouterLlm, writeModel, type LlmEnv } from "../cc-new
 import { selectAndVerify, selectionKvKey, type WeekSelection, type WeeklyLlms } from "../cc-news/weekly";
 import { englishMdKvKey } from "../cc-news/english";
 import { GROK_BUILD_DOCS } from "./grok-build";
+import { MUSE_CODE_DOCS } from "./muse-code";
 import { CLAUDE_CODE, isToolKey, type ToolKey } from "./registry";
 
 type Db = ReturnType<typeof drizzle>;
 type Week = { year: number; week: number };
 
-export const TOOL_DOCS: Partial<Record<ToolKey, DocsSource>> = { "grok-build": GROK_BUILD_DOCS };
+export const TOOL_DOCS: Partial<Record<ToolKey, DocsSource>> = { "grok-build": GROK_BUILD_DOCS, "muse-code": MUSE_CODE_DOCS };
 
 export const toolWeekKvKey = (tool: ToolKey, w: Week) => `tools:week:${tool}:${weekKey(w)}`;
 

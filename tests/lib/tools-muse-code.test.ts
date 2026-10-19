@@ -1,9 +1,10 @@
 import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ccChangeItem } from "../../src/db/schema";
+import { docsIndexKey, docsPageKey, parseSitemap, snapshotDocs, type DocsIndex } from "../../src/lib/cc-news/docs-snapshot";
 import {
-  CHANGELOG_MD_URL, COMMITS_URL, FIRST_SEEN_KV, NPM_URL, parseMuseChangelog, releaseDates, resolveDates, syncMuseCode,
+  CHANGELOG_MD_URL, COMMITS_URL, FIRST_SEEN_KV, MUSE_CODE_DOCS, NPM_URL, parseMuseChangelog, releaseDates, resolveDates, syncMuseCode,
 } from "../../src/lib/tools/muse-code";
 
 const MD = `# Changelog
@@ -119,5 +120,60 @@ describe("syncMuseCode", () => {
     expect((await syncMuseCode(db, env.KV, { f: fake({ gh: false }).f })).added).toBe(6);
     await env.DB.exec("DELETE FROM cc_change_item");
     await expect(syncMuseCode(db, env.KV, { f: fake({ gh: false, npm: false }).f })).rejects.toThrow(/npm i GitHub/);
+  });
+});
+
+describe("dokumentace bez lastmod", () => {
+  const SITEMAP = `<urlset>
+<url><loc>https://dev.meta.ai/docs/muse-code</loc></url>
+<url><loc>https://dev.meta.ai/docs/muse-code/auth</loc></url>
+<url><loc>https://dev.meta.ai/docs/quickstart</loc></url>
+</urlset>`;
+  let pages: Record<string, string>;
+  const calls: string[] = [];
+  beforeEach(async () => {
+    await env.KV.delete(docsIndexKey(MUSE_CODE_DOCS));
+    calls.length = 0;
+    pages = { "https://dev.meta.ai/docs/muse-code.md": "# Muse Code\n\nOverview", "https://dev.meta.ai/docs/muse-code/auth.md": "# Auth\n\nSign in" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input instanceof Request ? input.url : input);
+      calls.push(url);
+      if (url.endsWith("sitemap.xml")) return new Response(SITEMAP);
+      return pages[url] ? new Response(pages[url]) : new Response("nf", { status: 404 });
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sitemap bez lastmod: úvodní stránka s cestou \"\", ostatní s lomítkem, cizí sekce ne", () => {
+    expect(parseSitemap(SITEMAP, MUSE_CODE_DOCS)).toEqual([{ path: "", lastmod: null }, { path: "/auth", lastmod: null }]);
+    // Prefix s lomítkem (Claude Code) prázdnou cestu nebere.
+    expect(parseSitemap("<url><loc>https://code.claude.com/docs/en/</loc><lastmod>1</lastmod></url>")).toEqual([]);
+  });
+
+  it("stránky stáhne denně, změnu pozná podle hashe a do 20 hodin je nestahuje znovu", async () => {
+    const day1 = new Date("2026-10-20T06:00:00Z");
+    expect(await snapshotDocs(env.KV, day1, MUSE_CODE_DOCS)).toEqual({ fetched: 2, changed: 2, pending: 0 });
+    expect(calls).toContain("https://dev.meta.ai/docs/muse-code.md");
+    const idx = (await env.KV.get<DocsIndex>(docsIndexKey(MUSE_CODE_DOCS), "json"))!;
+    expect(idx.pages["/auth"]).toMatchObject({ lastmod: null, checked: day1.toISOString() });
+
+    // Za hodinu: nic není na řadě.
+    expect(await snapshotDocs(env.KV, new Date("2026-10-20T07:00:00Z"), MUSE_CODE_DOCS)).toEqual({ fetched: 0, changed: 0, pending: 0 });
+
+    // Další den: obě se stáhnou, změnila se jen /auth.
+    pages["https://dev.meta.ai/docs/muse-code/auth.md"] = "# Auth\n\nSign in with a new provider";
+    expect(await snapshotDocs(env.KV, new Date("2026-10-21T06:00:00Z"), MUSE_CODE_DOCS)).toEqual({ fetched: 2, changed: 1, pending: 0 });
+    const idx2 = (await env.KV.get<DocsIndex>(docsIndexKey(MUSE_CODE_DOCS), "json"))!;
+    expect(idx2.pages[""]!.hash).toBe(idx.pages[""]!.hash);
+    expect(await env.KV.get(docsPageKey("/auth", idx2.pages["/auth"]!.hash, MUSE_CODE_DOCS))).toContain("new provider");
+  });
+
+  it("při stropu stránek na běh stáhne nejdřív nejdéle nestaženou a zbytek hlásí jako odložený", async () => {
+    await env.KV.put(docsIndexKey(MUSE_CODE_DOCS), JSON.stringify({ takenAt: "", pages: {
+      "": { lastmod: null, hash: "x", checked: "2026-10-19T06:00:00Z" },
+      "/auth": { lastmod: null, hash: "y", checked: "2026-10-18T06:00:00Z" },
+    } }));
+    expect(await snapshotDocs(env.KV, new Date("2026-10-20T06:00:00Z"), MUSE_CODE_DOCS, 1)).toEqual({ fetched: 1, changed: 1, pending: 1 });
+    expect(calls.filter((u) => u.endsWith(".md"))).toEqual(["https://dev.meta.ai/docs/muse-code/auth.md"]);
   });
 });
