@@ -1,4 +1,5 @@
 import { env } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ccCatchup, ccChangeItem } from "../../src/db/schema";
@@ -55,6 +56,19 @@ describe("findCandidates", () => {
     const c = findCandidates(items).candidates;
     expect(c).toHaveLength(1);
     expect(c[0]).toMatchObject({ topic: "input", ccVersion: "2.0.1", ccType: "Changed" });
+  });
+
+  it("pojem porovná napříč tématy; téma páru je téma první zmínky CC a do náskoku se nezapočte", () => {
+    const items = [
+      item("claude-code", T0, "Added `/compact` command", "context"),
+      item("grok-build", GROK_START, "First"),
+      item("claude-code", GROK_START + DAY, "Added `/rewind` checkpoints", "sessions"),
+      item("grok-build", Date.UTC(2026, 7, 1), "Added `/compact` command", "sessions"),
+      item("grok-build", Date.UTC(2026, 7, 2), "Added `/rewind` to undo edits", "context"),
+    ];
+    const { candidates, lead } = findCandidates(items);
+    expect(candidates.map((c) => [c.term, c.topic])).toEqual([["/compact", "context"], ["/rewind", "sessions"]]);
+    expect(lead["grok-build"]?.topics).toEqual([]);
   });
 
   it("náskok: pojmy CC bez protějšku přidané od začátku sledování nástroje, po tématech", () => {
@@ -147,5 +161,22 @@ describe("syncCandidates + verifyPending", () => {
     const no: LlmFn = async () => JSON.stringify({ id: "grok-build:/compact", verdict: "no", reason: "jen rozšiřuje existující příkaz" });
     expect(await verifyPending(db, {}, now, 60, no)).toBe(1);
     expect(await verifyPending(db, {}, now, 60, no)).toBe(0);
+  });
+
+  it("pár, který po opravě changelogu zanikl, smaže a pár s jinou položkou vrátí k ověření", async () => {
+    const db = drizzle(env.DB);
+    const now = new Date(Date.UTC(2026, 9, 19));
+    await syncCandidates(db, env.KV, now);
+    await db.update(ccCatchup).set({ verdict: "yes", title: "t", titleEn: "t" });
+    // Grok položku s /compact ze changelogu stáhl, PreToolUse zmínil dřív jinou položkou.
+    await db.delete(ccChangeItem).where(eq(ccChangeItem.text, "Added `/compact` threshold option"));
+    await db.insert(ccChangeItem).values({
+      id: "grok-build:1.0.2#99", tool: "grok-build", version: "1.0.2", publishedAt: new Date(Date.UTC(2026, 7, 1)), ord: 9,
+      type: "Added", text: "Added `PreToolUse` hook event", topic: "tools", classifiedAt: new Date(),
+    });
+    expect(await syncCandidates(db, env.KV, now)).toBe(1);
+    const all = await db.select().from(ccCatchup);
+    expect(all.map((r) => [r.id, r.verdict, r.otherVersion, r.title])).toEqual([["grok-build:PreToolUse", "pending", "1.0.2", null]]);
+    expect(await syncCandidates(db, env.KV, now)).toBe(0);
   });
 });
