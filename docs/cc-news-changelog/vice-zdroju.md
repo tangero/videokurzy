@@ -38,8 +38,15 @@ Před implementací sběrače u každého nástroje zjistit:
 | Claude Code | CHANGELOG.md + stránka changelogu v docs | markdown | ano | z docs |
 | Grok Build | `x.ai/cli/stable` + `x.ai/cli/changelogs/<v>.external.md` (CDN); historie z GitHubu `xai-org/grok-build` (`crates/codegen/xai-grok-shell/CHANGELOG.md`) | markdown, oddíly Features / Bug Fixes / Performance / Breaking Changes | ano | v nadpisu verze |
 | Codex CLI | GitHub releases `openai/codex`, stabilní tagy `rust-v<verze>` (API, nejvýš 1000 vydání ≈ od 11/2025) | markdown, oddíly New Features / Bug Fixes / Chores / Breaking Changes (starší Highlights); seznam PR a Documentation se nesbírají | ano | `published_at` vydání |
-| Muse Code | `dev.meta.ai/docs/muse-code/changelog` (oficiální), musecodes.io není doména Meta | HTML, oddíly New / Improvements / Fixes | ano | **chybí**, šlo by jen „poprvé spatřeno“ ze snímků |
+| Muse Code (Meta) | `dev.meta.ai/docs/muse-code/changelog.md` (oficiální, Markdown verze stránky; musecodes.io není doména Meta) | markdown, oddíly New / Improvements / Fixes / Performance, „**Security:**“ na začátku odrážky | ano | v changelogu **chybí**; z npm `@muse-code/sdk` (`time`, čísla verzí shodná s aplikací) a commitů „remirror: X.Y.Z“ / „(X.Y.Z lockstep)“ v GitHubu `meta-models/muse-code-sdk`; verze bez data = datum nejbližší vyšší verze s datem (nejpozději), nejnovější bez data = den prvního výskytu (KV `tools:muse-code:first-seen`) |
 | Antigravity CLI (Google, `agy`) | GitHub releases `google-antigravity/antigravity-cli`, tagy `<verze>`, od 1.0.4 (1. 6. 2026), skoro denně; `antigravity.google/changelog` se vykresluje v prohlížeči | markdown, jen odrážky, typ podle prvního slova (Added / Improved / Fixed…) | ano | `published_at` vydání |
+
+Muse Code (ověřeno 19. 10. 2026, `src/lib/tools/muse-code.ts`): changelog v dokumentaci
+se za vydáním zpožďuje asi o den (aktuální verze je na `api.meta.ai/muse-code/channels/muse-stable`).
+Týden se proto zařadí, až changelog obsahuje všechny verze vydané do jeho konce. Historie
+od 0.1.0 (31. 8. 2026); data odhadem (horní mez) mají 1.4.5, 1.4.3, 1.4.1, 1.4.0, 1.2.1, 1.1.1
+a 0.2.1. `CHANGELOG.md` v repu SDK končí u 1.4.2, nepoužívá se. Dokumentace se zatím
+nesnímkuje: sitemap `dev.meta.ai` nemá `<lastmod>` (stránky mají `.md` verze).
 
 Grok Build (ověřeno 17. 10. 2026): stránka `x.ai/changelog/build` je za ochranou
 Cloudflare proti botům (403) a je redakčně zkrácená a pozadu za CDN, proto ji
