@@ -102,12 +102,12 @@ describe("CcNewsListPage — trendy, aktuální vydání a archiv", () => {
     { slug: "2026-w40-novinky", title: "Týden 40", excerpt: "Starší perex.", versionRange: null, publishedAt: Date.UTC(2026, 9, 5), topics: [], points: [] },
   ];
 
-  it("pořadí trendy → aktuální vydání → archiv → materiály", () => {
+  it("pořadí aktuální vydání → trendy → archiv → materiály", () => {
     const html = render(CcNewsListPage({ user: USER, items, trends }));
     const at = (s: string) => html.indexOf(s);
     expect(at("Kam teď míří vývoj")).toBeGreaterThan(-1);
-    expect(at("Kam teď míří vývoj")).toBeLessThan(at("Aktuální vydání"));
-    expect(at("Aktuální vydání")).toBeLessThan(at("Starší vydání"));
+    expect(at("Aktuální vydání")).toBeLessThan(at("Kam teď míří vývoj"));
+    expect(at("Kam teď míří vývoj")).toBeLessThan(at("Starší vydání"));
     expect(at("Starší vydání")).toBeLessThan(at("Materiály ke stažení"));
   });
 
