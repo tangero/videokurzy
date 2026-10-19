@@ -113,3 +113,5 @@ VIBECODING_PARTNER_KEY = "test-partner-key"
 # `videokurzy` worker (the one bound to kurzy.vibecoding.cz). Production-only
 # vars/secrets (COOKIE_DOMAIN, BUNNY_PULL_ZONE, ...) are set directly on the
 # `videokurzy` worker via the Cloudflare dashboard.
+# COOKIE_DOMAIN (".vibecoding.cz") je SECRET (`wrangler secret put COOKIE_DOMAIN`),
+# ne plain var v dashboardu — ten by `wrangler deploy` smazal (stalo se, viz CHANGELOG).

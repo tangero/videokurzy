@@ -6,6 +6,10 @@ nasazení na produkci.
 
 ## Unreleased
 
+### Opraveno
+
+- **Sdílené přihlášení napříč `*.vibecoding.cz`.** V produkci chyběl `COOKIE_DOMAIN` (ztratil se se zrušením `[env.production]`), session cookie tak platila jen pro `kurzy.vibecoding.cz` a přihlášení do diskuse na www.vibecoding.cz nefungovalo. `COOKIE_DOMAIN` je teď secret (deploy ho nesmaže, lokální vývoj zůstává bez domény). Při nastavení doménové auth cookie kurzy zároveň smažou starší cookie téhož jména bez Domain (`src/lib/host-only-cookie-cleanup.ts`); jinak by ji Better Auth četl první a po odhlášení a novém přihlášení by uživatel zůstal nepřihlášený.
+
 ### Přidáno
 
 - **Přihlášení do diskuse pod články na www.vibecoding.cz.** Better Auth má `trustedOrigins` (`https://www.vibecoding.cz`, `https://vibecoding.cz`), takže magic link může po ověření vrátit čtenáře na článek. Bez toho `/api/auth/magic-link/verify` callback mimo `kurzy.vibecoding.cz` odmítal. `/internal/auth/magic-link` přijímá `purpose: "comments"` (e-mail „Přihlášení do diskuse na Vibecoding.cz“) a nepovinné `name` pro nový účet.
