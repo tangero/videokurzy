@@ -2742,6 +2742,12 @@ admin.post("/admin/tools/:tool/sync", async (c) => {
     const src = tool === "codex" ? (await import("../lib/tools/codex")).CODEX_SOURCE : (await import("../lib/tools/antigravity")).ANTIGRAVITY_SOURCE;
     const r = await syncGithubReleases(drizzle(c.env.DB), src, { token: c.env.VIBECODING_SITE_GITHUB_TOKEN });
     msg = `nejnovější ${escapeHtml(r.newest ?? "–")}, uloženo do ${escapeHtml(r.latest ?? "–")}, nových položek ${r.added}, stran ${r.pages}${r.backfilled ? " (první naplnění)" : ""}`;
+  } else if (tool === "muse-code") {
+    const { syncMuseCode } = await import("../lib/tools/muse-code");
+    const r = await syncMuseCode(drizzle(c.env.DB), c.env.KV, { token: c.env.VIBECODING_SITE_GITHUB_TOKEN });
+    msg = `changelog do ${escapeHtml(r.latest ?? "–")}, verzí ${r.versions}, nových položek ${r.added}` +
+      (r.approx.length ? `, datum odhadem (nejpozději) u ${escapeHtml(r.approx.join(", "))}` : "") +
+      (r.missing.length ? `, v changelogu zatím chybí ${escapeHtml(r.missing.map((m) => m.version).join(", "))}` : "");
   } else {
     return c.text("Neznámý nástroj", 404);
   }

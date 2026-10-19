@@ -1,7 +1,7 @@
 // Sledované nástroje (Novinky v CC + sledování dalších agentů).
 // Klíč jde do sloupce cc_change_item.tool a do KV klíčů.
 
-export type ToolKey = "claude-code" | "grok-build" | "codex" | "antigravity";
+export type ToolKey = "claude-code" | "grok-build" | "codex" | "antigravity" | "muse-code";
 
 export interface ToolInfo {
   name: string;
@@ -21,6 +21,7 @@ export const TOOLS: Record<ToolKey, ToolInfo> = {
   "grok-build": { name: "Grok Build", englishWeekly: true, siteFolder: "grok-build" },
   codex: { name: "Codex CLI", englishWeekly: true, siteFolder: "openai-codex", rubricUrl: "https://www.vibecoding.cz/openai-codex/" },
   antigravity: { name: "Antigravity CLI", englishWeekly: true, siteFolder: "antigravity" },
+  "muse-code": { name: "Muse Code", englishWeekly: true, siteFolder: "muse-code" },
 };
 
 export const CLAUDE_CODE: ToolKey = "claude-code";

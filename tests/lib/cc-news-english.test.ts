@@ -67,10 +67,10 @@ beforeEach(async () => {
 });
 
 describe("nástroje s anglickou řadou", () => {
-  it("Codex CLI a Antigravity CLI mají řadu zapnutou a soubor nese klíč nástroje z WEEKLY_TOOLS webu", async () => {
+  it("Codex CLI, Antigravity CLI a Muse Code mají řadu zapnutou a soubor nese klíč nástroje z WEEKLY_TOOLS webu", async () => {
     const { TOOLS } = await import("../../src/lib/tools/registry");
-    expect(Object.entries(TOOLS).filter(([, t]) => t.englishWeekly).map(([k]) => k)).toEqual(["claude-code", "grok-build", "codex", "antigravity"]);
-    for (const tool of ["codex", "antigravity"] as const) {
+    expect(Object.entries(TOOLS).filter(([, t]) => t.englishWeekly).map(([k]) => k)).toEqual(["claude-code", "grok-build", "codex", "antigravity", "muse-code"]);
+    for (const tool of ["codex", "antigravity", "muse-code"] as const) {
       const sel = { ...SEL, tool, itemId: `${tool}-2026-w43` };
       expect(englishWeeklyPath(sel)).toBe(`src/content/english/${tool}-weekly-2026-w43.md`);
       const md = englishWeeklyMarkdown(sel, { title: "T", excerpt: "E", summaryPoints: [], body: "B" }, new Date("2026-10-26T09:00:00Z"));

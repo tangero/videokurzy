@@ -909,6 +909,7 @@ a.tl-week:hover .tl-col, a.tl-week:focus-visible .tl-col { outline: 2px solid va
 .cu-grok-build { --cu: #2f7a5b; --cu-soft: rgba(47,122,91,0.16); }
 .cu-antigravity { --cu: #b7791f; --cu-soft: rgba(183,121,31,0.18); }
 .cu-codex { --cu: #3d6a96; --cu-soft: rgba(61,106,150,0.16); }
+.cu-muse-code { --cu: #a23b72; --cu-soft: rgba(162,59,114,0.16); }
 .cu-key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--cu); flex: none; }
 .cu-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; border-top: 2px solid var(--ink); }
 .cu-tool { padding: 14px 0 16px; border-bottom: 1px solid var(--border); min-width: 0; display: grid; gap: 10px; align-content: start; }
