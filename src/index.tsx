@@ -30,6 +30,7 @@ import { PrivacyPage } from "./views/privacy";
 import { TermsPage } from "./views/terms";
 import { getPrices } from "./lib/prices";
 import { drizzle } from "drizzle-orm/d1";
+import { hostOnlyCookieCleanup } from "./lib/host-only-cookie-cleanup";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -60,6 +61,17 @@ app.use("*", async (c, next) => {
     statusText: c.res.statusText,
     headers: c.res.headers,
   });
+});
+
+// Doménové session cookies (COOKIE_DOMAIN) nahrazují starší cookies jen pro kurzy;
+// ty se musí smazat, jinak je Better Auth přečte první. Viz host-only-cookie-cleanup.ts.
+app.use("*", async (c, next) => {
+  await next();
+  if (!c.env.COOKIE_DOMAIN) return;
+  const cleanup = hostOnlyCookieCleanup(c.res.headers.getAll("Set-Cookie"));
+  if (cleanup.length === 0) return;
+  c.res = new Response(c.res.body, c.res);
+  for (const header of cleanup) c.res.headers.append("Set-Cookie", header);
 });
 
 // Auth middleware on all routes (sets user if logged in)

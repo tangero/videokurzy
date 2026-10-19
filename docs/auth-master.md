@@ -17,6 +17,8 @@ discovery metadata.
 
 In dev, leave `COOKIE_DOMAIN` unset — cookies stay host-only.
 
+In production `COOKIE_DOMAIN` is a **secret** (`wrangler secret put COOKIE_DOMAIN`), not a `[vars]` entry: plain vars set only in the dashboard are wiped by `wrangler deploy`, and a `[vars]` value would also apply to local `wrangler dev`. Whenever a response sets a domain auth cookie, the middleware in `src/index.tsx` also expires the host-only cookie of the same name (`src/lib/host-only-cookie-cleanup.ts`). Without it a browser that logged in before the domain change sends both cookies, the older host-only one first, and Better Auth reads the first one.
+
 ## Internal API (Service Binding)
 
 All `/internal/*` endpoints require header `X-Internal-Secret: <AUTH_INTERNAL_SECRET>`.
@@ -169,9 +171,8 @@ schema.
 2. Production migration: `npm run db:migrate:prod`
 3. Production deploy: `npm run deploy`
 
-**Note:** For `COOKIE_DOMAIN=.vibecoding.cz` to take effect, the deploy
-script must use `--env production` (`wrangler deploy --env production`).
-See TODO in `wrangler.toml`.
+**Note:** `COOKIE_DOMAIN=.vibecoding.cz` is a Worker secret, so deploys keep it.
+Check with `npx wrangler secret list` (it must be listed).
 
 ## Related docs
 
