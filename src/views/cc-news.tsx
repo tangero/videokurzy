@@ -272,50 +272,5 @@ export const CcNewsArticlePage: FC<{
   </Layout>
 );
 
-// ─── Vývoj témat (Novinky v CC, fáze 2) ────────────────────────────
-
-export interface CcTopicSummary {
-  key: string;
-  label: string;
-  description: string;
-  count: number;        // významné změny (2–3)
-  lastAt: number | null; // epoch ms poslední významné změny
-  /** Podíl na změnách za poslední 4 týdny (%) a směr proti čtvrtletí; bez trendů chybí. */
-  share?: number;
-  direction?: TopicTrend["direction"];
-}
-
-/** Přehled témat changelogu s počtem významných změn. */
-export const CcTopicsPage: FC<{ user: LayoutUser; topics: CcTopicSummary[] }> = ({ user, topics }) => (
-  <Layout title="Vývoj témat — Novinky v Claude Code" user={user} noindex>
-    <section class="container-narrow" style="padding: 8px 0 32px">
-      <p><a href="/novinky-cc">← Novinky v Claude Code</a></p>
-      <h1>Vývoj témat v Claude Code</h1>
-      <p style="color: var(--muted); margin-bottom: 28px">
-        Významné změny z changelogu Claude Code roztříděné podle oblastí, od dubna 2025. Témata jsou
-        seřazená podle podílu na změnách za poslední 4 týdny. U každé změny vidíte, na kterou dřívější navazuje.
-      </p>
-      <ul class="cc-news-list">
-        {topics.map((t) => (
-          <li>
-            <a href={`/novinky-cc/temata/${encodeURIComponent(t.key)}`} class="card cc-news-card" style="display: block; text-decoration: none; color: inherit">
-              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-                <span style="font-weight: 600; font-size: 1.05rem">{t.label}</span>
-                <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted)">
-                  {t.share !== undefined && (
-                    <>
-                      {fmtPct(t.share)} za 4 týdny{" "}
-                      <span class={`cc-${t.direction ?? "flat"}`}>{ARROW[t.direction ?? "flat"]}</span> ·{" "}
-                    </>
-                  )}
-                  {t.count} změn{t.lastAt ? ` · naposledy ${fmtDate(t.lastAt, { month: "long", fallback: "" })}` : ""}
-                </span>
-              </div>
-              <p style="color: var(--muted); font-size: 0.92rem; margin: 8px 0 0">{t.description}</p>
-            </a>
-          </li>
-        ))}
-      </ul>
-    </section>
-  </Layout>
-);
+// Přehled témat žije v cc-topics.tsx; re-export kvůli dosavadním importům.
+export { CcTopicsPage, type CcTopicSummary } from "./cc-topics";

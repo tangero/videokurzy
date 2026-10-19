@@ -6,10 +6,37 @@ import { buildToolHistory, extractTerms, weekDetail, type HistoryItem } from "..
 const user = { name: "Test", email: "t@example.com" };
 
 describe("stránky vývoje témat", () => {
-  it("přehled odkazuje na jednotlivá témata s počtem změn", () => {
-    const html = String(<CcTopicsPage user={user} topics={[{ key: "prompt_cache", label: "Prompt cache", description: "cache", count: 49, lastAt: Date.UTC(2026, 9, 16) }]} />);
+  it("bez přehledu ukáže záložní seznam témat s počtem změn", () => {
+    const html = String(<CcTopicsPage user={user} overview={null} topics={[{ key: "prompt_cache", label: "Prompt cache", description: "cache", count: 49, lastAt: Date.UTC(2026, 9, 16) }]} />);
     expect(html).toContain('href="/novinky-cc/temata/prompt_cache"');
     expect(html).toContain("49 změn");
+  });
+
+  it("přehled: věta nahoře, pásma podle směru, pruh s mezerou a ostatní nástroje", () => {
+    const base = { prevShare: 0, added: 1, fixed: 0, major: 0, highlight: null, description: "" };
+    const weeks = (last: number) => [...Array(16).fill(1), last].map((w, i) => (i === 4 ? null : w));
+    const overview = {
+      from: Date.UTC(2026, 8, 14), to: Date.UTC(2026, 9, 12), stripFrom: Date.UTC(2026, 5, 15), total: 40,
+      topics: [
+        { ...base, key: "cloud", label: "Cloud a vzdálené relace", share: 20, prevShare: 10, delta: 10, direction: "up" as const, major: 8, highlight: "Rutiny v cloudu", weeks: weeks(20) },
+        { ...base, key: "mcp", label: "MCP", share: 5, prevShare: 5, delta: 0.02, direction: "flat" as const, weeks: weeks(5) },
+        { ...base, key: "agents", label: "Subagenti a workflow", share: 7, prevShare: 15, delta: -8, direction: "down" as const, weeks: weeks(7) },
+      ],
+      tools: [
+        { tool: "grok-build" as const, name: "Grok Build", total: 30, top: [{ key: "tui", label: "Terminál a ovládání", share: 21, ccShare: 11 }] },
+        { tool: "codex" as const, name: "Codex CLI", total: 0, top: [] },
+      ],
+    };
+    const html = String(<CcTopicsPage user={user} overview={overview} topics={[]} />);
+    expect(html).toContain("Nejvíc změn šlo do tématu Cloud a vzdálené relace: 20,0 %.");
+    expect(html).toContain("Nejvíc ubírá Subagenti a workflow (−8,0 b.)");
+    expect(html.indexOf("Roste")).toBeLessThan(html.indexOf("Drží se"));
+    expect(html.indexOf("Drží se")).toBeLessThan(html.indexOf("Ustupuje"));
+    expect(html).toContain("±0,0 b.");
+    expect(html).toContain("tp-cell tp-gap");
+    expect(html).toContain("Naposledy: </span>Rutiny v cloudu");
+    expect(html).toContain("Claude Code 11,0 %");
+    expect(html).toContain("Změny sbíráme od 18. 10. 2026");
   });
 
   it("stránka tématu: osa, detail týdne s vazbou, srovnání a detail pojmu", () => {

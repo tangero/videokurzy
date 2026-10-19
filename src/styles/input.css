@@ -823,3 +823,82 @@ a.tl-week:hover .tl-col, a.tl-week:focus-visible .tl-col { outline: 2px solid va
 .art-title:hover, .art-title:focus-visible { color: var(--accent); text-decoration: underline; }
 .art-date { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
 @media (max-width: 640px) { .art li { grid-template-columns: 1fr; } }
+
+/* ─── Přehled témat /novinky-cc/temata (tp-*) ─────────────────────────
+   Pruh = podíl tématu po týdnech (sytost zelené, odmocninové měřítko), poslední
+   4 týdny podtržené. Pásma Roste / Drží se / Ustupuje podle směru podílu. */
+.tp-h1 { font-size: clamp(1.8rem, 1.3rem + 1.8vw, 2.5rem); line-height: 1.08; letter-spacing: -0.02em; margin: 6px 0 14px; text-wrap: balance; }
+.tp-lede { font-size: 1.12rem; line-height: 1.55; color: var(--ink-soft); max-width: 60ch; margin: 0 0 8px; text-wrap: pretty; }
+.tp-note { color: var(--muted); font-size: 0.86rem; line-height: 1.5; margin: 0 0 18px; max-width: 65ch; }
+.tp-muted { color: var(--muted); }
+.tp-h2 { font-size: 1.15rem; margin: 0 0 12px; letter-spacing: -0.01em; }
+.tp-share { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.tp-delta { font-variant-numeric: tabular-nums; font-size: 0.82rem; white-space: nowrap; }
+.tp-up { color: var(--accent); }
+.tp-down { color: var(--danger); }
+.tp-flat { color: var(--muted); }
+
+.tp-strip { display: inline-grid; grid-template-columns: repeat(17, 10px); gap: 2px; align-items: stretch; height: 18px; vertical-align: middle; }
+.tp-strip-lg { grid-template-columns: repeat(17, minmax(10px, 1fr)); height: 30px; width: 100%; max-width: 420px; gap: 3px; }
+.tp-cell { display: block; border-radius: 2px; background: color-mix(in srgb, var(--accent) calc(var(--a, 0) * 100%), var(--bg-2)); }
+.tp-gap { background: repeating-linear-gradient(135deg, var(--bg-2) 0 3px, var(--border) 3px 4px); }
+.tp-recent { box-shadow: inset 0 -2px 0 var(--ink); }
+
+.tp-rising { margin: 26px 0 34px; }
+.tp-rising-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; border-top: 2px solid var(--ink); }
+.tp-rise { padding: 14px 0 16px; border-bottom: 1px solid var(--border); min-width: 0; display: grid; gap: 6px; align-content: start; }
+.tp-rise-lead { grid-column: 1 / -1; padding-top: 18px; }
+.tp-rise-title { font-weight: 600; font-size: 1.05rem; color: var(--ink); text-decoration: none; }
+.tp-rise-lead .tp-rise-title { font-size: 1.45rem; letter-spacing: -0.01em; }
+.tp-rise-title:hover, .tp-rise-title:focus-visible { color: var(--accent); text-decoration: underline; }
+.tp-rise-nums { margin: 0; font-size: 0.86rem; }
+.tp-rise-lead .tp-rise-nums .tp-share { font-size: 1.15rem; }
+.tp-why { margin: 2px 0 0; font-size: 0.9rem; line-height: 1.5; color: var(--ink-soft); max-width: 62ch; text-wrap: pretty; }
+
+.tp-map { margin-bottom: 36px; }
+.tp-map-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; border-top: 2px solid var(--ink); padding-top: 14px; }
+.tp-legend { margin: 0 0 10px; font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tp-legend-strip { display: inline-grid; grid-template-columns: repeat(3, 10px); gap: 2px; height: 12px; }
+.tp-legend-recent { display: inline-block; width: 10px; height: 12px; }
+.tp-cols, .tp-row { display: grid; grid-template-columns: minmax(0, 1fr) 202px 4.2rem 4.4rem 5rem; gap: 12px; align-items: center; }
+.tp-cols { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; padding: 4px 0 6px; border-bottom: 1px solid var(--border); }
+.tp-cols span:nth-child(n + 3) { text-align: right; }
+.tp-band { padding-top: 12px; }
+.tp-band-h { font-size: 0.86rem; font-weight: 600; margin: 0 0 2px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.tp-band-h .tp-muted { font-weight: 400; font-size: 0.78rem; }
+.tp-band-up .tp-band-h { color: var(--accent-2); }
+.tp-band-down .tp-band-h { color: var(--danger); }
+.tp-rows { list-style: none; margin: 0; padding: 0; }
+.tp-row { min-height: 40px; border-bottom: 1px solid var(--border); padding: 4px 0; }
+.tp-row > :nth-child(n + 3) { text-align: right; }
+.tp-row-title { color: var(--ink); text-decoration: none; font-size: 0.94rem; line-height: 1.3; min-width: 0; }
+.tp-row-title:hover, .tp-row-title:focus-visible { color: var(--accent); text-decoration: underline; }
+.tp-major { font-size: 0.7rem; letter-spacing: 1px; color: var(--ink-soft); white-space: nowrap; }
+.tp-major-n { font-size: 0.78rem; letter-spacing: 0; margin-left: 4px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.tp-major-0 { color: var(--border-strong); }
+
+.tp-tools { margin-bottom: 28px; }
+.tp-tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 28px; border-top: 2px solid var(--ink); }
+.tp-tool { padding: 12px 0 14px; border-bottom: 1px solid var(--border); min-width: 0; }
+.tp-tool h3 { font-size: 1rem; margin: 0 0 2px; }
+.tp-tool-n { font-size: 0.8rem; margin: 0 0 8px; }
+.tp-tool > p.tp-muted:not(.tp-tool-n) { font-size: 0.86rem; line-height: 1.45; margin: 4px 0 0; }
+.tp-tool ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tp-tool li { display: grid; grid-template-columns: 1fr auto; column-gap: 8px; font-size: 0.88rem; line-height: 1.3; }
+.tp-tool li a { color: var(--ink); text-decoration: none; }
+.tp-tool li a:hover, .tp-tool li a:focus-visible { color: var(--accent); text-decoration: underline; }
+.tp-cc { grid-column: 1 / -1; font-size: 0.76rem; }
+.tp-method { margin-top: 8px; }
+.tp-plain { list-style: none; padding: 0; display: grid; gap: 14px; }
+.tp-plain p { margin: 4px 0 0; font-size: 0.9rem; }
+
+@media (max-width: 640px) {
+  .tp-rising-list { grid-template-columns: 1fr; }
+  .tp-cols { display: none; }
+  .tp-row { grid-template-columns: minmax(0, 1fr) 3.6rem 3.9rem 5rem; grid-template-areas: "t t t t" "s p d m"; column-gap: 6px; row-gap: 4px; padding: 8px 0; }
+  .tp-row-title { grid-area: t; }
+  .tp-row .tp-strip { grid-area: s; grid-template-columns: repeat(17, 6px); height: 14px; }
+  .tp-row .tp-share { grid-area: p; }
+  .tp-row .tp-delta { grid-area: d; }
+  .tp-row .tp-major { grid-area: m; }
+}
