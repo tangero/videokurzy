@@ -4,6 +4,8 @@ import { fmtDate } from "../lib/dates";
 import { TREND_THRESHOLD_PP, type TopicTrend } from "../lib/cc-news/trends";
 import { STRIP_WEEKS, type TopicOverview, type TopicsOverview, type ToolFocus } from "../lib/cc-news/topics-overview";
 import { zmen } from "./cc-topic";
+
+const polozek = (n: number) => (n === 1 ? "položka" : n >= 2 && n <= 4 ? "položky" : "položek");
 import { CatchupBlock, joinCs } from "./cc-catchup";
 import type { Catchup } from "../lib/cc-news/catchup";
 
@@ -110,7 +112,7 @@ const Row: FC<{ t: TopicOverview; max: number; stripFrom: number }> = ({ t, max,
   </li>
 );
 
-const Tools: FC<{ tools: ToolFocus[] }> = ({ tools }) => (
+const Tools: FC<{ tools: ToolFocus[]; releases: Record<string, number> }> = ({ tools, releases }) => (
   <section class="tp-tools" aria-labelledby="tp-tools-h">
     <h2 id="tp-tools-h" class="tp-h2">Čemu se věnují ostatní</h2>
     <p class="tp-note">Hlavní témata ostatních sledovaných nástrojů za stejné 4 týdny a podíl téhož tématu u Claude Code.</p>
@@ -120,7 +122,9 @@ const Tools: FC<{ tools: ToolFocus[] }> = ({ tools }) => (
           <h3>{tool.name}</h3>
           {tool.total > 0 ? (
             <>
-              <p class="tp-muted tp-tool-n">{tool.total} {zmen(tool.total)} za 4 týdny</p>
+              <p class="tp-muted tp-tool-n">
+                {tool.total} {polozek(tool.total)} changelogu{releases[tool.tool] ? ` v ${releases[tool.tool]} ${releases[tool.tool] === 1 ? "vydání" : "vydáních"}` : ""} za 4 týdny
+              </p>
               <ol>
                 {tool.top.map((t) => (
                   <li>
@@ -195,7 +199,7 @@ export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | nul
               })}
             </section>
             {catchup && catchup.tools.length > 0 && <CatchupBlock catchup={catchup} />}
-            {o.tools.length > 0 && <Tools tools={o.tools} />}
+            {o.tools.length > 0 && <Tools tools={o.tools} releases={o.releases ?? {}} />}
             <p class="tp-note tp-method">
               Podíl počítá všechny položky changelogu včetně oprav; rozpracovaný týden se nepočítá. Témata
               přiřazuje jazykový model, jednotlivé položky mohou být zařazené nepřesně. Zásadní změna je

@@ -15,6 +15,7 @@ const overview: TopicsOverview = {
     { ...base, key: "mcp", label: "MCP", share: 0, prevShare: 0, delta: 0, direction: "flat", major: 0, weeks: [null, null] },
   ],
   tools: [{ tool: "grok-build", name: "Grok Build", total: 30, top: [{ key: "tui", label: "Terminál", share: 21.06, ccShare: 11 }], deltas: { hooks: 5 }, shares: { tui: 21.06 } }],
+  releases: {},
 };
 const catchup: Catchup = {
   to: Date.UTC(2026, 9, 12),

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:test";
+import { toolDatesKvKey } from "../../src/lib/tools/registry";
 import { drizzle } from "drizzle-orm/d1";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ccChangeItem } from "../../src/db/schema";
@@ -108,6 +109,11 @@ describe("syncMuseCode", () => {
     const r = await syncMuseCode(db, env.KV, { f: fake().f, now: new Date("2026-10-20T08:00:00Z") });
     expect(r).toMatchObject({ latest: "1.4.10", versions: 2, added: 6, approx: ["1.4.5"] });
     expect(r.missing.map((m) => m.version)).toEqual(["1.4.11"]);
+    // Poznámka pro mapu ekosystému: odvozené datum a chybějící verze.
+    expect(await env.KV.get(toolDatesKvKey("muse-code"), "json")).toMatchObject({
+      approx: [{ version: "1.4.5", basis: "upper" }],
+      missing: [{ version: "1.4.11" }],
+    });
     const rows = await db.select().from(ccChangeItem);
     expect(new Set(rows.map((x) => x.tool))).toEqual(new Set(["muse-code"]));
     expect(rows.find((x) => x.version === "1.4.5")!.publishedAt.toISOString().slice(0, 10)).toBe("2026-10-11"); // 1.4.6 z npm

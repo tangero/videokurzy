@@ -17,7 +17,7 @@ import type { drizzle } from "drizzle-orm/d1";
 import { compareVersions, sha8, type ChangeType, type ChangelogEntry } from "../cc-news/changelog-source";
 import { syncChangelogEntries } from "../cc-news/classify";
 import type { DocsSource } from "../cc-news/docs-snapshot";
-import type { ToolKey } from "./registry";
+import { toolDatesKvKey, type ToolDates, type ToolKey } from "./registry";
 
 type Db = ReturnType<typeof drizzle>;
 
@@ -189,5 +189,15 @@ export async function syncMuseCode(
     .filter(([v]) => latest && compareVersions(v, latest) > 0)
     .map(([version, at]) => ({ version, at }))
     .sort((a, b) => compareVersions(a.version, b.version));
+  // Pro čtenáře mapy ekosystému: které verze mají datum jen odvozené a co v changelogu chybí.
+  const notes: ToolDates = {
+    syncedAt: now.toISOString(),
+    approx: approx.map((v) => {
+      const at = dates.get(v)!.toISOString();
+      return { version: v, at, basis: firstSeen[v] === at ? "first-seen" : "upper" };
+    }),
+    missing: missing.map((m) => ({ version: m.version, at: m.at.toISOString() })),
+  };
+  await kv.put(toolDatesKvKey(MUSE_CODE), JSON.stringify(notes));
   return { latest, versions: parsed.length, added, approx, missing };
 }

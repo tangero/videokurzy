@@ -58,6 +58,8 @@ describe("computeTopicsOverview", () => {
     expect(grok.top[0]!.share).toBeCloseTo(66.67, 1);
     expect(grok.top[1]).toMatchObject({ key: "hooks", ccShare: 25 });
     expect(o.tools.find((t) => t.tool === "codex")).toMatchObject({ total: 0, top: [], shares: {} });
+    // Vydání ve 4 týdnech (každá položka fixture má vlastní verzi): Claude Code 4, Grok Build 3.
+    expect(o.releases).toEqual({ "claude-code": 4, "grok-build": 3 });
     expect(grok.shares.tui).toBeCloseTo(66.67, 1);
     expect(grok.shares.hooks).toBeCloseTo(33.33, 1);
   });

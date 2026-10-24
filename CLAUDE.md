@@ -119,6 +119,10 @@ návaznosti; stránky `/novinky-cc/temata`).
   do KV `tools:week-cs:<tool>:<rok>-wNN`; nový výběr ho zneplatní. Celý český článek o ostatních nástrojích se nepíše.
   Zpětně: `POST /admin/api/tools/week-cs?weeks=4` (všechny nástroje), stav týdne `GET …?tool=codex&week=2026-w42`.
   Pruh „Ostatní nástroje tento týden“ je i na `/novinky-cc`. Data a loader: `src/lib/cc-news/ecosystem.ts`.
+  Počty jsou **položky changelogu**, ne „změny“: mezi nástroji se nedají srovnávat (Muse Code píše kolem 100
+  položek na vydání), proto stránka ukazuje i počet vydání a průměr na vydání. Changelog Muse Code nemá data;
+  verze bez data z npm/GitHubu mají datum jen jako horní mez. Synchronizace to zapisuje do KV
+  `tools:dates-approx:<tool>` (`ToolDates`) a karta nástroje to čtenáři vysvětlí. Data v `cc_change_item` neměnit.
 - Stránka tématu `/novinky-cc/temata/<téma>` (`topic-history.ts`, `views/cc-topic.tsx`): týdenní osa od vzniku
   tématu, detail týdne (`?tyden=2026-w41`), detail pojmu napříč nástroji (`?pojem=PreToolUse`), srovnání
   s ostatními nástroji podle podílu na jejich změnách, slovník identifikátorů z changelogu a milníky.
