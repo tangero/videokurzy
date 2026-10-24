@@ -58,12 +58,18 @@ export function parseEntryLine(line: string): { type: ChangeType; scope: string 
   return { type: t ?? "Other", scope, text };
 }
 
-/** Datum vydání každé verze ze stránky changelogu v dokumentaci. */
+/** Datum vydání každé verze z původních `<Update>` značek i nového Markdownu. */
 export function parseReleaseDates(docsChangelogMd: string): Map<string, Date> {
   const dates = new Map<string, Date>();
+  const add = (version: string, rawDate: string) => {
+    const d = new Date(`${rawDate} 12:00 UTC`);
+    if (!Number.isNaN(+d)) dates.set(version, d);
+  };
   for (const m of docsChangelogMd.matchAll(/<Update label="([\d.]+)" description="([^"]+)"/g)) {
-    const d = new Date(`${m[2]} 12:00 UTC`);
-    if (!Number.isNaN(+d)) dates.set(m[1]!, d);
+    add(m[1]!, m[2]!);
+  }
+  for (const m of docsChangelogMd.matchAll(/^\*\*(\d+\.\d+\.\d+)\*\*[ \t]*\r?\n(?:[ \t]*\r?\n)+([A-Za-z]+ \d{1,2}, \d{4})[ \t]*\r?$/gm)) {
+    add(m[1]!, m[2]!);
   }
   return dates;
 }
@@ -104,7 +110,24 @@ export async function fetchChangelog(minVersion = "0.0.0"): Promise<ChangelogEnt
     return res.text();
   };
   const [md, docs] = await Promise.all([get(CHANGELOG_MD_URL), get(DOCS_CHANGELOG_URL)]);
-  return parseChangelog(md, parseReleaseDates(docs), minVersion);
+  const versions = [...new Set(
+    [...md.matchAll(/^## (\d+\.\d+\.\d+)[ \t]*$/gm)].map((m) => m[1]!),
+  )];
+  if (versions.length === 0) {
+    throw new Error("cc-news changelog: v GitHub CHANGELOG.md nebyly rozpoznány žádné verze");
+  }
+  const dates = parseReleaseDates(docs);
+  const missing = versions.filter((version) =>
+    compareVersions(version, minVersion) >= 0 && !dates.has(version));
+  if (missing.length > 0) {
+    const shown = missing.slice(0, 5).join(", ");
+    const rest = missing.length > 5 ? ` a dalších ${missing.length - 5} verzí` : "";
+    throw new Error(
+      `cc-news changelog: dokumentace neposkytla datum pro ${shown}${rest}; ` +
+      "synchronizace byla přerušena, aby nevzniklo neúplné vydání",
+    );
+  }
+  return parseChangelog(md, dates, minVersion);
 }
 
 // ─── Týdny ────────────────────────────────────────────────────────

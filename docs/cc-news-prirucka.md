@@ -5,45 +5,45 @@ z pohledu lidí (admin, platící uživatel) i provozu. Technický popis kódu a
 datového modelu je v [`cc-news.md`](./cc-news.md); ukázkový článek a způsob
 generování v [`cc-news-samples/`](./cc-news-samples/).
 
-> **Co to je:** newsletter pro platící uživatele. Z nového týdenního záznamu na
-> changelogu Claude Code (`code.claude.com/docs/en/whats-new`) vznikne redakčně
-> zpracovaný český přehled, uloží se jako koncept, pošle ke schválení člověku, a
-> po schválení se publikuje v gated sekci „Novinky v CC" a rozešle platícím
-> uživatelům (s možností odhlášení) + s odkazy na nové CC články z vibecoding.cz.
+> **Co to je:** newsletter pro platící uživatele. Z položek skutečného
+> `anthropics/claude-code/CHANGELOG.md`, dat verzí a změn dokumentace sestavujeme
+> vlastní redakčně zpracovaný český přehled. Ve výchozím režimu se automaticky
+> publikuje v gated sekci „Novinky v CC"; newsletter předplatitelům rozesílá
+> admin ručně (s možností odhlášení a s odkazy na nové CC články z vibecoding.cz).
 
 ---
 
 ## 1. Tok od změny changelogu k publikaci
 
 ```
-[cron 03:00] detekce nového whats-new digestu (idempotentní)
+[cron 03:00 UTC] synchronizace CHANGELOG.md, dat verzí a dokumentace
       │
       ▼
-[fronta] stáhne .md detail → redakční editor (kostra + LLM do češtiny)
+[fronta] výběr novinek + kontrola faktů + český redakční text
       │
       ▼
-[koncept] uloží draft + PŘIPRAVÍ schvalovací e-mail adminovi   ← automatika KONČÍ
-      │
-      ▼  (čeká na lidský klik)
-[admin] klikne „Schválit a publikovat" v e-mailu (HMAC link)
+[automatické vydání] článek v gated sekci /novinky-cc + oznámení „Vydáno"
       │
       ▼
-[publikace] článek v gated sekci /novinky-cc  +  připraví rozeslání
+[admin] případná zpětná úprava + vědomé spuštění rozeslání
       │
       ▼
-[newsletter] rozeslání platícím (dry-run) + odkazy na CC články + odhlášení
+[newsletter] rozeslání platícím + odkazy na CC články + odhlášení
 ```
 
-**Klíčový princip:** automatika vyrobí koncept, ale **nic nepublikuje ani
-nerozesílá sama**. Publikace nastává výhradně lidským kliknutím na schvalovací
-odkaz (mantinel kontraktu).
+**Klíčový princip:** automatika sestaví a ve výchozím režimu publikuje webový
+článek, ale **newsletter předplatitelům nerozesílá sama**. Schvalovací odkaz se
+použije jen při vypnutém `cc_news_autopublish` nebo u nového konceptu už vydaného
+článku. Historické `whats-new` digesty zůstávají publikované, ale od 24. 10. 2026
+je cron už dále neskenuje a z jejich re-editací neposílá schvalovací e-maily.
 
 ---
 
 ## 2. Pohled administrátora (Patrick)
 
 ### Schvalovací e-mail
-Po detekci nového digestu se připraví e-mail (ve fázi 1 dry-run — viz §5):
+Při vypnutém automatickém vydávání nebo novém konceptu už vydaného týdne se
+připraví e-mail (reálné odeslání závisí na branách v §5):
 - Předmět: „Ke schválení: Novinky v Claude Code — Week N".
 - Tlačítko **„Schválit a publikovat"** → podepsaný **jednorázový** odkaz.
 - Odkaz **„Otevřít koncept k editaci"** → admin náhled konceptu.
@@ -85,7 +85,8 @@ drobnosti, odkazy na dokumentaci). YAML hlavička se čtenáři **nezobrazuje**.
 Stránka má `noindex` (gated obsah se neindexuje).
 
 ### Newsletter
-Po publikaci se rozešle platícím (ve fázi 1 dry-run — viz §5). Cílová množina:
+Po publikaci spustí rozeslání admin ručně; reálné odeslání závisí na branách v §5.
+Cílová množina:
 - aktivní platící (`purchase` se `status=active`, neexpirované, `kind` paid/manual),
 - ověření uživatelé na aktivní firemní (org) doméně,
 - **mínus** comp/staff granty, neověřené a nevalidní adresy,
@@ -120,17 +121,16 @@ Odhlášení přežije i případný GDPR výmaz účtu.
 
 ---
 
-## 5. Fáze 1 vs. produkce
+## 5. Dry-run a produkce
 
-Celá pipeline je ve **fázi 1**: kompletně hotová jako PR. E-mailové cesty běží
-**defaultně v dry-run** (e-maily se jen logují, NEodejdou). Reálné odeslání přes
-Resend je připravené, ale schované za **dvěma branami** — viz níže.
+E-mailové cesty běží **defaultně v dry-run** (e-maily se jen logují, NEodejdou).
+Reálné odeslání přes Resend je schované za **dvěma branami** — viz níže.
 
 | Akce | Default (dry-run) | Po zapnutí obou bran |
 |------|-------------------|----------------------|
 | Schvalovací e-mail | neodesílá se (log + příprava) | dorazí adminovi (Resend) |
-| Rozeslání newsletteru | neodesílá se (spočítá počet + maskovaný vzorek) | jde platícím (Resend) |
-| Publikace v gated sekci | funguje (po kliknutí approve) | funguje |
+| Rozeslání newsletteru | neodesílá se (spočítá počet + maskovaný vzorek) | jde platícím po ručním spuštění (Resend) |
+| Publikace v gated sekci | funguje (automaticky, při vypnutém autopublish po approve) | funguje stejně |
 | `/novinky-cc` | funguje | funguje |
 
 **Dvě brány reálného odeslání** (musí platit obě současně):
@@ -138,8 +138,8 @@ Resend je připravené, ale schované za **dvěma branami** — viz níže.
 2. admin přepínač „Novinky v Claude Code — odesílání e-mailů" v `/admin/settings`
    (`cc_news_live_send`).
 
-Dokud kterákoli chybí, je dry-run. Produkci tak nelze zapnout omylem jediným
-přepnutím — to je vědomý mantinel fáze 1.
+Dokud kterákoli chybí, je dry-run. Live odeslání tak nelze zapnout omylem jediným
+přepnutím.
 
 ### Provozní přepínače
 - `CC_NEWS_DRY_RUN` — výchozí dry-run; `"0"` je **první brána** live odeslání

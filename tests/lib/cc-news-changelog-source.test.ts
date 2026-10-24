@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   changelogSourceId,
   compareVersions,
+  fetchChangelog,
   isoWeek,
   isoWeekBounds,
   lastClosedWeek,
@@ -36,11 +37,55 @@ const DOCS = `<Update label="2.1.271" description="September 14, 2026">
 <Update label="2.1.270" description="September 12, 2026">
 <Update label="2.1.269" description="September 11, 2026">`;
 
+const DOCS_MARKDOWN = `**2.1.271**
+
+September 14, 2026
+
+**2.1.270**
+
+September 12, 2026
+
+**2.1.269**
+
+September 11, 2026`;
+
+function mockChangelogFetch(docs: string) {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+    new Response(String(input).includes("raw.githubusercontent.com") ? CHANGELOG : docs));
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
 describe("parseEntryLine", () => {
   it("rozpozná typ a platformu v hranatých závorkách i s dvojtečkou", () => {
     expect(parseEntryLine("- [VSCode] Added accept buttons")).toEqual({ type: "Added", scope: "VSCode", text: "Added accept buttons" });
     expect(parseEntryLine("- Windows: Fixed writes")).toEqual({ type: "Fixed", scope: "Windows", text: "Fixed writes" });
     expect(parseEntryLine("- Claude now does X")).toEqual({ type: "Other", scope: null, text: "Claude now does X" });
+  });
+});
+
+describe("parseReleaseDates", () => {
+  it("přečte původní Update i nový Markdown s CRLF konci řádků", () => {
+    const docs = `<Update label="2.1.268" description="September 10, 2026">\n${DOCS_MARKDOWN.replaceAll("\n", "\r\n")}`;
+    const dates = parseReleaseDates(docs);
+    expect(dates.size).toBe(4);
+    expect(dates.get("2.1.268")?.toISOString()).toBe("2026-09-10T12:00:00.000Z");
+    expect(dates.get("2.1.270")?.toISOString()).toBe("2026-09-12T12:00:00.000Z");
+  });
+});
+
+describe("fetchChangelog", () => {
+  it("stáhne vlastní changelog s daty v obou formátech", async () => {
+    for (const docs of [DOCS, DOCS_MARKDOWN]) {
+      mockChangelogFetch(docs);
+      const entries = await fetchChangelog("2.1.270");
+      expect(entries.map((e) => e.version)).toEqual(["2.1.270", "2.1.271", "2.1.271", "2.1.271", "2.1.271", "2.1.271"]);
+    }
+  });
+
+  it("odmítne neúplnou synchronizaci při chybějícím datu verze", async () => {
+    mockChangelogFetch(`**2.1.271**\n\nSeptember 14, 2026`);
+    await expect(fetchChangelog("2.1.270")).rejects.toThrow(/2\.1\.270.*neúplné vydání/);
   });
 });
 
