@@ -32,6 +32,8 @@ type WebhookMessageType =
   | "cc-news.en-weekly"
   // Interní týdenní přehled dalšího sledovaného nástroje (Grok Build). Idempotentní.
   | "tools.week"
+  // Krátký český souhrn týdne nástroje pro mapu ekosystému (po tools.week). Idempotentní.
+  | "tools.week-cs"
   // Kdo koho dohání: kandidáti z pravidel a jejich ověření modelem. Bez payloadu; idempotentní.
   | "cc-news.catchup"
   // Anglický snímek trendů (témata + dohánění) → PR do webu, /en/trends/. Bez payloadu; idempotentní.
@@ -87,6 +89,11 @@ export async function enqueueCcNewsItem(
 /** Zařadí interní týdenní přehled nástroje (výběr + kontrola faktů, uloží se do KV). */
 export async function enqueueToolWeek(env: Env, tool: string, week: { year: number; week: number }): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "tools.week", data: { tool, year: week.year, week: week.week } });
+}
+
+/** Zařadí český souhrn týdne nástroje pro /novinky-cc/ekosystem (z uloženého výběru). */
+export async function enqueueToolWeekCs(env: Env, tool: string, week: { year: number; week: number }): Promise<void> {
+  await env.WEBHOOK_QUEUE.send({ type: "tools.week-cs", data: { tool, year: week.year, week: week.week } });
 }
 
 /** Zařadí anglický přehled vydání (po schválení české verze). */
@@ -200,6 +207,8 @@ export async function handleQueue(
           const { buildToolWeek } = await import("./lib/tools/weekly-tool");
           const w = await buildToolWeek(db, env, tool, { year: Number(data.year), week: Number(data.week) }, new Date());
           console.log(`[queue] tools.week ${tool} ${w.week.year}-w${w.week.week}: ${w.features.length} novinek z ${w.counts.collected} položek, vyřazeno ${w.dropped.length}`);
+          // Český souhrn pro mapu ekosystému: nepublikuje se, proto bez ohledu na automatické vydávání.
+          if (w.features.length > 0 || w.minorWins.length > 0) await enqueueToolWeekCs(env, tool, w.week);
           // Automatické vydání: anglický přehled týdne (už vydaný se nepřepíše).
           const { getCcNewsAutopublish } = await import("./lib/cc-news/settings");
           // Jen nástroje s anglickou řadou na webu (TOOLS[].englishWeekly, WEEKLY_TOOLS webu).
@@ -208,6 +217,16 @@ export async function handleQueue(
             const { toolSelectionId } = await import("./lib/tools/weekly-tool");
             await enqueueCcNewsEnglish(env, toolSelectionId(tool, w.week));
           }
+          break;
+        }
+
+        case "tools.week-cs": {
+          const { isToolKey } = await import("./lib/tools/registry");
+          const tool = String(data.tool ?? "");
+          if (!isToolKey(tool)) { console.error(`[queue] tools.week-cs: neznámý nástroj ${tool}`); break; }
+          const { writeToolWeekCs } = await import("./lib/tools/week-cs");
+          const cs = await writeToolWeekCs(env, tool, { year: Number(data.year), week: Number(data.week) }, new Date());
+          console.log(`[queue] tools.week-cs ${tool} ${data.year}-w${data.week}: ${cs ? `${cs.points.length} vět` : "bez výběru, souhrn smazán"}`);
           break;
         }
 

@@ -139,6 +139,11 @@ describe("gated sekce Novinky v CC (R5 — jen přihlášení s přístupem)", (
     expect(["/login", "/#cenik"]).toContain(loc);
   });
 
+  it("nepřihlášený je z mapy ekosystému přesměrován", async () => {
+    const res = await SELF.fetch("https://test.local/novinky-cc/ekosystem", { redirect: "manual" });
+    expect(res.status).toBe(302);
+  });
+
   it("nepřihlášený je z detailu přesměrován", async () => {
     const res = await SELF.fetch("https://test.local/novinky-cc/2026-w24", { redirect: "manual" });
     expect(res.status).toBe(302);

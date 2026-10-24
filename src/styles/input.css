@@ -953,3 +953,51 @@ a.tl-week:hover .tl-col, a.tl-week:focus-visible .tl-col { outline: 2px solid va
 .cu-timeline > .tp-note { margin-top: 12px; }
 .cu-page-tl { margin-top: 2.5rem; }
 .cu + .tp-tools { margin-top: 2.5rem; }
+
+/* ─── Mapa ekosystému (/novinky-cc/ekosystem, pruh na /novinky-cc) ─── */
+.cc-next { margin: -6px 0 12px; }
+.cc-eco-list { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--ink); }
+.cc-eco-list li { display: grid; grid-template-columns: 10.5rem minmax(0, 1fr); gap: 4px 16px; padding: 12px 0; border-bottom: 1px solid var(--border); align-items: baseline; }
+.cc-eco-name { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; font-weight: 600; color: var(--ink); text-decoration: none; }
+.cc-eco-name:hover, .cc-eco-name:focus-visible { color: var(--accent); }
+.cc-eco-text { font-size: 0.92rem; line-height: 1.5; color: var(--ink-soft); min-width: 0; }
+.cc-eco-links { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 12px 0 0; font-size: 0.9rem; font-weight: 500; }
+.cc-eco-links a { display: inline-flex; align-items: center; min-height: 44px; }
+
+.eco-crumbs { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); margin: 0 0 12px; }
+.eco-crumbs a { color: inherit; }
+.eco-lede { font-size: 0.95rem; margin-bottom: 8px; }
+.eco-h2 { margin-top: 2rem; }
+.eco-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; border-top: 2px solid var(--ink); }
+.eco-card { padding: 16px 0 18px; border-bottom: 1px solid var(--border); min-width: 0; display: grid; gap: 8px; align-content: start; scroll-margin-top: 80px; }
+.eco-card-main { grid-column: 1 / -1; }
+.eco-card h3 { font-size: 1.1rem; margin: 0; display: flex; align-items: center; gap: 8px; }
+.eco-focus { margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+.eco-pace { font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+.eco-week { margin: 4px 0 0; font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); }
+.eco-issue { font-weight: 600; font-size: 1.05rem; line-height: 1.35; color: var(--ink); text-decoration: none; }
+.eco-issue:hover { text-decoration: underline; }
+.eco-points { margin: 0; padding: 0 0 0 1.1rem; display: grid; gap: 6px; font-size: 0.92rem; line-height: 1.5; color: var(--ink-soft); }
+.eco-pending { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.eco-more { font-size: 0.9rem; font-weight: 500; justify-self: start; display: inline-flex; align-items: center; min-height: 44px; }
+.eco-empty { margin: 0; font-size: 0.92rem; }
+
+.eco-map { margin-top: 2.5rem; }
+.eco-table-wrap { overflow-x: auto; border-top: 2px solid var(--ink); margin-bottom: 12px; }
+.eco-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.eco-table th, .eco-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.eco-table thead th { vertical-align: bottom; font-weight: 600; }
+.eco-th-name { display: inline-flex; align-items: center; gap: 6px; }
+.eco-th-n { display: block; font-weight: 400; font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.eco-table .eco-th-topic, .eco-table tbody th { text-align: left; font-weight: 500; white-space: normal; min-width: 9rem; }
+/* Na úzkém displeji se tabulka posouvá do strany; název tématu zůstává vidět. */
+.eco-table .eco-th-topic, .eco-table tbody th { position: sticky; left: 0; z-index: 1; background: var(--bg); }
+.eco-table tbody th a { color: var(--ink); text-decoration: none; }
+.eco-table tbody th a:hover { text-decoration: underline; }
+.eco-cell { font-variant-numeric: tabular-nums; color: var(--ink); }
+.eco-cell-none { color: var(--muted); text-align: center; }
+
+@media (max-width: 640px) {
+  .cc-eco-list li { grid-template-columns: 1fr; }
+  .eco-cards { grid-template-columns: 1fr; }
+}
