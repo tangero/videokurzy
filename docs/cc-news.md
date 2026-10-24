@@ -1,8 +1,9 @@
 # Služba „Novinky v Claude Code"
 
-Newsletter pro platící uživatele kurzy.vibecoding.cz. Z nového týdenního záznamu
-na changelogu Claude Code (`code.claude.com/docs/en/whats-new`) vznikne redakčně
-zpracovaný přehled, který se publikuje v gated sekci a rozešle platícím uživatelům.
+Newsletter pro platící uživatele kurzy.vibecoding.cz. Z položek skutečného
+`anthropics/claude-code/CHANGELOG.md`, dat verzí a změn dokumentace vzniká vlastní
+redakčně zpracovaný přehled, který se publikuje v gated sekci a rozešle platícím
+uživatelům.
 
 > **Automatické vydávání (od 18. 10. 2026, rozhodnutí Patricka): lidské schválení
 > před publikací se NEvyžaduje.** S přepínačem `cc_news_autopublish` (výchozí
@@ -14,6 +15,10 @@ zpracovaný přehled, který se publikuje v gated sekci a rozešle platícím u�
 > Newsletter předplatitelům se rozesílá **ručně** tlačítkem v adminu. Po vypnutí
 > přepínače platí původní tok se schvalovacím odkazem popsaný níže.
 
+> Periodické skenování historických `whats-new` digestů je od 24. 10. 2026
+> vypnuté. Jejich publikované články zůstávají zachované, ale cron už z jejich
+> re-editací nevyrábí schvalovací e-maily.
+
 > Odesílání e-mailů má dvě brány (`CC_NEWS_DRY_RUN=0` + `cc_news_live_send`);
 > bez nich běží v **dry-run** režimu.
 
@@ -21,22 +26,21 @@ zpracovaný přehled, který se publikuje v gated sekci a rozešle platícím u�
 
 | # | Krok | Modul | Požadavek |
 |---|------|-------|-----------|
-| 1 | **Detekce** nového whats-new záznamu (idempotentní) | `lib/cc-news/detect.ts` (cron v `scheduled.ts`) | R1 |
-| 2 | **Redakční zpracování** dle `redakcni-pravidla.md` | `lib/cc-news/editor.ts` | R2 |
+| 1 | **Synchronizace** `CHANGELOG.md` a dat verzí (idempotentní) | `lib/cc-news/changelog-source.ts`, `classify.ts`, `changelog-week.ts` (cron v `scheduled.ts`) | R1 |
+| 2 | **Výběr a redakční zpracování** včetně kontroly faktů | `lib/cc-news/weekly.ts` | R2 |
 | 3 | **Uložení konceptu** + automatické vydání (`autoPublishDraft`), nebo schvalovací e-mail při vypnutém přepínači | `lib/cc-news/draft.ts`, `lib/email.ts` | R3, R4 |
 | 4 | **Publikace** v gated sekci (automaticky, nebo po schválení) | `lib/cc-news/draft.ts`, `routes/cc-news.tsx` (`approveItem`) | R4, R5 |
-| 5 | **Rozeslání** (dry-run) + **odhlášení** (GDPR) | `lib/cc-news/newsletter.ts` | R6 |
+| 5 | **Ruční rozeslání** z adminu + **odhlášení** (GDPR) | `lib/cc-news/newsletter.ts` | R6 |
 | 6 | **Odkazy na nové CC články** z vibecoding.cz | `parseCcArticleLinks` v `newsletter.ts` | R7 |
 
 ## Datový model (D1)
 
-- **`cc_news_item`** (migrace `0025`, `0027`) — jeden whats-new digest.
-  Idempotence detekce stojí na `UNIQUE(sourceId)` (= canonical URL detailu, např.
-  `/docs/en/whats-new/2026-w24`). `contentHash` (SHA-256) zachytí re-edit téhož
-  týdne. `status`: `draft → published`. `approveNonce` = jednorázovost schválení.
-  `pendingContentHash` — když se re-edituje **už publikovaný** týden, živá verze
-  zůstává viditelná (nedepublikuje se) a nový obsah čeká ve `pendingContentHash`
-  na lidské schválení. Žádné PII.
+- **`cc_news_item`** (migrace `0025`, `0027`) — jedno týdenní vydání.
+  Idempotence stojí na `UNIQUE(sourceId)`, pro aktuální pipeline např.
+  `/changelog/2026-w42`; historické záznamy mají `/docs/en/whats-new/2026-w37`.
+  `status`: `draft → published`. `approveNonce` = jednorázovost schválení.
+  `pendingContentHash` — když se re-edituje **už publikovaný** historický digest,
+  živá verze zůstává viditelná a nový obsah čeká na lidské schválení. Žádné PII.
   - **KV oddělení obsahu:** `cc-news:draft:{id}` drží rozpracovaný koncept
     (přepisuje se re-editem), `cc-news:published:{id}` drží živou publikovanou
     verzi (čte gated detail). `approveItem` při schválení promotuje draft →
@@ -45,31 +49,31 @@ zpracovaný přehled, který se publikuje v gated sekci a rozešle platícím u�
   = HMAC-SHA256(normalizovaný e-mail, účel `claude_code_news`). **Žádné plain
   PII**; samostatná tabulka, aby suppression přežil GDPR výmaz uživatele.
 
-## Detekce (R1)
+## Synchronizace a založení vydání
 
-Strojový zdroj, ne HTML scraping: cron stáhne RSS `…/whats-new/rss.xml`, z první
-položky vytáhne odkaz na týdenní digest **z `content:encoded`** (ne z `<link>`,
-který míří na index s kotvou), normalizuje na `sourceId`, stáhne `.md` detail a
-spočítá `contentHash`. Idempotence: anti-join proti `cc_news_item`. `guid` a
-`pubDate` se na klíč nepoužívají (sousední týdny sdílejí `pubDate`). Nový/změněný
-záznam se zařadí do fronty `cc-news.detected` (`WEBHOOK_QUEUE`).
+Cron stáhne `CHANGELOG.md` z GitHubu a datum vydání každé verze z dokumentace.
+`parseReleaseDates` čte původní `<Update>` značky i nový Markdown s tučnou verzí
+a datem na samostatném řádku. Chybí-li datum některé verze v synchronizačním
+okně, `fetchChangelog` selže s poplachem a vydání se nezaloží z neúplných dat.
 
-Konzument fronty (`handleCcNewsDetected` v `queue.ts` → `processCcNewsItem` v
-`lib/cc-news/pipeline.ts`) na zprávu navazuje **automaticky**: stáhne `.md`
-detail, zavolá editor (krok 2), uloží draft a připraví schvalovací e-mail v
-dry-run (kroky 3–4). Tím je detekce zřetězená s celou redakční pipeline.
+Položky se idempotentně ukládají do `cc_change_item` a zařazují k dotřídění.
+Po uzavření týdne `createChangelogWeekItem` založí `/changelog/<rok>-w<týden>`
+a zařadí zprávu `cc-news.detected` (`WEBHOOK_QUEUE`). Konzument fronty
+(`handleCcNewsDetected` → `processCcNewsItem`) sestaví článek v `weekly.ts` z
+changelogu a snímků dokumentace, uloží koncept a podle přepínače ho publikuje
+nebo připraví ke schválení.
 
-## Redakční zpracování (R2, varianta C dle schválení architekta)
+## Redakční zpracování (R2)
 
-- **Deterministická vrstva** (`parseDigest` + `renderArticleSkeleton`): naparsuje
-  digest na model a sestaví kostru dle `redakcni-pravidla.md` (nadpis, YAML
-  frontmatter, perex bez changelog disclaimeru, bodový přehled s verzemi, velké
-  změny řazené dle váhy jako odstavce s odkazem na dokumentaci, drobnosti jako
-  odrážky). Plně testovatelné, bez sítě.
-- **LLM vrstva** (`renderArticle`, flag `CC_NEWS_LLM=1`): převede kostru do plné
-  češtiny dle jazykových pravidel přes **OpenRouter** (`OPENROUTER_API_KEY`, model
-  `anthropic/claude-sonnet-4.6`, override `CC_NEWS_LLM_MODEL`). Bez flagu se vrací
-  deterministická kostra. **Fakta se nehalucinují** — staví na naparsovaném modelu.
+Aktuální pipeline v `weekly.ts` vybere hlavní novinky a drobnosti, kontroluje
+povinné zařazení zásadních změn, ověřuje tvrzení proti citovaným položkám a teprve
+potom vytváří český článek přes OpenRouter. Deterministické kontroly hlídají čísla
+verzí a odkazy na existující dokumentaci.
+
+Historické `whats-new` digesty zpracovává původní `editor.ts`: deterministická
+kostra (`parseDigest` + `renderArticleSkeleton`) a volitelný LLM přepis
+(`renderArticle`, `CC_NEWS_LLM=1`). Tato větev slouží už jen pro archivní obsah a
+explicitní ruční akce, ne pro periodickou tvorbu nových vydání.
 
 ## Schvalování (R4) a publikace (R5)
 
