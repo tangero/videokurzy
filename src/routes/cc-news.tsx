@@ -321,7 +321,7 @@ ccNewsRoutes.get("/novinky-cc/ekosystem", async (c) => {
   if (redirect) return redirect;
   const db = drizzle(c.env.DB);
   const now = new Date();
-  const { buildEcosystemMatrix, loadToolWeekCards } = await import("../lib/cc-news/ecosystem");
+  const { buildEcosystemMatrix, loadToolDates, loadToolWeekCards } = await import("../lib/cc-news/ecosystem");
   // Každý blok má vlastní záchranu: stránka se vykreslí i bez přehledu nebo vydání.
   let overview: TopicsOverview | null = null;
   try {
@@ -333,10 +333,11 @@ ccNewsRoutes.get("/novinky-cc/ekosystem", async (c) => {
     console.error("[cc-news] ekosystém: čtení vydání selhalo:", (err as Error)?.message);
     return [];
   });
-  const [latest, cards, catchup] = await Promise.all([
+  const [latest, cards, catchup, dates] = await Promise.all([
     latestRow ? issueCard(c.env, latestRow) : null,
     loadToolWeekCards(c.env.KV, now),
     overview ? loadCatchup(c.env, db, overview) : null,
+    loadToolDates(c.env.KV),
   ]);
   const { CcEcosystemPage } = await import("../views/cc-ecosystem");
   const user = c.get("user")!;
@@ -348,6 +349,7 @@ ccNewsRoutes.get("/novinky-cc/ekosystem", async (c) => {
       overview={overview}
       matrix={overview ? buildEcosystemMatrix(overview) : null}
       catchup={catchup}
+      dates={dates}
     />,
   );
 });

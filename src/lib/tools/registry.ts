@@ -33,3 +33,16 @@ export function toolName(key: string): string {
 export function isToolKey(key: string): key is ToolKey {
   return key in TOOLS;
 }
+
+/**
+ * Verze s odvozeným datem vydání (changelog nástroje data neuvádí) a vydané verze,
+ * které changelog ještě nemá. Zapisuje synchronizace nástroje, čte mapa ekosystému.
+ */
+export interface ToolDates {
+  syncedAt: string;
+  /** upper = datum nejbližší novější verze (vydáno nejpozději tehdy), first-seen = den prvního výskytu. */
+  approx: { version: string; at: string; basis: "upper" | "first-seen" }[];
+  missing: { version: string; at: string }[];
+}
+
+export const toolDatesKvKey = (tool: ToolKey) => `tools:dates-approx:${tool}`;

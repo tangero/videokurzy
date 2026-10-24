@@ -54,10 +54,12 @@ export interface TopicsOverview {
   total: number;
   topics: TopicOverview[];
   tools: ToolFocus[];
+  /** Počet vydání (různých verzí) každého nástroje za poslední 4 týdny, včetně Claude Code. */
+  releases: Record<string, number>;
 }
 
 /** Sestaví přehled z trendů a týdenních počtů; čistá funkce kvůli testům a náhledům. */
-export function buildTopicsOverview(trends: TopicTrends, rows: OverviewRow[]): TopicsOverview {
+export function buildTopicsOverview(trends: TopicTrends, rows: OverviewRow[], releases: Record<string, number> = {}): TopicsOverview {
   const stripFrom = trends.from - PREVIOUS_WEEKS * WEEK;
   const cc = rows.filter((r) => r.tool === "claude-code");
   const weekTotals = Array<number>(STRIP_WEEKS).fill(0);
@@ -108,7 +110,7 @@ export function buildTopicsOverview(trends: TopicTrends, rows: OverviewRow[]): T
       return { tool, name: TOOLS[tool].name, total, top, deltas, shares };
     });
 
-  return { from: trends.from, to: trends.to, stripFrom, total: trends.total, topics, tools };
+  return { from: trends.from, to: trends.to, stripFrom, total: trends.total, topics, tools, releases };
 }
 
 export async function computeTopicsOverview(db: Db, now: Date): Promise<TopicsOverview> {
@@ -125,10 +127,17 @@ export async function computeTopicsOverview(db: Db, now: Date): Promise<TopicsOv
     .from(ccChangeItem)
     .where(and(isNotNull(ccChangeItem.topic), gte(ccChangeItem.publishedAt, new Date(stripFrom)), lt(ccChangeItem.publishedAt, new Date(trends.to))))
     .groupBy(ccChangeItem.tool, ccChangeItem.topic, sql`3`);
-  return buildTopicsOverview(trends, rows.map((r) => ({ tool: r.tool, topic: r.topic!, week: Number(r.week), n: Number(r.n) })));
+  // Vydání ve stejném okně jako podíly (zatříděné položky), aby „N položek v M vydáních“ sedělo.
+  const rel = await db
+    .select({ tool: ccChangeItem.tool, n: sql<number>`count(distinct ${ccChangeItem.version})` })
+    .from(ccChangeItem)
+    .where(and(isNotNull(ccChangeItem.topic), gte(ccChangeItem.publishedAt, new Date(trends.from)), lt(ccChangeItem.publishedAt, new Date(trends.to))))
+    .groupBy(ccChangeItem.tool);
+  const releases = Object.fromEntries(rel.map((r) => [r.tool, Number(r.n)]));
+  return buildTopicsOverview(trends, rows.map((r) => ({ tool: r.tool, topic: r.topic!, week: Number(r.week), n: Number(r.n) })), releases);
 }
 
-export const overviewKvKey = (weekStart: number) => `cc-news:topics-overview:v3:${weekStart}`;
+export const overviewKvKey = (weekStart: number) => `cc-news:topics-overview:v4:${weekStart}`;
 
 /** Přehled s hodinovou cache v KV (stejný rytmus jako trendy). */
 export async function getTopicsOverview(env: { KV: KVNamespace }, db: Db, now: Date): Promise<TopicsOverview> {

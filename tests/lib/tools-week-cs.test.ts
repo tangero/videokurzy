@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { drizzle } from "drizzle-orm/d1";
 import { beforeEach, describe, expect, it } from "vitest";
 import { selectionKvKey, type WeekSelection } from "../../src/lib/cc-news/weekly";
-import { buildEcosystemMatrix, loadToolWeekCards } from "../../src/lib/cc-news/ecosystem";
+import { buildEcosystemMatrix, datesNote, loadToolWeekCards } from "../../src/lib/cc-news/ecosystem";
 import type { TopicsOverview } from "../../src/lib/cc-news/topics-overview";
 import { CS_SYSTEM, csUserMessage, validateCsPoints, writeToolWeekCs } from "../../src/lib/tools/week-cs";
 import { buildToolWeek, toolSelectionId, toolWeekCsKvKey, toolWeekKvKey } from "../../src/lib/tools/weekly-tool";
@@ -92,7 +92,7 @@ describe("loadToolWeekCards", () => {
 describe("buildEcosystemMatrix", () => {
   it("sloupec Claude Code z témat, ostatní z podílů; nástroj bez změn má null, Ostatní na konci", () => {
     const o = {
-      from: 0, to: 0, stripFrom: 0, total: 10,
+      from: 0, to: 0, stripFrom: 0, total: 10, releases: { "claude-code": 2, codex: 1 },
       topics: [
         { key: "hooks", share: 50 }, { key: "mcp", share: 10 }, { key: "other", share: 40 },
       ],
@@ -102,10 +102,30 @@ describe("buildEcosystemMatrix", () => {
       ],
     } as unknown as TopicsOverview;
     const m = buildEcosystemMatrix(o);
-    expect(m.tools.map((t) => t.tool)).toEqual(["claude-code", "codex", "grok-build"]);
+    expect(m.tools.map((t) => [t.tool, t.releases])).toEqual([["claude-code", 2], ["codex", 1], ["grok-build", 0]]);
+    // Trendy Claude Code „Ostatní“ nepočítají: bez údaje, ne 0 %.
+    expect(m.rows[2]!.shares).toEqual([null, 25, null]);
     expect(m.rows.map((r) => r.key)).toEqual(["mcp", "hooks", "other"]);
     expect(m.rows[0]!.shares).toEqual([10, 75, null]);
     expect(m.rows[1]!.shares).toEqual([50, 0, null]);
     expect(m.max).toBe(75);
+  });
+});
+
+describe("datesNote", () => {
+  const d = {
+    syncedAt: "",
+    approx: [
+      { version: "1.4.0", at: "2026-09-30T20:08:37Z", basis: "upper" as const },
+      { version: "1.4.5", at: "2026-10-11T23:15:23Z", basis: "upper" as const },
+      { version: "1.5.0", at: "2026-10-25T08:00:00Z", basis: "first-seen" as const },
+    ],
+    missing: [{ version: "1.4.12", at: "2026-10-22T17:43:38Z" }],
+  };
+  it("jen verze s odvozeným datem v období; chybějící verze jen na vyžádání", () => {
+    expect(datesNote(d, Date.UTC(2026, 9, 5), Date.UTC(2026, 9, 12))).toEqual({ upper: ["1.4.5"], firstSeen: [], missing: [] });
+    expect(datesNote(d, Date.UTC(2026, 8, 21), Date.UTC(2026, 9, 19), true)).toEqual({ upper: ["1.4.0", "1.4.5"], firstSeen: [], missing: ["1.4.12"] });
+    expect(datesNote(d, Date.UTC(2026, 9, 12), Date.UTC(2026, 9, 19))).toBeNull();
+    expect(datesNote(null, 0, Date.now())).toBeNull();
   });
 });
