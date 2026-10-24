@@ -22,6 +22,9 @@ export const TOOL_DOCS: Partial<Record<ToolKey, DocsSource>> = { "grok-build": G
 
 export const toolWeekKvKey = (tool: ToolKey, w: Week) => `tools:week:${tool}:${weekKey(w)}`;
 
+/** Český souhrn týdne pro mapu ekosystému (week-cs.ts). */
+export const toolWeekCsKvKey = (tool: ToolKey, w: Week) => `tools:week-cs:${tool}:${weekKey(w)}`;
+
 /** ID výběru týdne nástroje pro anglický přehled (KV `cc-news:selection:<id>`), např. grok-build-2026-w41. */
 export const toolSelectionId = (tool: ToolKey, w: Week) => `${tool}-${w.year}-w${String(w.week).padStart(2, "0")}`;
 
@@ -124,9 +127,10 @@ export async function buildToolWeek(
   await env.KV.put(toolWeekKvKey(tool, week), JSON.stringify(out));
 
   // Tentýž ověřený výběr ve tvaru Novinek v CC: z něj píše anglický přehled (english.ts).
-  // Nový výběr zneplatní dříve napsaný anglický text; prázdný týden výběr smaže.
+  // Nový výběr zneplatní dříve napsaný anglický text i český souhrn; prázdný týden výběr smaže.
   const selId = toolSelectionId(tool, week);
   await env.KV.delete(englishMdKvKey(selId));
+  await env.KV.delete(toolWeekCsKvKey(tool, week));
   if (!result || result.kept.length === 0) {
     await env.KV.delete(selectionKvKey(selId));
   } else {

@@ -14,7 +14,7 @@ const overview: TopicsOverview = {
     { ...base, key: "agents", label: "Subagenti", share: 7, prevShare: 15, delta: -8, direction: "down", major: 0, weeks: [1, 2] },
     { ...base, key: "mcp", label: "MCP", share: 0, prevShare: 0, delta: 0, direction: "flat", major: 0, weeks: [null, null] },
   ],
-  tools: [{ tool: "grok-build", name: "Grok Build", total: 30, top: [{ key: "tui", label: "Terminál", share: 21.06, ccShare: 11 }], deltas: { hooks: 5 } }],
+  tools: [{ tool: "grok-build", name: "Grok Build", total: 30, top: [{ key: "tui", label: "Terminál", share: 21.06, ccShare: 11 }], deltas: { hooks: 5 }, shares: { tui: 21.06 } }],
 };
 const catchup: Catchup = {
   to: Date.UTC(2026, 9, 12),

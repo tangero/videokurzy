@@ -2,6 +2,7 @@ import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { fmtDate } from "../lib/dates";
 import { TREND_THRESHOLD_PP, type TopicTrend, type TopicTrends } from "../lib/cc-news/trends";
+import type { ToolWeekCard } from "../lib/cc-news/ecosystem";
 
 type LayoutUser = { name: string | null; email: string } | null;
 
@@ -136,16 +137,48 @@ const TrendsPanel: FC<{ trends: TopicTrends }> = ({ trends }) => {
   );
 };
 
+/** Pondělí týdne po vydání (vydání vychází v pondělí za minulý týden). */
+export function nextIssueDate(publishedAt: number): number {
+  const d = new Date(publishedAt);
+  const sinceMonday = (d.getUTCDay() + 6) % 7;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7);
+}
+
+/** Ostatní nástroje tento týden: jedna věta na nástroj, odkaz na mapu ekosystému. */
+const EcosystemStrip: FC<{ cards: ToolWeekCard[] }> = ({ cards }) => (
+  <section class="cc-eco" aria-labelledby="cc-eco-h">
+    <h2 id="cc-eco-h" class="cc-section-h">Ostatní nástroje tento týden</h2>
+    <ul class="cc-eco-list">
+      {cards.map((card) => (
+        <li class={`cu-${card.tool}`}>
+          <a class="cc-eco-name" href={`/novinky-cc/ekosystem#${card.tool}`}>
+            <span class="cu-key" aria-hidden="true" />
+            {card.name}
+          </a>
+          <span class="cc-eco-text" lang={card.pending ? "en" : undefined}>
+            {card.points[0] ? <InlineCode text={card.points[0]} /> : <span class="cc-muted">Za poslední čtyři týdny žádné novinky.</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+    <p class="cc-eco-links">
+      <a href="/novinky-cc/ekosystem">Mapa ekosystému →</a>
+      <a href="/novinky-cc/dohanani">Kdo koho dohání →</a>
+    </p>
+  </section>
+);
+
 /**
  * Seznam publikovaných vydání „Novinky v Claude Code" v designu serveru.
  * Gated (řeší routa), takže Layout vždy dostane přihlášeného uživatele.
  * Pořadí: aktuální vydání → trendy → archiv → materiály.
  */
-export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; trends?: TopicTrends | null }> = ({
-  user,
-  items,
-  trends,
-}) => {
+export const CcNewsListPage: FC<{
+  user: LayoutUser;
+  items: CcNewsListItem[];
+  trends?: TopicTrends | null;
+  ecosystem?: ToolWeekCard[];
+}> = ({ user, items, trends, ecosystem }) => {
   const [latest, ...archive] = items;
   return (
   <Layout title="Novinky v Claude Code" user={user} noindex>
@@ -153,7 +186,8 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; tre
       <h1>Novinky v Claude Code</h1>
       <p style="color: var(--muted); margin-bottom: 28px">
         Týdenní přehled novinek z Claude Code pro platící uživatele.{" "}
-        <a href="/novinky-cc/temata">Vývoj jednotlivých témat →</a>
+        <a href="/novinky-cc/temata">Vývoj jednotlivých témat →</a>{" "}
+        <a href="/novinky-cc/ekosystem">Mapa ekosystému →</a>
       </p>
 
       {!latest ? (
@@ -164,6 +198,12 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; tre
       ) : (
         <>
           <h2 class="cc-section-h">Aktuální vydání</h2>
+          {/* Opožděné vydání: datum v minulosti by mátlo, raději nic. */}
+          {latest.publishedAt && nextIssueDate(latest.publishedAt) + 86_400_000 > Date.now() && (
+            <p class="cc-meta cc-next">
+              Další vydání v pondělí {fmtDate(nextIssueDate(latest.publishedAt), { month: "long", fallback: "" })}
+            </p>
+          )}
           <ul class="cc-news-list">
             <li>
               <a
@@ -192,6 +232,8 @@ export const CcNewsListPage: FC<{ user: LayoutUser; items: CcNewsListItem[]; tre
               {latest.topics && <TopicChips topics={latest.topics} />}
             </li>
           </ul>
+
+          {ecosystem && ecosystem.length > 0 && <EcosystemStrip cards={ecosystem} />}
 
           {trends && trends.total > 0 && <TrendsPanel trends={trends} />}
 

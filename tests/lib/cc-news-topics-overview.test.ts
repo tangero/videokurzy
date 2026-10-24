@@ -57,6 +57,8 @@ describe("computeTopicsOverview", () => {
     expect(grok.top[0]).toMatchObject({ key: "tui", ccShare: 0 });
     expect(grok.top[0]!.share).toBeCloseTo(66.67, 1);
     expect(grok.top[1]).toMatchObject({ key: "hooks", ccShare: 25 });
-    expect(o.tools.find((t) => t.tool === "codex")).toMatchObject({ total: 0, top: [] });
+    expect(o.tools.find((t) => t.tool === "codex")).toMatchObject({ total: 0, top: [], shares: {} });
+    expect(grok.shares.tui).toBeCloseTo(66.67, 1);
+    expect(grok.shares.hooks).toBeCloseTo(33.33, 1);
   });
 });

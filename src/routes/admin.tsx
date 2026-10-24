@@ -2676,6 +2676,45 @@ admin.post("/admin/api/cc-news/en-trends", async (c) => {
   await enqueueCcNewsEnTrends(c.env);
   return c.json({ queued: true });
 });
+// Český souhrn týdne nástroje pro /novinky-cc/ekosystem. GET = uložený stav týdne
+// (?tool=&week=2026-w42, výchozí poslední uzavřený), POST = zařadí napsání do fronty
+// pro jeden nebo všechny nástroje a `weeks` týdnů zpět (doplnění zpětně).
+admin.get("/admin/api/tools/week-cs", async (c) => {
+  const { isToolKey } = await import("../lib/tools/registry");
+  const { lastClosedWeek } = await import("../lib/cc-news/changelog-source");
+  const { toolSelectionId, toolWeekCsKvKey } = await import("../lib/tools/weekly-tool");
+  const { selectionKvKey } = await import("../lib/cc-news/weekly");
+  const tool = c.req.query("tool") ?? "";
+  if (!isToolKey(tool)) return c.json({ error: "tool required" }, 400);
+  const m = (c.req.query("week") ?? "").match(/^(\d{4})-w(\d{1,2})$/i);
+  const week = m ? { year: Number(m[1]), week: Number(m[2]) } : lastClosedWeek(new Date());
+  const [cs, sel] = await Promise.all([
+    c.env.KV.get(toolWeekCsKvKey(tool, week), "json"),
+    c.env.KV.get(selectionKvKey(toolSelectionId(tool, week))),
+  ]);
+  return c.json({ tool, week, hasSelection: !!sel, summary: cs });
+});
+admin.post("/admin/api/tools/week-cs", async (c) => {
+  const { TOOLS, CLAUDE_CODE, isToolKey } = await import("../lib/tools/registry");
+  const { isoWeek, isoWeekBounds, lastClosedWeek } = await import("../lib/cc-news/changelog-source");
+  const { enqueueToolWeekCs } = await import("../queue");
+  const body = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
+  const pick = (k: string) => String(c.req.query(k) ?? body[k] ?? "");
+  const tool = pick("tool");
+  if (tool && (!isToolKey(tool) || tool === CLAUDE_CODE)) return c.json({ error: "neznámý nástroj" }, 400);
+  const tools = tool ? [tool] : Object.keys(TOOLS).filter((k) => k !== CLAUDE_CODE);
+  const weeks = Math.min(Math.max(Number(pick("weeks")) || 1, 1), 12);
+  const queued: string[] = [];
+  let w = lastClosedWeek(new Date());
+  for (let i = 0; i < weeks; i++) {
+    for (const t of tools) {
+      await enqueueToolWeekCs(c.env, t, w);
+      queued.push(`${t} ${w.year}-w${String(w.week).padStart(2, "0")}`);
+    }
+    w = isoWeek(new Date(isoWeekBounds(w.year, w.week).start.getTime() - 86_400_000));
+  }
+  return c.json({ queued });
+});
 // Interní sledování dalších nástrojů (Grok Build). Stránka ukáže týden: verze,
 // počty (invariant sebráno = zatříděno + nezatříděno), uložený výběr s kontrolou
 // faktů a položky podle významu. Nic se nepublikuje.

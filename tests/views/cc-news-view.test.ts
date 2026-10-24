@@ -57,7 +57,7 @@ describe("CcNewsListPage — design serveru", () => {
     const html = render(CcNewsListPage({ user: USER, items: [] }));
     expect(html).toContain("Zatím žádný publikovaný článek");
     // Žádná karta článku; odkaz na vývoj témat (/novinky-cc/temata) je v hlavičce vždy.
-    expect(html).not.toMatch(/href="\/novinky-cc\/(?!temata)/);
+    expect(html).not.toMatch(/href="\/novinky-cc\/(?!temata|ekosystem")/);
   });
 });
 

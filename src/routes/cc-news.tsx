@@ -144,12 +144,8 @@ function reviewHtml(r: import("../lib/cc-news/weekly").WeeklyReview): string {
   );
 }
 
-// Seznam publikovaných článků „Novinky v CC" — gated, v designu serveru.
-ccNewsRoutes.get("/novinky-cc", async (c) => {
-  const redirect = await gateOrRedirect(c);
-  if (redirect) return redirect;
-
-  const db = drizzle(c.env.DB);
+/** Publikovaná vydání od nejnovějšího týdne obsahu. */
+async function sortedPublished(db: ReturnType<typeof drizzle>) {
   const published = await db
     .select()
     .from(ccNewsItem)
@@ -160,54 +156,62 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
   // backfill starších týdnů má novější publishedAt, takže by je vystrčil nahoru.
   // publishedAt zůstává sekundárním kritériem (stabilní pořadí při shodě / když
   // sourceId nejde naparsovat — viz weekSortKey). Nejnovější týden = nahoře.
-  const rows = [...published].sort((a, b) => {
+  return [...published].sort((a, b) => {
     const byWeek = weekSortKey(b.sourceId) - weekSortKey(a.sourceId);
     if (byWeek !== 0) return byWeek;
     return (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0);
   });
+}
 
-  // Skutečný nadpis/perex jsou ve front matteru markdownu (KV), ne v DB. Načteme
-  // je per vydání PARALELNĚ (Promise.all, ne sériově). Selhání JEDNOHO KV čtení
-  // (transientní chyba) NESMÍ shodit celou stránku — odchytíme ho per-item a
-  // degradujeme na weekLabel; ostatní vydání se zobrazí normálně.
-  // (TODO: při růstu počtu vydání denormalizovat title/excerpt do cc_news_item
-  // při publikaci a vyhnout se KV čtení na seznamu úplně.)
-  const items = (
-    await Promise.all(
-      rows.map(async (r) => {
-        const slug = slugFromPath(r.articlePath);
-        if (!slug) return null;
-        let fm: { title: string | null; excerpt: string | null } = { title: null, excerpt: null };
-        let points: string[] = [];
-        // Výběr týdne (témata) existuje jen u vydání ze changelogu (od W38). Jeho
-        // `features` jsou anglicky (pracovní podklad), hlavní body se proto berou
-        // z `summary_points` českého článku.
-        let sel: WeekSelection | null = null;
-        try {
-          const [md, s] = await Promise.all([
-            c.env.KV.get(publishedKvKey(r.id)),
-            r.sourceId.startsWith("/changelog/") ? c.env.KV.get<WeekSelection>(selectionKvKey(r.id), "json") : null,
-          ]);
-          if (md) {
-            fm = parseFrontMatter(md);
-            points = parseSummaryPoints(md);
-          }
-          sel = s;
-        } catch (err) {
-          console.error(`[cc-news] KV čtení selhalo pro ${r.id}, fallback na weekLabel:`, (err as Error)?.message);
-        }
-        return {
-          slug,
-          title: fm.title ?? r.weekLabel ?? "Novinky",
-          excerpt: fm.excerpt,
-          versionRange: r.versionRange,
-          publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
-          topics: (sel?.topics ?? []).filter((k) => TOPIC_KEYS.has(k) && k !== "other").map((k) => ({ key: k, label: topicLabel(k) })),
-          points: points.slice(0, 3),
-        };
-      }),
-    )
-  ).filter((x): x is NonNullable<typeof x> => x !== null);
+/**
+ * Karta vydání pro výpis. Skutečný nadpis/perex jsou ve front matteru markdownu
+ * (KV), ne v DB. Selhání KV čtení (transientní chyba) NESMÍ shodit stránku —
+ * odchytíme ho a degradujeme na weekLabel.
+ * (TODO: při růstu počtu vydání denormalizovat title/excerpt do cc_news_item
+ * při publikaci a vyhnout se KV čtení na seznamu úplně.)
+ */
+async function issueCard(env: Env, r: typeof ccNewsItem.$inferSelect) {
+  const slug = slugFromPath(r.articlePath);
+  if (!slug) return null;
+  let fm: { title: string | null; excerpt: string | null } = { title: null, excerpt: null };
+  let points: string[] = [];
+  // Výběr týdne (témata) existuje jen u vydání ze changelogu (od W38). Jeho
+  // `features` jsou anglicky (pracovní podklad), hlavní body se proto berou
+  // z `summary_points` českého článku.
+  let sel: WeekSelection | null = null;
+  try {
+    const [md, s] = await Promise.all([
+      env.KV.get(publishedKvKey(r.id)),
+      r.sourceId.startsWith("/changelog/") ? env.KV.get<WeekSelection>(selectionKvKey(r.id), "json") : null,
+    ]);
+    if (md) {
+      fm = parseFrontMatter(md);
+      points = parseSummaryPoints(md);
+    }
+    sel = s;
+  } catch (err) {
+    console.error(`[cc-news] KV čtení selhalo pro ${r.id}, fallback na weekLabel:`, (err as Error)?.message);
+  }
+  return {
+    slug,
+    title: fm.title ?? r.weekLabel ?? "Novinky",
+    excerpt: fm.excerpt,
+    versionRange: r.versionRange,
+    publishedAt: r.publishedAt ? r.publishedAt.getTime() : null,
+    topics: (sel?.topics ?? []).filter((k) => TOPIC_KEYS.has(k) && k !== "other").map((k) => ({ key: k, label: topicLabel(k) })),
+    points: points.slice(0, 3),
+  };
+}
+
+// Seznam publikovaných článků „Novinky v CC" — gated, v designu serveru.
+ccNewsRoutes.get("/novinky-cc", async (c) => {
+  const redirect = await gateOrRedirect(c);
+  if (redirect) return redirect;
+
+  const db = drizzle(c.env.DB);
+  const rows = await sortedPublished(db);
+  // Karty PARALELNĚ (Promise.all, ne sériově); chyba jedné nedegraduje ostatní.
+  const items = (await Promise.all(rows.map((r) => issueCard(c.env, r)))).filter((x): x is NonNullable<typeof x> => x !== null);
 
   // Trendy jsou doplněk: jejich selhání nesmí shodit seznam vydání.
   let trends: TopicTrends | null = null;
@@ -216,6 +220,9 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
   } catch (err) {
     console.error("[cc-news] výpočet trendů selhal:", (err as Error)?.message);
   }
+  // Ostatní nástroje tento týden (odkaz na mapu ekosystému); chyby řeší loader per nástroj.
+  const { loadToolWeekCards } = await import("../lib/cc-news/ecosystem");
+  const ecosystem = await loadToolWeekCards(c.env.KV, new Date());
 
   const user = c.get("user")!;
   return c.html(
@@ -223,6 +230,7 @@ ccNewsRoutes.get("/novinky-cc", async (c) => {
       user={{ name: user.name ?? null, email: user.email }}
       items={items}
       trends={trends}
+      ecosystem={ecosystem}
     />,
   );
 });
@@ -305,6 +313,43 @@ ccNewsRoutes.get("/novinky-cc/dohanani", async (c) => {
   const { CcCatchupPage } = await import("../views/cc-catchup");
   const user = c.get("user")!;
   return c.html(<CcCatchupPage user={{ name: user.name ?? null, email: user.email }} catchup={catchup} />);
+});
+
+// Mapa ekosystému: všechny sledované nástroje vedle sebe. Před /novinky-cc/:slug.
+ccNewsRoutes.get("/novinky-cc/ekosystem", async (c) => {
+  const redirect = await gateOrRedirect(c);
+  if (redirect) return redirect;
+  const db = drizzle(c.env.DB);
+  const now = new Date();
+  const { buildEcosystemMatrix, loadToolWeekCards } = await import("../lib/cc-news/ecosystem");
+  // Každý blok má vlastní záchranu: stránka se vykreslí i bez přehledu nebo vydání.
+  let overview: TopicsOverview | null = null;
+  try {
+    overview = await getTopicsOverview(c.env, db, now);
+  } catch (err) {
+    console.error("[cc-news] ekosystém: výpočet přehledu témat selhal:", (err as Error)?.message);
+  }
+  const [latestRow] = await sortedPublished(db).catch((err) => {
+    console.error("[cc-news] ekosystém: čtení vydání selhalo:", (err as Error)?.message);
+    return [];
+  });
+  const [latest, cards, catchup] = await Promise.all([
+    latestRow ? issueCard(c.env, latestRow) : null,
+    loadToolWeekCards(c.env.KV, now),
+    overview ? loadCatchup(c.env, db, overview) : null,
+  ]);
+  const { CcEcosystemPage } = await import("../views/cc-ecosystem");
+  const user = c.get("user")!;
+  return c.html(
+    <CcEcosystemPage
+      user={{ name: user.name ?? null, email: user.email }}
+      latest={latest}
+      cards={cards}
+      overview={overview}
+      matrix={overview ? buildEcosystemMatrix(overview) : null}
+      catchup={catchup}
+    />,
+  );
 });
 
 ccNewsRoutes.get("/novinky-cc/temata/:topic", async (c) => {

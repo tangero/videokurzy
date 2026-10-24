@@ -102,8 +102,8 @@ návaznosti; stránky `/novinky-cc/temata`).
   který se při automatickém vydávání sám sloučí po úspěšném buildu.
   Kontrakt souboru je v `docs/english-section.md` webu. Nanečisto:
   `GET /admin/api/cc-news/english?itemId=…`. Více nástrojů: `docs/cc-news-changelog/vice-zdroju.md`.
-- Další sledované nástroje (Grok Build, Codex CLI, Antigravity CLI, Muse Code; čtenářům jen jako srovnání na stránkách témat): `cc_change_item.tool`
-  (dotazy Novinek v CC VŽDY filtrují `tool = 'claude-code'`), sběr v `src/lib/tools/`,
+- Další sledované nástroje (Grok Build, Codex CLI, Antigravity CLI, Muse Code): `cc_change_item.tool`
+  (dotazy článků a stránek témat Claude Code VŽDY filtrují `tool = 'claude-code'`; mapa ekosystému má vlastní dotazy), sběr v `src/lib/tools/`,
   denní cron, týdenní výběr do KV `tools:week:<tool>:<týden>`, admin `/admin/tools/grok-build`.
   Týdenní výběr se uloží i jako `cc-news:selection:<tool>-<rok>-w<NN>`; z něj tlačítko v adminu
   píše anglický přehled (PR do webu, nástroj musí být ve `WEEKLY_TOOLS` webu). Bez českého článku.
@@ -112,6 +112,13 @@ návaznosti; stránky `/novinky-cc/temata`).
   Codex a Antigravity se sbírají z GitHub releases (`src/lib/tools/github-releases.ts`), Muse Code
   z `changelog.md` dokumentace s daty z npm a GitHubu (`src/lib/tools/muse-code.ts`); jeho dokumentace
   nemá v sitemap `lastmod`, snímek ji proto stahuje denně a změnu pozná podle hashe obsahu.
+- **Mapa ekosystému `/novinky-cc/ekosystem`** (od 24. 10. 2026, rozhodnutí Patricka, zkušebně): všechny nástroje
+  vedle sebe, ne už „jen srovnání na stránkách témat“. Karta týdne pro každý nástroj (Claude Code = poslední český
+  článek, ostatní = krátký český souhrn 3–5 vět), mapa témat × nástroje za 4 týdny (`ToolFocus.shares`) a dohánění.
+  Souhrn píše fronta `tools.week-cs` (`src/lib/tools/week-cs.ts`) z ověřeného výběru týdne po `tools.week`,
+  do KV `tools:week-cs:<tool>:<rok>-wNN`; nový výběr ho zneplatní. Celý český článek o ostatních nástrojích se nepíše.
+  Zpětně: `POST /admin/api/tools/week-cs?weeks=4` (všechny nástroje), stav týdne `GET …?tool=codex&week=2026-w42`.
+  Pruh „Ostatní nástroje tento týden“ je i na `/novinky-cc`. Data a loader: `src/lib/cc-news/ecosystem.ts`.
 - Stránka tématu `/novinky-cc/temata/<téma>` (`topic-history.ts`, `views/cc-topic.tsx`): týdenní osa od vzniku
   tématu, detail týdne (`?tyden=2026-w41`), detail pojmu napříč nástroji (`?pojem=PreToolUse`), srovnání
   s ostatními nástroji podle podílu na jejich změnách, slovník identifikátorů z changelogu a milníky.

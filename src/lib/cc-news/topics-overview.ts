@@ -42,6 +42,8 @@ export interface ToolFocus {
   top: { key: string; label: string; share: number; ccShare: number }[];
   /** Změna podílu tématu u nástroje v b.: poslední 4 týdny proti předchozím 13 (jen týdny se změnami). */
   deltas: Record<string, number>;
+  /** Podíl všech témat (včetně „Ostatní“) za poslední 4 týdny, mapa ekosystému. */
+  shares: Record<string, number>;
 }
 
 export interface TopicsOverview {
@@ -98,7 +100,12 @@ export function buildTopicsOverview(trends: TopicTrends, rows: OverviewRow[]): T
           deltas[key] = (100 * rec) / total - (100 * prev) / prevTotal;
         }
       }
-      return { tool, name: TOOLS[tool].name, total, top, deltas };
+      const shares: Record<string, number> = {};
+      if (total > 0) {
+        for (const r of rows) if (r.tool === tool && r.week >= recentFrom) shares[r.topic] = (shares[r.topic] ?? 0) + r.n;
+        for (const key of Object.keys(shares)) shares[key] = (100 * shares[key]!) / total;
+      }
+      return { tool, name: TOOLS[tool].name, total, top, deltas, shares };
     });
 
   return { from: trends.from, to: trends.to, stripFrom, total: trends.total, topics, tools };
@@ -121,7 +128,7 @@ export async function computeTopicsOverview(db: Db, now: Date): Promise<TopicsOv
   return buildTopicsOverview(trends, rows.map((r) => ({ tool: r.tool, topic: r.topic!, week: Number(r.week), n: Number(r.n) })));
 }
 
-export const overviewKvKey = (weekStart: number) => `cc-news:topics-overview:v2:${weekStart}`;
+export const overviewKvKey = (weekStart: number) => `cc-news:topics-overview:v3:${weekStart}`;
 
 /** Přehled s hodinovou cache v KV (stejný rytmus jako trendy). */
 export async function getTopicsOverview(env: { KV: KVNamespace }, db: Db, now: Date): Promise<TopicsOverview> {

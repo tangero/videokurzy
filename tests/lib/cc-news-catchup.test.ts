@@ -90,7 +90,7 @@ const row = (o: Partial<typeof ccCatchup.$inferSelect>): typeof ccCatchup.$infer
   otherItemId: "b", otherAt: new Date(T0 + 300 * DAY), otherVersion: "1.0.0", verdict: "yes", title: "t", titleEn: "t", reason: null,
   checkedAt: null, promptVersion: CATCHUP_PROMPT_VERSION, createdAt: new Date(), ...o,
 });
-const focus = (tool: string, deltas: Record<string, number>): ToolFocus => ({ tool: tool as ToolFocus["tool"], name: tool, total: 10, top: [], deltas });
+const focus = (tool: string, deltas: Record<string, number>): ToolFocus => ({ tool: tool as ToolFocus["tool"], name: tool, total: 10, top: [], deltas, shares: {} });
 
 describe("buildCatchup", () => {
   const TO = Date.UTC(2026, 9, 12);
