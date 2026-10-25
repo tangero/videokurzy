@@ -91,14 +91,14 @@ export const DashboardPage: FC<DashboardProps> = ({
 }) => {
   const purchasedIds = new Set(purchasedLessons.map((p) => p.lessonId));
   const allLessons = modules.flatMap((m) => m.lessons);
-  const accessibleLessons = allLessons.filter((l) => hasPaidAccess || l.isFree);
+  const accessibleLessons = allLessons.filter((l) => hasPaidAccess || l.isFree || purchasedIds.has(l.id));
   const lockedCount = allLessons.length - accessibleLessons.length;
   const freeLessonCount = allLessons.filter((l) => l.isFree).length;
   const completedAccessibleCount = accessibleLessons.filter((l) => l.completed).length;
   const nextLesson = accessibleLessons.find((l) => !l.completed) ?? accessibleLessons[0] ?? allLessons[0];
   const nextModule = modules.find((m) => m.lessons.some((l) => l.id === nextLesson?.id));
   const remainingInModule = nextModule?.lessons
-    .filter((l) => (hasPaidAccess || l.isFree) && !l.completed)
+    .filter((l) => (hasPaidAccess || l.isFree || purchasedIds.has(l.id)) && !l.completed)
     .reduce((a, l) => a + l.durationSeconds, 0) ?? 0;
   const accessibleCount = accessibleLessons.length;
   const pct = accessibleCount > 0 ? Math.round((completedAccessibleCount / accessibleCount) * 100) : 0;

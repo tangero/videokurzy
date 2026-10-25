@@ -4,7 +4,7 @@ import type { Env, Variables } from "../types";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { sklikConversionSnippetFor } from "../lib/analytics-snippet";
-import { lesson } from "../db/schema";
+import { lesson, lessonPurchase } from "../db/schema";
 import { LESSON_ACCESS_DAYS } from "../config/payment";
 import { formatAccessDate, lessonAccessExpiry } from "../lib/lesson-access";
 
@@ -39,15 +39,23 @@ stripeRoutes.get("/checkout/success", async (c) => {
         sklik = await sklikConversionSnippetFor(c.env, { value: valueCzk, orderId: sessionId, email });
         if (session.metadata?.type === "lesson" && session.metadata.lessonSlug) {
           const days = parseInt(session.metadata.accessDays ?? "", 10) || LESSON_ACCESS_DAYS;
-          const [l] = await drizzle(c.env.DB)
+          const db = drizzle(c.env.DB);
+          const [l] = await db
             .select({ title: lesson.title })
             .from(lesson)
             .where(eq(lesson.slug, session.metadata.lessonSlug))
             .limit(1);
+          // Datum z uloženého nákupu (stejné jako v e-mailu). Než webhook doběhne,
+          // odhad od teď: webhook počítá od dokončení platby, ne od založení session.
+          const [lp] = await db
+            .select({ expiresAt: lessonPurchase.expiresAt })
+            .from(lessonPurchase)
+            .where(eq(lessonPurchase.stripePaymentId, sessionId))
+            .limit(1);
           lessonInfo = {
             slug: session.metadata.lessonSlug,
             title: l?.title ?? "video",
-            expiresOn: formatAccessDate(lessonAccessExpiry(new Date((session.created ?? Date.now() / 1000) * 1000), days)),
+            expiresOn: formatAccessDate(lp?.expiresAt ?? lessonAccessExpiry(new Date(), days)),
             email,
           };
         }
