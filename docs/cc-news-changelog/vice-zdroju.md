@@ -63,6 +63,29 @@ od 18. 10. 2026 (`TOOLS.codex.englishWeekly`, WEEKLY_TOOLS webu, vibecoding-site
 Antigravity CLI (ověřeno 18. 10. 2026): `src/lib/tools/antigravity.ts`, stejný sběr z GitHub
 releases (`github-releases.ts`), admin `/admin/tools/antigravity`, anglická řada také od 18. 10. 2026.
 
+Grok Bot (ověřeno 25. 10. 2026): osobní asistent xAI („AI teammate“), ne coding agent.
+`TOOLS["grok-bot"].kind = "assistant"`: nepatří do témat, mapy ekosystému ani dohánění
+(`CODING_TOOLS`), jeho řádky v `cc_change_item` mají `topic = NULL` a třídění CC je přeskočí.
+- Changelog `x.ai/changelog/bot` je za ochranou Cloudflare (403). Neobcházíme ji: čteme ho přes
+  **Exa contents API** (`POST api.exa.ai/contents`, `{"urls":[…],"text":true,"maxAgeHours":6}`,
+  secret `EXA_API_KEY`). Objektová varianta `text.maxCharacters` má strop 10 000 znaků, na historii
+  nestačí, proto `text: true`.
+- Text z Exa: blok začíná řádkem data („October 23, 2026 Oct 23, 2026“), pak `v0.75.5`, `## název`,
+  `Also includes …`, oddíly `### New/Improved/Fixed` (→ Added/Improved/Fixed), koncové „Teams“ nebo
+  „Enterprise“ = scope. Exa část nadpisů `###` vynechá: skupina bez nadpisu za skupinou s typem je další
+  oddíl v pořadí New → Improved → Fixed, blok bez nadpisů se třemi skupinami = New, Improved, Fixed,
+  jinak `Other` (oddíl pak určí model při psaní). Asi polovina starších bloků nemá číslo verze:
+  dostanou syntetickou verzi `<starší verze>.<n>` (číslováno odspodu, stabilní) a do `versions` zápisu se
+  nepíšou. Verze bez data (řádek verze uprostřed bloku) se neukládá a hlásí se v `unparsed`.
+- Pojistky (`parseGrokBotChangelog`, `syncGrokBot`): text bez vydání = chyba; hlavička „Latest vX“ musí
+  sedět s nejnovějším vydáním; nejstarší blok v textu se neukládá (mohl být useknutý); první naplnění
+  musí sahat pod `GROK_BOT_MIN_VERSION` (0.68.0); další kopie musí obsahovat nejnovější uloženou verzi.
+- Dokumentace `docs.x.ai/grok-bot/*` (sitemap s lastmod, `.md`) se snímkuje do KV `tool-docs:grok-bot`,
+  zatím jen sběr, do zápisu nevstupuje.
+- Výstup: český týdenní zápis do webu `src/content/novinky/grok-bot/<rok>-w<NN>.md`
+  (`src/lib/tools/assistant-cs.ts`, kontrakt `docs/novinky-asistentu.md` webu). Anglická řada není.
+  Implementace: `src/lib/tools/grok-bot.ts`, admin `/admin/tools/grok-bot?week=2026-w43`.
+
 Datum je povinné. Položka bez data se nezařadí do týdne a v revizi se ukáže jako
 „bez data“. Datum neodhadujeme.
 

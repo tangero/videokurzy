@@ -15,6 +15,17 @@ uživatelům.
 > Newsletter předplatitelům se rozesílá **ručně** tlačítkem v adminu. Po vypnutí
 > přepínače platí původní tok se schvalovacím odkazem popsaný níže.
 
+> **Novinky osobních asistentů (od 25. 10. 2026):** Grok Bot (`TOOLS[].kind = "assistant"`)
+> nemá anglickou řadu ani výběr Novinek v CC. Z changelogu týdne (přes Exa, `src/lib/tools/grok-bot.ts`)
+> vzniká český zápis do webu `/novinky/<tool>/<rok>-w<NN>/` (`src/lib/tools/assistant-cs.ts`, fronta
+> `tools.assistant-week`). Model píše body s citacemi ID položek; kód hlídá citace, oddíl podle typu
+> položky, pokrytí všech položek a povolené oblasti (`ASSISTANT_AREAS`, musí sedět s
+> `ASSISTANTS[<tool>].areas` webu), model ověří fakta (jedna opravná iterace, neověřený bod vypadne a je
+> vidět v PR). Cron zařadí uzavřený týden od úterka 03:00 UTC (pokryje nedělní vydání v americkém čase),
+> týden bez položek nic nezapisuje. PR se při automatickém vydávání sloučí po buildu webu
+> (`cc-news.en-merge`, itemId `assistant-<tool>-<rok>-wNN`). Ručně: `/admin/tools/grok-bot` (synchronizace,
+> náhled nanečisto, PR, zpětné doplnění týdnů od verze 0.68.0).
+
 > Periodické skenování historických `whats-new` digestů je od 24. 10. 2026
 > vypnuté. Jejich publikované články zůstávají zachované, ale cron už z jejich
 > re-editací nevyrábí schvalovací e-maily.

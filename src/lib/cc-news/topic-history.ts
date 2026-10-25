@@ -8,7 +8,7 @@ import type { drizzle } from "drizzle-orm/d1";
 import { ccChangeItem } from "../../db/schema";
 import { isoWeek, weekKey } from "./changelog-source";
 import { isoWeekStart } from "./trends";
-import { CLAUDE_CODE, TOOLS, type ToolKey } from "../tools/registry";
+import { CLAUDE_CODE, CODING_TOOLS, TOOLS, type ToolKey } from "../tools/registry";
 
 type Db = ReturnType<typeof drizzle>;
 const DAY = 86_400_000;
@@ -200,9 +200,9 @@ export async function loadTopicHistory(db: Db, topic: string, now: Date): Promis
   const totalsRows = await db
     .select({ tool: ccChangeItem.tool, wk, n: sql<number>`count(*)` })
     .from(ccChangeItem)
-    .where(and(sql`${ccChangeItem.tool} in (${sql.join(Object.keys(TOOLS).map((t) => sql`${t}`), sql`, `)})`))
+    .where(and(sql`${ccChangeItem.tool} in (${sql.join(CODING_TOOLS.map((t) => sql`${t}`), sql`, `)})`))
     .groupBy(ccChangeItem.tool, wk);
-  const tools = (Object.keys(TOOLS) as ToolKey[]).sort((a, b) => (a === CLAUDE_CODE ? -1 : b === CLAUDE_CODE ? 1 : 0));
+  const tools = [...CODING_TOOLS].sort((a, b) => (a === CLAUDE_CODE ? -1 : b === CLAUDE_CODE ? 1 : 0));
   return {
     topic,
     items,

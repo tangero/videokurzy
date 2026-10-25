@@ -25,6 +25,30 @@ describe("queue message dispatch", () => {
     errSpy.mockRestore();
   });
 
+  it("tools.assistant-week: prázdný týden se označí jako vyřízený, chybná zpráva se zahodí bez retry", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { assistantDoneKvKey } = await import("../src/lib/tools/assistant-cs");
+    const week = { year: 2026, week: 2 };
+    await env.KV.delete(assistantDoneKvKey("grok-bot", week));
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const batch = {
+      messages: [
+        { body: { type: "tools.assistant-week", data: { tool: "grok-bot", year: 2026, week: 2 } }, ack, retry },
+        { body: { type: "tools.assistant-week", data: { tool: "codex", year: 2026, week: 2 } }, ack, retry },
+      ],
+    } as unknown as MessageBatch<never>;
+    await handleQueue(batch, env as never);
+    expect(ack).toHaveBeenCalledTimes(2);
+    expect(retry).not.toHaveBeenCalled();
+    expect(await env.KV.get(assistantDoneKvKey("grok-bot", week))).toBe("empty");
+    expect(logSpy).toHaveBeenCalledWith("[queue] tools.assistant-week grok-bot 2026-w02: týden bez položek, nic nezapisuji");
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("tools.assistant-week: malformovaná zpráva"))).toBe(true);
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
   it("cc-news.en-weekly pro týden nástroje se nehledá mezi vydáními", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const ack = vi.fn();

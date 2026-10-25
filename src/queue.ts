@@ -35,6 +35,8 @@ type WebhookMessageType =
   | "tools.week"
   // Krátký český souhrn týdne nástroje pro mapu ekosystému (po tools.week). Idempotentní.
   | "tools.week-cs"
+  // Český týdenní zápis osobního asistenta (Grok Bot) → PR do webu /novinky/<tool>/. Idempotentní.
+  | "tools.assistant-week"
   // Kdo koho dohání: kandidáti z pravidel a jejich ověření modelem. Bez payloadu; idempotentní.
   | "cc-news.catchup"
   // Anglický snímek trendů (témata + dohánění) → PR do webu, /en/trends/. Bez payloadu; idempotentní.
@@ -95,6 +97,16 @@ export async function enqueueToolWeek(env: Env, tool: string, week: { year: numb
 /** Zařadí český souhrn týdne nástroje pro /novinky-cc/ekosystem (z uloženého výběru). */
 export async function enqueueToolWeekCs(env: Env, tool: string, week: { year: number; week: number }): Promise<void> {
   await env.WEBHOOK_QUEUE.send({ type: "tools.week-cs", data: { tool, year: week.year, week: week.week } });
+}
+
+/** Zařadí český týdenní zápis osobního asistenta (PR do webu). `delaySeconds` rozloží zpětné doplnění. */
+export async function enqueueAssistantWeek(
+  env: Env, tool: string, week: { year: number; week: number }, opts: { force?: boolean; delaySeconds?: number } = {},
+): Promise<void> {
+  await env.WEBHOOK_QUEUE.send(
+    { type: "tools.assistant-week", data: { tool, year: week.year, week: week.week, force: opts.force === true } },
+    opts.delaySeconds ? { delaySeconds: opts.delaySeconds } : undefined,
+  );
 }
 
 /** Zařadí anglický přehled vydání (po schválení české verze). */
@@ -205,6 +217,8 @@ export async function handleQueue(
           const { isToolKey } = await import("./lib/tools/registry");
           const tool = String(data.tool ?? "");
           if (!isToolKey(tool)) { console.error(`[queue] tools.week: neznámý nástroj ${tool}`); break; }
+          const { isAssistantTool } = await import("./lib/tools/registry");
+          if (isAssistantTool(tool)) { console.error(`[queue] tools.week: ${tool} je osobní asistent, týden píše tools.assistant-week`); break; }
           const { buildToolWeek } = await import("./lib/tools/weekly-tool");
           const w = await buildToolWeek(db, env, tool, { year: Number(data.year), week: Number(data.week) }, new Date());
           console.log(`[queue] tools.week ${tool} ${w.week.year}-w${w.week.week}: ${w.features.length} novinek z ${w.counts.collected} položek, vyřazeno ${w.dropped.length}`);
@@ -230,6 +244,10 @@ export async function handleQueue(
           console.log(`[queue] tools.week-cs ${tool} ${data.year}-w${data.week}: ${cs ? `${cs.points.length} vět` : "bez výběru, souhrn smazán"}`);
           break;
         }
+
+        case "tools.assistant-week":
+          await handleAssistantWeek(db, env, data as { tool?: string; year?: number; week?: number; force?: boolean });
+          break;
 
         case "cc-news.en-merge":
           await handleCcNewsEnMerge(db, env, data as { itemId?: string; number?: number; attempt?: number });
@@ -988,6 +1006,54 @@ async function handleCcNewsEnglish(
 }
 
 /**
+ * Český týdenní zápis osobního asistenta → PR do webu; při automatickém vydávání
+ * se PR sám sloučí po úspěšném buildu (stejný řetězec jako anglické přehledy).
+ * Vyřízený týden (PR, prázdný, už vydaný, ručně upravený) se označí v KV, aby ho
+ * denní cron znovu nezařazoval. Chyba modelu nebo GitHubu → retry fronty.
+ */
+async function handleAssistantWeek(
+  db: ReturnType<typeof drizzle>, env: Env, data: { tool?: string; year?: number; week?: number; force?: boolean },
+): Promise<void> {
+  const { isAssistantTool, isToolKey } = await import("./lib/tools/registry");
+  const tool = String(data.tool ?? "");
+  const week = { year: Number(data.year), week: Number(data.week) };
+  if (!isToolKey(tool) || !isAssistantTool(tool) || !Number.isInteger(week.year) || !Number.isInteger(week.week) || week.week < 1 || week.week > 53) {
+    console.error("[queue] tools.assistant-week: malformovaná zpráva, zahazuji:", data);
+    return;
+  }
+  const { publishAssistantWeek, assistantDoneKvKey, assistantMergeId, assistantWeekLabel } = await import("./lib/tools/assistant-cs");
+  const { GithubError } = await import("./lib/cc-news/english");
+  const label = `${tool} ${assistantWeekLabel(week)}`;
+  let out;
+  try {
+    out = await publishAssistantWeek(db, env, tool, week, { force: data.force === true });
+  } catch (err) {
+    if (err instanceof GithubError && err.permanent) {
+      console.error(`[queue] tools.assistant-week ${label}: trvalá chyba GitHubu, neopakuji:`, err.message);
+      return;
+    }
+    throw err;
+  }
+  if (out.kind === "no-token") {
+    console.warn(`[queue] tools.assistant-week ${label}: chybí VIBECODING_SITE_GITHUB_TOKEN, ${out.path} nevydán`);
+    return;
+  }
+  await env.KV.put(assistantDoneKvKey(tool, week), out.kind);
+  if (out.kind === "empty") console.log(`[queue] tools.assistant-week ${label}: týden bez položek, nic nezapisuji`);
+  else if (out.kind === "already-published") console.log(`[queue] tools.assistant-week ${label}: ${out.path} už je na webu, nepřepisuji`);
+  else if (out.kind === "edited-on-branch") console.log(`[queue] tools.assistant-week ${label}: ${out.path} na větvi ${out.branch} někdo upravil, nepřepisuji (force přepíše)`);
+  else {
+    const r = out.review;
+    console.log(`[queue] tools.assistant-week ${label}: PR ${out.pr.url}${out.pr.created ? "" : " (aktualizován)"}` +
+      (r.uncovered.length || r.dropped.length ? `, bez bodu ${r.uncovered.length}, vyřazeno ${r.dropped.length}` : ""));
+    const { getCcNewsAutopublish } = await import("./lib/cc-news/settings");
+    if (out.pr.number && (await getCcNewsAutopublish(db))) {
+      await enqueueCcNewsEnMerge(env, { itemId: assistantMergeId(tool, week), number: out.pr.number, attempt: 0 });
+    }
+  }
+}
+
+/**
  * Sloučí PR anglického přehledu, až projde build webu (automatické vydání).
  * Běžící kontroly nejsou chyba: zpráva se znovu odloží (ne retry, ten by skončil
  * v DLQ). Konflikt, zavřený PR nebo vypršení čekání = oznámení adminovi, PR zůstane.
@@ -1051,6 +1117,16 @@ async function handleCcNewsEnMerge(
   await done();
   console.log(`[queue] cc-news.en-merge ${itemId}: PR #${number} ${out.kind === "merged" ? "sloučen" : "už byl sloučen"}`);
   if (out.kind !== "merged") return;
+  const { parseAssistantMergeId, assistantNoteUrl } = await import("./lib/tools/assistant-cs");
+  const assistant = parseAssistantMergeId(itemId);
+  if (assistant) {
+    const { toolName } = await import("./lib/tools/registry");
+    const wk = `${assistant.week.year}-W${String(assistant.week.week).padStart(2, "0")}`;
+    await notify(`Vydáno na vibecoding.cz: novinky ${toolName(assistant.tool)} ${wk}`,
+      "Český týdenní zápis vyšel automaticky (stránka bude dostupná po nasazení webu, do pár minut).",
+      [{ label: "Zápis", url: assistantNoteUrl(assistant.tool, assistant.week) }, { label: `PR #${number}`, url: out.url }]);
+    return;
+  }
   if (itemId.startsWith(EN_TRENDS_PREFIX)) {
     await notify(`Vydáno na vibecoding.cz/en: trendy ${itemId.slice(EN_TRENDS_PREFIX.length).toUpperCase()}`,
       "Anglický snímek trendů vyšel automaticky (stránka bude aktuální po nasazení webu, do pár minut).",

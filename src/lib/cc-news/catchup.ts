@@ -12,7 +12,7 @@ import { extractTerms, type HistoryItem } from "./topic-history";
 import { llmJson, openRouterLlm, writeModel, isTransportError, type LlmEnv, type LlmFn } from "./llm";
 import { TREND_THRESHOLD_PP } from "./trends";
 import type { ToolFocus } from "./topics-overview";
-import { CLAUDE_CODE, TOOLS, toolName, type ToolKey } from "../tools/registry";
+import { CLAUDE_CODE, CODING_TOOLS, TOOLS, toolName, type ToolKey } from "../tools/registry";
 
 type Db = ReturnType<typeof drizzle>;
 const DAY = 86_400_000;
@@ -62,7 +62,7 @@ export function findCandidates(items: TopicItem[]): { candidates: CatchupCandida
   const topical = items.filter((i) => i.topic && i.topic !== "other");
   const best = new Map<string, CatchupCandidate>();
   const lead: Partial<Record<ToolKey, ToolLead>> = {};
-  for (const tool of (Object.keys(TOOLS) as ToolKey[]).filter((t) => t !== CLAUDE_CODE)) {
+  for (const tool of CODING_TOOLS.filter((t) => t !== CLAUDE_CODE)) {
     const own = items.filter((i) => i.tool === tool);
     if (!own.length) continue;
     const since = Math.min(...own.map((i) => i.publishedAt));
@@ -274,7 +274,7 @@ const median = (xs: number[]) => {
 export function buildCatchup(rows: CandidateRow[], lead: Partial<Record<ToolKey, ToolLead>>, focus: ToolFocus[], to: number): Catchup {
   const label = new Map(TOPICS.map((t) => [t.key, t.label]));
   const deltas = new Map(focus.map((f) => [f.tool, f.deltas]));
-  const tools = (Object.keys(TOOLS) as ToolKey[]).filter((t) => t !== CLAUDE_CODE).map((tool) => {
+  const tools = CODING_TOOLS.filter((t) => t !== CLAUDE_CODE).map((tool) => {
     const pairs: CatchupPair[] = rows
       .filter((r) => r.tool === tool && r.verdict === "yes")
       .map((r) => ({
