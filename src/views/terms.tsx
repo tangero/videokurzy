@@ -6,7 +6,7 @@ import { formatCzk, type Prices } from "../lib/prices";
  * Datum účinnosti aktuálního znění. Uvádí se na stránce i v potvrzovacím
  * e-mailu, aby bylo doložitelné, které znění zákazník dostal.
  */
-export const TERMS_EFFECTIVE_DATE = "12. 8. 2026";
+export const TERMS_EFFECTIVE_DATE = "25. 10. 2026";
 
 /**
  * Samotný text podmínek, bez stránkového obalu. Sdílí ho `/terms` i potvrzovací
@@ -61,6 +61,19 @@ export const TermsContent: FC<{ prices: Prices }> = ({ prices }) => (
           jako firemní doménu — licence by se vztahovala na všechny uživatele
           dané veřejné služby
         </li>
+      </ul>
+
+      <h3>2.3 Přístup k jednotlivému videu</h3>
+      <ul>
+        <li>Některá videa (např. záznamy webinářů) lze koupit samostatně, bez předplatného</li>
+        <li>Cena je uvedena u videa a v objednávce</li>
+        <li>Přístup jen k zakoupenému videu pro jednoho uživatele, vázaný na e-mail použitý při nákupu</li>
+        <li>
+          Platnost: počet dní uvedený v objednávce (obvykle <strong>120 dní</strong>) od zaplacení,
+          přesné datum konce přístupu zákazník vidí před zaplacením. Přístup se neprodlužuje
+        </li>
+        <li>Platba pouze kartou, video se zpřístupní ihned po zaplacení</li>
+        <li>Předplatitelé mají tato videa v ceně individuální i firemní licence</li>
       </ul>
 
       <h2>3. Platební metody a splatnost</h2>
@@ -187,6 +200,10 @@ export const TermsContent: FC<{ prices: Prices }> = ({ prices }) => (
           <tr>
             <td>Po uplynutí 14 dní od nákupu</td>
             <td>Refund odmítnut</td>
+          </tr>
+          <tr>
+            <td>Jednotlivé video (čl. 2.3)</td>
+            <td>Dobrovolná garance se nevztahuje; spotřebiteli zůstává právo na odstoupení podle článku 4</td>
           </tr>
           <tr>
             <td>Firemní (B2B) licence</td>

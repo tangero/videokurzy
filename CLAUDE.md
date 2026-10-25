@@ -63,6 +63,22 @@ v adminu tlačítkem „Potvrdit platbu" u pending objednávky → `kind='manual
 (reálné peníze, počítá se do revenue; **ne** `comp`, to je grant zdarma).
 `manuallyConfirmPayment()` v `src/lib/admin-users.ts`.
 
+## Prodej jednoho videa (lesson_purchase)
+Od 25. 10. 2026 (rozhodnutí Patricka): video s `lesson.priceCzk` si koupí i člověk bez předplatného,
+jen kartou (Stripe `mode: payment`), na `lesson.accessDays` dní (výchozí 120). Cena a dny v adminu
+u úpravy lekce. Předplatitelé video mají v ceně. Kód: `src/lib/lesson-access.ts`, větev `type: "lesson"`
+v `handleCheckoutCompleted`, `/checkout/lesson/:slug`, `src/lib/lesson-expiry-reminders.ts`.
+- Nákup je ve vlastní tabulce `lesson_purchase`, **nikdy v `purchase`**: `hasAccess()` dává celou
+  platformu za jakýkoli aktivní řádek purchase a čte z ní newsletter, připomínky obnovy i tržby.
+- `lesson_purchase.id` je vlastní řada id. Ve fakturaci má `jobKind = 'lesson_purchase'` (customId
+  `vk-lesson-<id>`), v `conversion_log` `source = 'lesson'` (Meta event_id `lesson-<id>`). Dotazy na
+  `invoice_job.purchaseId` musí `jobKind` rozlišovat.
+- VS s prefixem **35** i u karty: tržba z videa je poznat na faktuře a ve Stripe. Tržby z videí jsou
+  v přehledu adminu zvlášť, do „Zaplaceno celkem“ se nepočítají.
+- Prodávat jde jen video mimo hlavní Bunny library (`bunnyLibraryId` není NULL), hlavní nemá ochranu tokenem.
+- Kupující nedostává onboarding ani newsletter; jen potvrzení, fakturu a připomínku 7 dní před koncem
+  s nabídkou předplatného (předplatitelům se nepošle). Refund se řeší ručně (`status = 'refunded'`).
+
 ## Bunny — více video library
 Lekce má `bunnyLibraryId` (NULL = hlavní library z `BUNNY_LIBRARY_ID` /
 `BUNNY_API_KEY` / `BUNNY_TOKEN_KEY` / `BUNNY_PULL_ZONE`). Další library se

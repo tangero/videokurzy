@@ -155,6 +155,63 @@ export async function purchaseConfirmedHtml(
 }
 
 /**
+ * Potvrzení nákupu přístupu k jednomu videu. Stejně jako u předplatného nese
+ * poučení o odstoupení (jen spotřebiteli) a plné znění VOP (§ 1824a). Konec
+ * přístupu se uvádí datem, ať zákazník ví, do kdy video uvidí.
+ */
+export async function lessonPurchaseConfirmedHtml(opts: {
+  loginUrl: string;
+  lessonTitle: string;
+  accessDays: number;
+  expiresOn: string;
+  variableSymbol: string;
+  isConsumer: boolean;
+  prices: Prices;
+}): Promise<string> {
+  const terms = await termsBlock(opts.prices);
+  return emailWrapper(`
+    <p style="font-size: 16px; line-height: 1.5;">Platba přijata, video <strong>${escHtml(opts.lessonTitle)}</strong> máte odemčené.</p>
+    <p style="font-size: 16px; line-height: 1.5;">Přístup platí ${opts.accessDays} dní, <strong>do ${opts.expiresOn}</strong>. Pak se video zamkne.</p>
+    ${primaryButton(opts.loginUrl, "Přihlásit se a přehrát video")}
+    <p style="font-size: 14px; color: ${TEXT_MUTED}; line-height: 1.5;">
+      Přihlaste se e-mailem, na který přišla tahle zpráva. Variabilní symbol objednávky: ${escHtml(opts.variableSymbol)}.
+    </p>
+    <p style="font-size: 14px; color: ${TEXT_MUTED}; line-height: 1.5;">
+      Dotazy? Odpovězte na tento email — píše vám Andrea Maloveczká.
+    </p>
+    ${opts.isConsumer ? withdrawalNoticeBlock() : ""}
+    ${terms}`);
+}
+
+/**
+ * Připomínka týden před koncem přístupu k videu. Hlavní je nabídka ročního
+ * předplatného, konec přístupu je až v závěru.
+ */
+export function lessonExpiryReminderHtml(opts: {
+  lessonTitle: string;
+  expiresOn: string;
+  subscribeUrl: string;
+  priceIndividual: number;
+}): string {
+  const price = opts.priceIndividual.toLocaleString("cs-CZ").replace(/\s/g, "&nbsp;");
+  return emailWrapper(`
+    <p style="font-size: 18px; line-height: 1.4;"><strong>Chcete se dívat dál? Roční předplatné odemkne všechno.</strong></p>
+    <div style="background: ${BRAND_LIGHT}; border: 1px solid ${BRAND_BORDER}; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+      <p style="font-size: 15px; line-height: 1.6; color: ${BRAND_DARK}; margin: 0 0 8px;"><strong>Co v předplatném máte</strong></p>
+      <ul style="font-size: 15px; line-height: 1.6; color: ${BRAND_MID}; margin: 0; padding-left: 20px;">
+        <li>všechny kurzy a epizody na platformě, včetně tohoto záznamu</li>
+        <li>nové epizody, které během roku přibudou</li>
+        <li>týdenní Novinky v Claude Code česky</li>
+      </ul>
+      <p style="font-size: 15px; line-height: 1.6; color: ${BRAND_DARK}; margin: 12px 0 0;">${price}&nbsp;Kč na rok.</p>
+    </div>
+    ${primaryButton(opts.subscribeUrl, "Objednat roční předplatné")}
+    <p style="font-size: 14px; color: ${TEXT_MUTED}; line-height: 1.5;">
+      Přístup k videu <strong>${escHtml(opts.lessonTitle)}</strong> vám končí ${opts.expiresOn}.
+    </p>`);
+}
+
+/**
  * Kupuje zákazník jako spotřebitel? Rozhoduje, zda objednávka nese IČO — nákup
  * na firmu není spotřebitelská smlouva a § 1829 se na něj nevztahuje. Shodné
  * kritérium používá čl. 4 obchodních podmínek ("rozhoduje postavení kupujícího,

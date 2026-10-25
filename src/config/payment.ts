@@ -44,6 +44,19 @@ export const CREDITAS_PAYMENT_BIC = "CTASCZ22";
  */
 export const CREDITAS_VS_PREFIX = "34";
 
+/**
+ * VS prefix pro nákup přístupu k jednomu videu (lesson_purchase). Platí se jen
+ * kartou, VS tedy neslouží k párování, ale k rozpoznání tržby z videa na faktuře
+ * a ve výpisu Stripe (odlišuje od `33`/`34` předplatného, `11` darů a `22` workshopů).
+ */
+export const LESSON_VS_PREFIX = "35";
+
+/** Výchozí doba přístupu k jednomu zakoupenému videu ve dnech. */
+export const LESSON_ACCESS_DAYS = 120;
+
+/** Kolik dní před koncem přístupu k videu poslat připomínku s nabídkou předplatného. */
+export const LESSON_EXPIRY_REMINDER_DAYS = 7;
+
 /** Base URL Creditas API (OAM v1). */
 export const CREDITAS_API_BASE_URL = "https://api.creditas.cz/oam/v1";
 

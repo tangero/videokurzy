@@ -2,7 +2,8 @@ import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import { user, lessonWatch } from "../db/schema";
-import { purchase, progress, invoiceJob } from "../db/schema";
+import { purchase, progress, invoiceJob, lessonPurchase } from "../db/schema";
+import { lessonPurchaseIdsFor } from "./lesson-access";
 import { userEmails, userIdentityAudit } from "../db/identity-schema";
 import { ensureUserEmailRecord, findUserIdByEmail, normalizeEmail } from "./user-emails";
 import { linkPurchasesToUser } from "./access";
@@ -385,6 +386,7 @@ export async function deleteAdminUser(db: Db, id: string): Promise<void> {
   if (!u) throw new Error("Uživatel nenalezen.");
   // Detach purchases (history is preserved, ties to user are cleared).
   await db.update(purchase).set({ userId: null }).where(eq(purchase.userId, id));
+  await db.update(lessonPurchase).set({ userId: null }).where(eq(lessonPurchase.userId, id));
   // user_emails, session, account, progress all cascade via FK.
   await db.delete(user).where(eq(user.id, id));
 }
@@ -444,7 +446,49 @@ export async function anonymizeAndDeleteUser(db: Db, id: string): Promise<number
         companyZip: null,
         contactName: null,
       })
-      .where(inArray(invoiceJob.purchaseId, purchaseIds));
+      // lesson_purchase má vlastní řadu id — jeho joby se tu nesmí trefit.
+      .where(and(inArray(invoiceJob.purchaseId, purchaseIds), ne(invoiceJob.jobKind, "lesson_purchase")));
+  }
+
+  // Nákupy jednotlivých videí (lesson_purchase) a jejich faktury stejně.
+  const lessonPurchaseIds = await lessonPurchaseIdsFor(db, id, emailLc);
+  if (lessonPurchaseIds.length > 0) {
+    await db
+      .update(invoiceJob)
+      .set({
+        email: anonEmail,
+        invoiceEmail: null,
+        companyName: null,
+        companyIco: null,
+        companyDic: null,
+        companyAddress: null,
+        companyCity: null,
+        companyZip: null,
+        contactName: null,
+      })
+      .where(and(inArray(invoiceJob.purchaseId, lessonPurchaseIds), eq(invoiceJob.jobKind, "lesson_purchase")));
+    await db
+      .update(lessonPurchase)
+      .set({
+        userId: null,
+        email: anonEmail,
+        invoiceEmail: null,
+        companyName: null,
+        companyIco: null,
+        companyDic: null,
+        companyAddress: null,
+        companyCity: null,
+        companyZip: null,
+        contactName: null,
+        clientIp: null,
+        userAgent: null,
+        fbc: null,
+        fbp: null,
+        gclid: null,
+        gbraid: null,
+        wbraid: null,
+      })
+      .where(inArray(lessonPurchase.id, lessonPurchaseIds));
   }
 
   const affected = await db

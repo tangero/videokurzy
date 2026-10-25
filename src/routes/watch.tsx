@@ -6,6 +6,7 @@ import { authMiddleware, requireAuth } from "../middleware/auth";
 import { lesson, module, progress, lessonWatch } from "../db/schema";
 import { shouldResume } from "../lib/watch-stats";
 import { hasAccess } from "../lib/access";
+import { formatAccessDate, isLessonForSale, lessonAccessExpiry, lessonAccessUntil } from "../lib/lesson-access";
 import { lessonEmbedUrl, resolveBunnyLibrary } from "../lib/bunny-library";
 import { WatchPage } from "../views/watch";
 import { WatchPublicPage } from "../views/watch-public";
@@ -68,6 +69,8 @@ watch.get("/watch/:slug", async (c) => {
       sortOrder: lesson.sortOrder,
       chapters: lesson.chapters,
       bodyMarkdown: lesson.bodyMarkdown,
+      priceCzk: lesson.priceCzk,
+      accessDays: lesson.accessDays,
     })
     .from(lesson)
     .where(eq(lesson.slug, slug))
@@ -83,32 +86,53 @@ watch.get("/watch/:slug", async (c) => {
   const ogUrl = `${origin}/watch/${found.slug}`;
   const ogImage = found.bunnyVideoId ? `${origin}${lessonOgImagePath(found.slug)}` : undefined;
 
+  // Video na prodej bez předplatného (lesson_purchase): veřejná stránka nabídne
+  // koupi, s cenou a koncem přístupu při zaplacení dnes.
+  const sale = isLessonForSale(found)
+    ? {
+        priceCzk: found.priceCzk!,
+        accessDays: found.accessDays,
+        expiresOn: formatAccessDate(lessonAccessExpiry(new Date(), found.accessDays)),
+      }
+    : undefined;
+  const publicPage = async () => {
+    const [mod] = await db
+      .select({ title: module.title })
+      .from(module)
+      .where(eq(module.id, found.moduleId))
+      .limit(1);
+    return c.html(
+      <WatchPublicPage
+        lesson={{ ...found, moduleTitle: mod?.title }}
+        description={lessonOgDescription(found.bodyMarkdown, mod?.title)}
+        ogUrl={ogUrl}
+        ogImage={ogImage}
+        sale={sale}
+        user={user ?? null}
+      />
+    );
+  };
+
   // Free lessons are accessible to everyone
   let hasPaidAccess = false;
+  // Konec přístupu z nákupu jen tohoto videa (předplatitel ho nemá).
+  let lessonUntil: Date | null = null;
   if (!found.isFree) {
     if (!user) {
       // Nepřihlášený (vč. crawleru Facebooku/X) dostane veřejnou stránku
       // epizody s OG metadaty a odkazem na ceník / přihlášení. Obsah zůstává
       // za paywallem.
-      const [mod] = await db
-        .select({ title: module.title })
-        .from(module)
-        .where(eq(module.id, found.moduleId))
-        .limit(1);
-      return c.html(
-        <WatchPublicPage
-          lesson={{ ...found, moduleTitle: mod?.title }}
-          description={lessonOgDescription(found.bodyMarkdown, mod?.title)}
-          ogUrl={ogUrl}
-          ogImage={ogImage}
-        />
-      );
+      return publicPage();
     }
 
     // Platform-wide access check (no courseId needed). Admins bypass paywall.
     hasPaidAccess = await hasAccess(user, db, c.env.KV);
     if (!hasPaidAccess) {
-      return c.redirect("/#cenik");
+      lessonUntil = await lessonAccessUntil(db, user, found.id);
+      if (!lessonUntil) {
+        if (sale) return publicPage();
+        return c.redirect("/#cenik");
+      }
     }
   } else if (user) {
     hasPaidAccess = await hasAccess(user, db, c.env.KV);
@@ -187,6 +211,7 @@ watch.get("/watch/:slug", async (c) => {
       prevSlug={prevSlug}
       nextSlug={nextSlug}
       hasPaidAccess={hasPaidAccess}
+      lessonAccessUntil={lessonUntil ? formatAccessDate(lessonUntil) : undefined}
       loggedIn={Boolean(user)}
       resumePosition={resumePosition}
       isLastFreeLesson={isLastFreeLesson}

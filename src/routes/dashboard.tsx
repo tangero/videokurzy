@@ -5,6 +5,7 @@ import type { Env, Variables } from "../types";
 import { requireAuth } from "../middleware/auth";
 import { course, module, lesson, progress, siteConfig } from "../db/schema";
 import { hasAccess } from "../lib/access";
+import { formatAccessDate, listPurchasedLessons } from "../lib/lesson-access";
 import { DashboardPage } from "../views/dashboard";
 import { PRICE_INDIVIDUAL } from "../config/payment";
 import { normalizeSearchQuery, searchLessons } from "../lib/lesson-search";
@@ -82,6 +83,9 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
   const totalCount = modules.length;
   const completedCount = completedSet.size;
   const hasPaidAccess = await hasAccess(user, db, c.env.KV);
+  const purchasedLessons = hasPaidAccess
+    ? []
+    : (await listPurchasedLessons(db, user)).map((p) => ({ ...p, expiresOn: formatAccessDate(p.expiresAt) }));
   const settingsRows = await db.select().from(siteConfig);
   const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
   const priceIndividual = parseInt(settings.price_individual ?? String(PRICE_INDIVIDUAL), 10);
@@ -98,6 +102,7 @@ dashboard.get("/dashboard", requireAuth, async (c) => {
       totalCount={totalCount}
       hasPaidAccess={hasPaidAccess}
       priceIndividual={priceIndividual}
+      purchasedLessons={purchasedLessons}
       search={
         query && searchHits
           ? {

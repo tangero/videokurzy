@@ -5,7 +5,15 @@ import { and, eq, gt, inArray } from "drizzle-orm";
 import Stripe from "stripe";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
-import { purchase, organization, siteConfig } from "../db/schema";
+import { purchase, organization, siteConfig, lesson } from "../db/schema";
+import { hasAccess } from "../lib/access";
+import {
+  formatAccessDate,
+  generateLessonVariableSymbol,
+  isLessonForSale,
+  lessonAccessExpiry,
+  lessonAccessUntil,
+} from "../lib/lesson-access";
 import { reportPurchase, bankDateToConversionInstant, captureSignals, type ConversionSignals } from "../lib/conversions";
 import { sklikConversionSnippetFor } from "../lib/analytics-snippet";
 import { lookupByIco, lookupByName } from "../lib/ares";
@@ -52,6 +60,7 @@ import { sendEmail, fioPendingHtml, purchaseConfirmedHtml, isConsumerPurchase, a
 import { Layout } from "../views/layout";
 import {
   CheckoutSelect,
+  LessonCheckout,
   PaymentDetails,
   VerifySuccess,
   VerifyNotFound,
@@ -298,6 +307,134 @@ checkoutRoutes.post("/checkout/individual", async (c) => {
   }
 
   return c.text("Neznámý způsob platby.", 400);
+});
+
+// ─── Jedno video: /checkout/lesson/:slug ─────────────────────────
+// Přístup k jednomu videu na lesson.accessDays dní, jen kartou (Stripe
+// mode=payment). Nákup se ukládá do lesson_purchase, ne do purchase.
+
+async function loadLessonForSale(db: ReturnType<typeof drizzle>, slug: string) {
+  const [l] = await db
+    .select({
+      id: lesson.id,
+      slug: lesson.slug,
+      title: lesson.title,
+      isFree: lesson.isFree,
+      priceCzk: lesson.priceCzk,
+      accessDays: lesson.accessDays,
+      bunnyLibraryId: lesson.bunnyLibraryId,
+    })
+    .from(lesson)
+    .where(eq(lesson.slug, slug))
+    .limit(1);
+  return l && isLessonForSale(l) ? { ...l, priceCzk: l.priceCzk! } : null;
+}
+
+/** Přihlášený uživatel, který video už vidí (předplatné, admin, platný nákup), na objednávku nemá. */
+async function alreadyHasLesson(c: AppContext, db: ReturnType<typeof drizzle>, lessonId: number): Promise<boolean> {
+  const u = c.get("user");
+  if (!u) return false;
+  return (await hasAccess(u, db, c.env.KV)) || (await lessonAccessUntil(db, u, lessonId)) !== null;
+}
+
+checkoutRoutes.get("/checkout/lesson/:slug", async (c) => {
+  const db = drizzle(c.env.DB);
+  const l = await loadLessonForSale(db, c.req.param("slug"));
+  if (!l) return c.redirect("/#cenik");
+  if (await alreadyHasLesson(c, db, l.id)) return c.redirect(`/watch/${l.slug}`);
+  const prices = await getPrices(db);
+  return c.html(
+    <Layout title={`${l.title} — přístup k videu`}>
+      <LessonCheckout
+        slug={l.slug}
+        lessonTitle={l.title}
+        priceCzk={l.priceCzk}
+        accessDays={l.accessDays}
+        expiresOn={formatAccessDate(lessonAccessExpiry(new Date(), l.accessDays))}
+        priceIndividual={prices.individual}
+        prefillEmail={c.get("user")?.email}
+      />
+    </Layout>,
+  );
+});
+
+checkoutRoutes.post("/checkout/lesson/:slug", async (c) => {
+  const db = drizzle(c.env.DB);
+  const l = await loadLessonForSale(db, c.req.param("slug"));
+  if (!l) return c.redirect("/#cenik", 303);
+  if (await alreadyHasLesson(c, db, l.id)) return c.redirect(`/watch/${l.slug}`, 303);
+
+  const form = await c.req.formData();
+  const email = String(form.get("email") ?? "").toLowerCase().trim();
+  const billing = parseBilling(form);
+  const signals = captureSignalsFromForm(c, form);
+  const error = !email || !email.includes("@")
+    ? "Zadejte platný email."
+    : !invoiceEmailValid(billing)
+      ? "Zadejte platný fakturační email (nebo pole nechte prázdné)."
+      : form.get("immediateAccessConsent") !== "1"
+        ? "Pro dokončení objednávky potvrďte souhlas se zpřístupněním videa ihned po zaplacení."
+        : null;
+  if (error) {
+    const prices = await getPrices(db);
+    return c.html(
+      <Layout title={`${l.title} — přístup k videu`}>
+        <LessonCheckout
+          slug={l.slug}
+          lessonTitle={l.title}
+          priceCzk={l.priceCzk}
+          accessDays={l.accessDays}
+          expiresOn={formatAccessDate(lessonAccessExpiry(new Date(), l.accessDays))}
+          priceIndividual={prices.individual}
+          error={error}
+          prefillEmail={email}
+          prefillCompany={billingToPrefill(billing)}
+          prefillBilling={!!billing}
+        />
+      </Layout>,
+      400,
+    );
+  }
+
+  // VS se ukáže ve Stripe (popis platby) i na faktuře; webhook ho při
+  // (velmi nepravděpodobné) kolizi nahradí jiným.
+  const vs = generateLessonVariableSymbol();
+  const stripe = getStripe(c.env.STRIPE_SECRET_KEY);
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    payment_method_types: ["card"],
+    customer_email: email,
+    line_items: [
+      {
+        price_data: {
+          currency: "czk",
+          product_data: {
+            name: `Přístup k videu: ${l.title}`.slice(0, 250),
+            description: `Přístup na ${l.accessDays} dní od zaplacení. VS ${vs}`,
+          },
+          unit_amount: l.priceCzk * 100,
+        },
+        quantity: 1,
+      },
+    ],
+    payment_intent_data: {
+      description: `Video ${l.slug} · VS ${vs}`,
+      metadata: { type: "lesson", vs, lessonId: String(l.id) },
+    },
+    success_url: `${c.env.BETTER_AUTH_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${c.env.BETTER_AUTH_URL}/watch/${l.slug}`,
+    metadata: {
+      type: "lesson",
+      lessonId: String(l.id),
+      lessonSlug: l.slug,
+      accessDays: String(l.accessDays),
+      vs,
+      ...billingToStripeMetadata(billing),
+      ...signalsToStripeMetadata(signals),
+      ia_consent_at: String(Math.floor(Date.now() / 1000)),
+    },
+  });
+  return c.redirect(session.url!, 303);
 });
 
 // ─── B2B: /checkout/organization ─────────────────────────────────

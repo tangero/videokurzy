@@ -1,6 +1,7 @@
 import { eq, and, gt, or, isNull } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { purchase, organization } from "../db/schema";
+import { linkLessonPurchasesToUser } from "./lesson-access";
 
 type Db = ReturnType<typeof drizzle>;
 
@@ -111,4 +112,6 @@ export async function linkPurchasesToUser(
     .update(purchase)
     .set({ userId })
     .where(and(eq(purchase.email, email.toLowerCase()), isNull(purchase.userId)));
+  // Nákupy jednotlivých videí (lesson_purchase) se navazují stejně.
+  await linkLessonPurchasesToUser(db, userId, email);
 }

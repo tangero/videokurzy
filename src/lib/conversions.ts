@@ -14,7 +14,7 @@
 import { and, eq, isNull, or, lt, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
-import { purchase, conversionLog } from "../db/schema";
+import { purchase, lessonPurchase, conversionLog } from "../db/schema";
 import { sha256Hex } from "./cc-news/detect";
 import type { Env } from "../types";
 
@@ -149,7 +149,8 @@ export async function reportPurchase(
 
     const occurredAt = opts.conversionOccurredAt ?? row.conversionOccurredAt ?? row.createdAt;
 
-    const ctx: ReportContext = {
+    await reportContext(db, env, {
+      source: "purchase",
       purchaseId,
       email: row.email,
       valueCzk: value,
@@ -161,27 +162,65 @@ export async function reportPurchase(
       wbraid: row.wbraid,
       clientIp: row.clientIp,
       userAgent: row.userAgent,
-    };
-
-    // Provideři, kteří mají kompletní konfiguraci (guard config PŘED claimem).
-    const tasks: Array<() => Promise<void>> = [];
-    if (env.META_PIXEL_ID && env.META_CAPI_TOKEN) {
-      tasks.push(() => runProvider(db, env, "meta", ctx, sendMeta));
-    }
-    // Google a Sklik: rozhraní připravené, aktivace až s konfigurací (token řeší
-    // uživatel zvlášť). Když env chybí, provider se vůbec neclaimuje.
-    if (isGoogleConfigured(env) && hasGoogleClickId(ctx)) {
-      tasks.push(() => runProvider(db, env, "google", ctx, sendGoogle));
-    }
-
-    if (tasks.length === 0) return;
-    await Promise.allSettled(tasks.map((t) => t()));
+    });
   } catch (err) {
     console.error(`[conversions] reportPurchase(${purchaseId}) selhalo:`, err);
   }
 }
 
+/**
+ * Reportuje nákup jednoho videa (lesson_purchase). Stejné guardy a idempotence
+ * jako reportPurchase; v conversion_log má vlastní řadu (source='lesson') a do
+ * Meta jde s event_id `lesson-<id>`, aby se nesrazil s nákupem předplatného.
+ */
+export async function reportLessonPurchase(db: Db, env: Env, lessonPurchaseId: number): Promise<void> {
+  try {
+    const row = await db.select().from(lessonPurchase).where(eq(lessonPurchase.id, lessonPurchaseId)).get();
+    if (!row) return;
+    if (!row.marketingConsent) return;
+    if (row.amountPaid <= 0 || !row.email) return;
+    await reportContext(db, env, {
+      source: "lesson",
+      purchaseId: lessonPurchaseId,
+      email: row.email,
+      valueCzk: row.amountPaid,
+      occurredAt: row.conversionOccurredAt ?? row.createdAt,
+      fbc: row.fbc,
+      fbp: row.fbp,
+      gclid: row.gclid,
+      gbraid: row.gbraid,
+      wbraid: row.wbraid,
+      clientIp: row.clientIp,
+      userAgent: row.userAgent,
+    });
+  } catch (err) {
+    console.error(`[conversions] reportLessonPurchase(${lessonPurchaseId}) selhalo:`, err);
+  }
+}
+
+async function reportContext(db: Db, env: Env, ctx: ReportContext): Promise<void> {
+  // Provideři, kteří mají kompletní konfiguraci (guard config PŘED claimem).
+  const tasks: Array<() => Promise<void>> = [];
+  if (env.META_PIXEL_ID && env.META_CAPI_TOKEN) {
+    tasks.push(() => runProvider(db, env, "meta", ctx, sendMeta));
+  }
+  // Google a Sklik: rozhraní připravené, aktivace až s konfigurací (token řeší
+  // uživatel zvlášť). Když env chybí, provider se vůbec neclaimuje.
+  if (isGoogleConfigured(env) && hasGoogleClickId(ctx)) {
+    tasks.push(() => runProvider(db, env, "google", ctx, sendGoogle));
+  }
+
+  if (tasks.length === 0) return;
+  await Promise.allSettled(tasks.map((t) => t()));
+}
+
+/** Id události pro provider: purchase = "<id>" (beze změny), video = "lesson-<id>". */
+function eventId(ctx: ReportContext): string {
+  return ctx.source === "lesson" ? `lesson-${ctx.purchaseId}` : String(ctx.purchaseId);
+}
+
 interface ReportContext {
+  source: "purchase" | "lesson";
   purchaseId: number;
   email: string;
   valueCzk: number;
@@ -222,10 +261,11 @@ async function runProvider(
     .insert(conversionLog)
     .values({
       purchaseId: ctx.purchaseId,
+      source: ctx.source,
       provider,
       status: "pending",
       attemptCount: 0,
-      requestId: String(ctx.purchaseId),
+      requestId: eventId(ctx),
       createdAt: now,
       updatedAt: now,
     })
@@ -250,6 +290,7 @@ async function runProvider(
     })
     .where(
       and(
+        eq(conversionLog.source, ctx.source),
         eq(conversionLog.purchaseId, ctx.purchaseId),
         eq(conversionLog.provider, provider),
         sql`${conversionLog.status} != 'sent'`,
@@ -276,6 +317,7 @@ async function runProvider(
       })
       .where(
         and(
+          eq(conversionLog.source, ctx.source),
           eq(conversionLog.purchaseId, ctx.purchaseId),
           eq(conversionLog.provider, provider),
           eq(conversionLog.claimToken, claimToken),
@@ -292,6 +334,7 @@ async function runProvider(
       })
       .where(
         and(
+          eq(conversionLog.source, ctx.source),
           eq(conversionLog.purchaseId, ctx.purchaseId),
           eq(conversionLog.provider, provider),
           eq(conversionLog.claimToken, claimToken),
@@ -321,7 +364,7 @@ async function sendMeta(env: Env, ctx: ReportContext): Promise<{ status: number;
       {
         event_name: "Purchase",
         event_time: Math.floor(ctx.occurredAt.getTime() / 1000),
-        event_id: String(ctx.purchaseId), // dedup s případným browser pixelem
+        event_id: eventId(ctx), // dedup s případným browser pixelem
         action_source: "website",
         event_source_url: sourceUrl,
         user_data: userData,

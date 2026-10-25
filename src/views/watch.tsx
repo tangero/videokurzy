@@ -36,6 +36,8 @@ interface WatchProps {
   prevSlug: string | null;
   nextSlug: string | null;
   hasPaidAccess: boolean;
+  /** Přístup jen k tomuto videu (lesson_purchase) do uvedeného data. */
+  lessonAccessUntil?: string;
   loggedIn: boolean;
   isLastFreeLesson?: boolean;
   nearbyLessons?: SidebarLesson[];
@@ -106,6 +108,7 @@ export const WatchPage: FC<WatchProps> = ({
   prevSlug,
   nextSlug,
   hasPaidAccess,
+  lessonAccessUntil,
   loggedIn,
   isLastFreeLesson,
   nearbyLessons,
@@ -179,6 +182,16 @@ export const WatchPage: FC<WatchProps> = ({
                 </button>
               </div>
             ) : null}
+
+            {lessonAccessUntil && (
+              <div class="banner-upgrade" style="margin-top:16px">
+                <div style="flex:1;min-width:240px">
+                  <h4>Přístup k tomuto videu máte do {lessonAccessUntil}.</h4>
+                  <p>Pak se video zamkne. Roční předplatné odemkne i všechny ostatní kurzy.</p>
+                </div>
+                <a class="btn" href="/#cenik">roční předplatné</a>
+              </div>
+            )}
 
             {/* Lesson info */}
             <div style="margin-top:24px">

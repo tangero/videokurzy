@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
 import { purchase, siteConfig, lesson, videoStats } from "./db/schema";
 import { sendRenewalReminders } from "./lib/renewal-reminders";
+import { sendLessonExpiryReminders } from "./lib/lesson-expiry-reminders";
 import { sendPaymentReminders } from "./lib/payment-reminders";
 import { fetchFioTransactions, fioProxyFromEnv, matchPayment } from "./lib/fio";
 import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas";
@@ -91,6 +92,13 @@ export async function handleScheduled(
     console.log(`[cron] renewal reminders: sent=${sent}, errors=${errors}`);
   } catch (err) {
     console.error("[cron] sendRenewalReminders failed:", err);
+  }
+
+  try {
+    const { sent, skipped, errors } = await sendLessonExpiryReminders(db, env, now);
+    console.log(`[cron] lesson expiry reminders: sent=${sent}, skipped=${skipped}, errors=${errors}`);
+  } catch (err) {
+    console.error("[cron] sendLessonExpiryReminders failed:", err);
   }
 
   try {

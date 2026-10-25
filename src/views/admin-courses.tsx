@@ -36,6 +36,8 @@ type Lesson = {
   transcribedAt?: Date | null;
   transcript?: string | null;
   transcribeError?: string | null;
+  priceCzk?: number | null;
+  accessDays?: number;
 };
 
 // ─── Navigation ───────────────────────────────────────────────────
@@ -714,6 +716,20 @@ export function AdminLessonForm({
           name="isFree"
           checked={les?.isFree ?? false}
         />
+        {isEdit && (
+          <fieldset class="border border-gray-200 rounded-lg p-4 space-y-3">
+            <legend class="text-sm font-medium text-gray-700 px-1">Prodej videa bez předplatného</legend>
+            <p class="text-xs text-gray-500">
+              Lidé bez předplatného si video koupí kartou a uvidí ho stanovený počet dní.
+              Předplatitelé ho mají v ceně. Prázdná cena = video se samostatně neprodává.
+              Prodávat jde jen video z jiné než hlavní Bunny library (hlavní nemá ochranu tokenem).
+            </p>
+            <div class="grid grid-cols-2 gap-3">
+              <AdminField label="Cena (Kč)" name="priceCzk" type="number" value={les?.priceCzk ? String(les.priceCzk) : ""} />
+              <AdminField label="Přístup (dní)" name="accessDays" type="number" value={String(les?.accessDays ?? 120)} />
+            </div>
+          </fieldset>
+        )}
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Popis lekce (Markdown)</label>
           <textarea

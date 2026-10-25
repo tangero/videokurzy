@@ -166,134 +166,11 @@ export const CheckoutSelect: FC<{
             </span>
           </label>
 
-          <details open={prefillBilling || !!prefillCompany?.companyIco} class="border border-gray-200 rounded-lg">
-            <summary data-chevron class="cursor-pointer text-sm font-medium text-gray-900 hover:bg-gray-50 px-4 py-3 list-none flex items-center gap-2 select-none">
-              <span data-chevron-icon class="inline-block transition-transform duration-150" aria-hidden="true">
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1l5 5-5 5V1z"/></svg>
-              </span>
-              <span>Chci fakturu na firmu (IČO)</span>
-            </summary>
-            <div class="px-4 pb-4 pt-1 space-y-3">
-              <label class="flex items-center gap-2 text-sm">
-                <input type="checkbox" id="billingEnabled" name="billingEnabled" value="1" checked={prefillBilling || !!prefillCompany?.companyIco} />
-                <span>Vystavit fakturu na firmu</span>
-              </label>
-
-              <div id="billing-fields" class={prefillBilling || prefillCompany?.companyIco ? "space-y-3" : "space-y-3 hidden"}>
-                <div>
-                  <label for="of-ico" class="block text-xs font-medium text-gray-700 mb-1">IČO</label>
-                  <div class="flex gap-2">
-                    <input
-                      type="text"
-                      id="of-ico"
-                      name="companyIco"
-                      value={prefillCompany?.companyIco ?? ""}
-                      placeholder="12345678"
-                      autocomplete="off"
-                      inputmode="numeric"
-                      class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <span id="of-ares-status" role="status" aria-live="polite" class="text-xs text-gray-700 self-center min-w-[64px]"></span>
-                  </div>
-                </div>
-                <div>
-                  <label for="of-company" class="block text-xs font-medium text-gray-700 mb-1">Název firmy</label>
-                  <div class="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="text"
-                      id="of-company"
-                      name="companyName"
-                      value={prefillCompany?.companyName ?? ""}
-                      placeholder="Acme s.r.o."
-                      autocomplete="organization"
-                      class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button type="button" id="of-name-search" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 min-h-[44px] sm:min-h-0 sm:py-2">
-                      Hledat v ARES
-                    </button>
-                  </div>
-                  <div id="of-name-results" class="hidden mt-2 border border-gray-200 rounded-lg divide-y" role="listbox"></div>
-                </div>
-                <div>
-                  <label for="of-dic" class="block text-xs font-medium text-gray-700 mb-1">DIČ (volitelné)</label>
-                  <input
-                    type="text"
-                    id="of-dic"
-                    name="companyDic"
-                    value={prefillCompany?.companyDic ?? ""}
-                    placeholder="CZ12345678"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label for="of-address" class="block text-xs font-medium text-gray-700 mb-1">Sídlo (ulice a č.p.)</label>
-                  <input
-                    type="text"
-                    id="of-address"
-                    name="companyAddress"
-                    value={prefillCompany?.companyAddress ?? ""}
-                    placeholder="Hlavní 123"
-                    autocomplete="street-address"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                  <div>
-                    <label for="of-zip" class="block text-xs font-medium text-gray-700 mb-1">PSČ</label>
-                    <input
-                      type="text"
-                      id="of-zip"
-                      name="companyZip"
-                      value={prefillCompany?.companyZip ?? ""}
-                      placeholder="110 00"
-                      autocomplete="postal-code"
-                      class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label for="of-city" class="block text-xs font-medium text-gray-700 mb-1">Město</label>
-                    <input
-                      type="text"
-                      id="of-city"
-                      name="companyCity"
-                      value={prefillCompany?.companyCity ?? ""}
-                      placeholder="Praha"
-                      autocomplete="address-level2"
-                      class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label for="of-contact" class="block text-xs font-medium text-gray-700 mb-1">Kontaktní osoba (volitelné)</label>
-                  <input
-                    type="text"
-                    id="of-contact"
-                    name="contactName"
-                    value={prefillCompany?.contactName ?? ""}
-                    placeholder="Jan Novák"
-                    autocomplete="name"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label for="of-invoice-email" class="block text-xs font-medium text-gray-700 mb-1">Fakturační e-mail (volitelné)</label>
-                  <input
-                    type="email"
-                    id="of-invoice-email"
-                    name="invoiceEmail"
-                    value={prefillCompany?.invoiceEmail ?? ""}
-                    placeholder="fakturace@firma.cz"
-                    autocomplete="email"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <p class="text-xs text-gray-500 mt-1">Kam poslat fakturu. Když nevyplníte, použijeme e-mail objednávky.</p>
-                </div>
-                <p class="text-xs text-gray-700">
-                  Pro FIO převod vystavíme zálohový doklad ihned. Daňový doklad (fakturu) pošleme po přijetí platby.
-                </p>
-              </div>
-            </div>
-          </details>
+          <CompanyBillingFields
+            prefillCompany={prefillCompany}
+            prefillBilling={prefillBilling}
+            note="Pro FIO převod vystavíme zálohový doklad ihned. Daňový doklad (fakturu) pošleme po přijetí platby."
+          />
 
           {showCodeInput && (
             <details open={!!prefillCode} class="border border-gray-200 rounded-lg">
@@ -380,6 +257,255 @@ export const CheckoutSelect: FC<{
 
         <p class="text-xs text-gray-600 text-center mt-4">
           Přístup na 12 měsíců ke všem kurzům na platformě.
+        </p>
+      </div>
+      <script src="/js/checkout.js" defer></script>
+    </section>
+  );
+};
+
+/**
+ * Volitelný blok „Chci fakturu na firmu (IČO)“. Id polí čte /js/checkout.js
+ * (ARES), proto je blok jen jednou na stránce.
+ */
+export const CompanyBillingFields: FC<{
+  prefillCompany?: CheckoutPrefillCompany;
+  prefillBilling?: boolean;
+  note?: string;
+}> = ({ prefillCompany, prefillBilling = false, note }) => (
+  <details open={prefillBilling || !!prefillCompany?.companyIco} class="border border-gray-200 rounded-lg">
+    <summary data-chevron class="cursor-pointer text-sm font-medium text-gray-900 hover:bg-gray-50 px-4 py-3 list-none flex items-center gap-2 select-none">
+      <span data-chevron-icon class="inline-block transition-transform duration-150" aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1l5 5-5 5V1z"/></svg>
+      </span>
+      <span>Chci fakturu na firmu (IČO)</span>
+    </summary>
+    <div class="px-4 pb-4 pt-1 space-y-3">
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" id="billingEnabled" name="billingEnabled" value="1" checked={prefillBilling || !!prefillCompany?.companyIco} />
+        <span>Vystavit fakturu na firmu</span>
+      </label>
+
+      <div id="billing-fields" class={prefillBilling || prefillCompany?.companyIco ? "space-y-3" : "space-y-3 hidden"}>
+        <div>
+          <label for="of-ico" class="block text-xs font-medium text-gray-700 mb-1">IČO</label>
+          <div class="flex gap-2">
+            <input
+              type="text"
+              id="of-ico"
+              name="companyIco"
+              value={prefillCompany?.companyIco ?? ""}
+              placeholder="12345678"
+              autocomplete="off"
+              inputmode="numeric"
+              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+            />
+            <span id="of-ares-status" role="status" aria-live="polite" class="text-xs text-gray-700 self-center min-w-[64px]"></span>
+          </div>
+        </div>
+        <div>
+          <label for="of-company" class="block text-xs font-medium text-gray-700 mb-1">Název firmy</label>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              id="of-company"
+              name="companyName"
+              value={prefillCompany?.companyName ?? ""}
+              placeholder="Acme s.r.o."
+              autocomplete="organization"
+              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+            />
+            <button type="button" id="of-name-search" class="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 min-h-[44px] sm:min-h-0 sm:py-2">
+              Hledat v ARES
+            </button>
+          </div>
+          <div id="of-name-results" class="hidden mt-2 border border-gray-200 rounded-lg divide-y" role="listbox"></div>
+        </div>
+        <div>
+          <label for="of-dic" class="block text-xs font-medium text-gray-700 mb-1">DIČ (volitelné)</label>
+          <input
+            type="text"
+            id="of-dic"
+            name="companyDic"
+            value={prefillCompany?.companyDic ?? ""}
+            placeholder="CZ12345678"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+        <div>
+          <label for="of-address" class="block text-xs font-medium text-gray-700 mb-1">Sídlo (ulice a č.p.)</label>
+          <input
+            type="text"
+            id="of-address"
+            name="companyAddress"
+            value={prefillCompany?.companyAddress ?? ""}
+            placeholder="Hlavní 123"
+            autocomplete="street-address"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="of-zip" class="block text-xs font-medium text-gray-700 mb-1">PSČ</label>
+            <input
+              type="text"
+              id="of-zip"
+              name="companyZip"
+              value={prefillCompany?.companyZip ?? ""}
+              placeholder="110 00"
+              autocomplete="postal-code"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label for="of-city" class="block text-xs font-medium text-gray-700 mb-1">Město</label>
+            <input
+              type="text"
+              id="of-city"
+              name="companyCity"
+              value={prefillCompany?.companyCity ?? ""}
+              placeholder="Praha"
+              autocomplete="address-level2"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
+        <div>
+          <label for="of-contact" class="block text-xs font-medium text-gray-700 mb-1">Kontaktní osoba (volitelné)</label>
+          <input
+            type="text"
+            id="of-contact"
+            name="contactName"
+            value={prefillCompany?.contactName ?? ""}
+            placeholder="Jan Novák"
+            autocomplete="name"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+        <div>
+          <label for="of-invoice-email" class="block text-xs font-medium text-gray-700 mb-1">Fakturační e-mail (volitelné)</label>
+          <input
+            type="email"
+            id="of-invoice-email"
+            name="invoiceEmail"
+            value={prefillCompany?.invoiceEmail ?? ""}
+            placeholder="fakturace@firma.cz"
+            autocomplete="email"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+          />
+          <p class="text-xs text-gray-500 mt-1">Kam poslat fakturu. Když nevyplníte, použijeme e-mail objednávky.</p>
+        </div>
+        {note && <p class="text-xs text-gray-700">{note}</p>}
+      </div>
+    </div>
+  </details>
+);
+
+// ─── Nákup přístupu k jednomu videu ────────────────────────────
+
+/**
+ * Objednávka jednoho videa (jen karta). Doba a konec přístupu jsou vidět
+ * u ceny, v souhlasu i na tlačítku — video zastará, přístup proto končí.
+ */
+export const LessonCheckout: FC<{
+  slug: string;
+  lessonTitle: string;
+  priceCzk: number;
+  accessDays: number;
+  /** Konec přístupu při zaplacení dnes, např. „22. 2. 2027". */
+  expiresOn: string;
+  priceIndividual: number;
+  error?: string;
+  prefillEmail?: string;
+  prefillCompany?: CheckoutPrefillCompany;
+  prefillBilling?: boolean;
+}> = ({ slug, lessonTitle, priceCzk, accessDays, expiresOn, priceIndividual, error, prefillEmail, prefillCompany, prefillBilling }) => {
+  const price = priceCzk.toLocaleString("cs-CZ");
+  return (
+    <section class="max-w-md mx-auto px-4 py-16">
+      <div class="bg-white border border-gray-200 rounded-xl p-8 shadow-sm">
+        <p class="text-xs font-medium uppercase tracking-wide text-gray-500 mb-1">Přístup k jednomu videu</p>
+        <h1 class="text-2xl font-bold text-gray-900 mb-2">{lessonTitle}</h1>
+        <p class="text-gray-700 mb-1">
+          <strong>{price} Kč</strong> za přístup na {accessDays} dní
+        </p>
+        <p class="text-sm text-gray-600 mb-6">
+          Když zaplatíte dnes, video uvidíte <strong>do {expiresOn}</strong>. Pak se zamkne,
+          přístup se neprodlužuje.
+        </p>
+
+        {error && (
+          <div class="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700">{error}</div>
+        )}
+
+        <form method="post" hx-boost="false" class="space-y-5">
+          <input type="hidden" name="gclid" id="f_gclid" value="" />
+          <input type="hidden" name="gbraid" id="f_gbraid" value="" />
+          <input type="hidden" name="wbraid" id="f_wbraid" value="" />
+          <input type="hidden" name="fbclid" id="f_fbclid" value="" />
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(function(){
+  function qs(n){return new URLSearchParams(location.search).get(n);}
+  function ck(n){var m=document.cookie.match(new RegExp('(?:^|;\\\\s*)'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null;}
+  ['gclid','gbraid','wbraid','fbclid'].forEach(function(k){
+    var v=qs(k);
+    if(v){document.cookie=k+'='+encodeURIComponent(v)+';path=/;max-age=7776000;SameSite=Lax;Secure';}
+    var el=document.getElementById('f_'+k);
+    if(el){el.value=v||ck(k)||'';}
+  });
+})();`,
+            }}
+          />
+          <div>
+            <label for="email" class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+            <input
+              type="email"
+              id="email"
+              name="email"
+              required
+              value={prefillEmail ?? ""}
+              placeholder="vas@email.cz"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            <p class="text-xs text-gray-500 mt-1">Tímto e-mailem se pak přihlásíte k videu.</p>
+          </div>
+
+          <p class="text-sm text-gray-700">Platba kartou přes Stripe, video se odemkne hned po zaplacení.</p>
+
+          <CompanyBillingFields prefillCompany={prefillCompany} prefillBilling={prefillBilling} />
+
+          {/* Stejný princip jako u předplatného: žádost o okamžité zpřístupnění,
+              právo na odstoupení zůstává (čl. 4 VOP). */}
+          <label class="flex items-start gap-2 text-sm text-gray-700 mb-3">
+            <input type="checkbox" name="immediateAccessConsent" value="1" required class="mt-1" />
+            <span>
+              Žádám o zpřístupnění videa ihned po zaplacení, tedy před uplynutím 14denní lhůty
+              pro odstoupení od smlouvy. Beru na vědomí, že přístup trvá {accessDays} dní
+              od zaplacení. Právo odstoupit od smlouvy do 14 dnů mi zůstává — viz{" "}
+              <a href="/terms#odstoupeni" class="underline">článek 4 obchodních podmínek</a>.
+            </span>
+          </label>
+
+          <label class="flex items-start gap-2 text-sm text-gray-600 mb-4">
+            <input type="checkbox" name="marketingConsent" value="1" class="mt-1" />
+            <span>
+              Souhlasím s měřením konverzí a marketingem (Meta, Google, Seznam).
+              Nepovinné, lze kdykoliv odvolat. Viz <a href="/privacy" class="underline">Zásady ochrany osobních údajů</a>.
+            </span>
+          </label>
+
+          <button type="submit" class="btn btn-lg btn-block text-lg shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[color:var(--accent)]">
+            Zaplatit kartou — {price} Kč
+          </button>
+        </form>
+
+        <p class="text-xs text-gray-600 text-center mt-4">
+          Chcete všechny kurzy? <a href={`/checkout/individual`} class="underline">Roční předplatné</a> za{" "}
+          {priceIndividual.toLocaleString("cs-CZ")} Kč odemkne i toto video.
+        </p>
+        <p class="text-xs text-gray-500 text-center mt-2">
+          <a href={`/watch/${slug}`} class="underline">Zpět na video</a>
         </p>
       </div>
       <script src="/js/checkout.js" defer></script>
