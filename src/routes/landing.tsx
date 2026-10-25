@@ -7,6 +7,8 @@ import { course, module, lesson, siteConfig } from "../db/schema";
 import { hasAccess } from "../lib/access";
 import { PRICE_INDIVIDUAL, PRICE_ORGANIZATION } from "../config/payment";
 import { getDiscountState } from "../lib/discount";
+import { formatAccessDate, listLessonsForSale, listPurchasedLessons } from "../lib/lesson-access";
+import { lessonOgDescription, lessonOgImagePath } from "../lib/og";
 
 const landing = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -86,6 +88,23 @@ landing.get("/", async (c) => {
   };
   const discountStage = await getDiscountState(db, discountSettings);
 
+  // Videa ke koupi samostatně: cena pro předplatitele (v ceně) a pro ostatní.
+  const [forSale, purchased] = await Promise.all([
+    listLessonsForSale(db),
+    user && !userHasAccess ? listPurchasedLessons(db, user) : Promise.resolve([]),
+  ]);
+  const purchasedUntil = new Map(purchased.map((p) => [p.lessonId, formatAccessDate(p.expiresAt)]));
+  const lessonsForSale = forSale.map((l) => ({
+    slug: l.slug,
+    title: l.title,
+    durationSeconds: l.durationSeconds,
+    description: lessonOgDescription(l.bodyMarkdown),
+    image: l.bunnyVideoId ? lessonOgImagePath(l.slug) : null,
+    priceCzk: l.priceCzk,
+    accessDays: l.accessDays,
+    ownedUntil: purchasedUntil.get(l.id) ?? null,
+  }));
+
   return c.html(
     <LandingPage
       user={user}
@@ -96,6 +115,7 @@ landing.get("/", async (c) => {
       benefitsIndividual={benefitsIndividual}
       benefitsOrganization={benefitsOrganization}
       discount={discountStage}
+      lessonsForSale={lessonsForSale}
     />
   );
 });

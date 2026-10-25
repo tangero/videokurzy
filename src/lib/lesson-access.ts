@@ -1,9 +1,9 @@
 // Přístup k jednomu zakoupenému videu (lesson_purchase). Je oddělený od
 // hasAccess() v access.ts: nákup videa nesmí nikdy otevřít celou platformu.
 
-import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, or } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
-import { lesson, lessonPurchase } from "../db/schema";
+import { course, lesson, lessonPurchase, module } from "../db/schema";
 import { LESSON_VS_PREFIX } from "../config/payment";
 
 type Db = ReturnType<typeof drizzle>;
@@ -106,4 +106,40 @@ export async function lessonPurchaseIdsFor(db: Db, userId: string, emailLc: stri
     .where(or(eq(lessonPurchase.userId, userId), eq(lessonPurchase.email, emailLc)))
     .all();
   return rows.map((r) => r.id);
+}
+
+export interface LessonForSale {
+  id: number;
+  slug: string;
+  title: string;
+  durationSeconds: number;
+  bodyMarkdown: string | null;
+  bunnyVideoId: string | null;
+  priceCzk: number;
+  accessDays: number;
+}
+
+/** Videa, která se dají koupit samostatně (titulní stránka), z publikovaných kurzů. */
+export async function listLessonsForSale(db: Db): Promise<LessonForSale[]> {
+  const rows = await db
+    .select({
+      id: lesson.id,
+      slug: lesson.slug,
+      title: lesson.title,
+      durationSeconds: lesson.durationSeconds,
+      bodyMarkdown: lesson.bodyMarkdown,
+      bunnyVideoId: lesson.bunnyVideoId,
+      bunnyLibraryId: lesson.bunnyLibraryId,
+      isFree: lesson.isFree,
+      priceCzk: lesson.priceCzk,
+      accessDays: lesson.accessDays,
+    })
+    .from(lesson)
+    .innerJoin(module, eq(module.id, lesson.moduleId))
+    .innerJoin(course, eq(course.id, module.courseId))
+    .where(and(isNotNull(lesson.priceCzk), eq(course.published, true)))
+    .orderBy(desc(lesson.id), asc(lesson.sortOrder));
+  return rows
+    .filter(isLessonForSale)
+    .map(({ bunnyLibraryId: _l, isFree: _f, ...r }) => ({ ...r, priceCzk: r.priceCzk! }));
 }
