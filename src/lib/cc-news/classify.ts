@@ -9,7 +9,7 @@ import { ccChangeItem } from "../../db/schema";
 import type { ChangelogEntry } from "./changelog-source";
 import { TOPICS, TOPIC_KEYS } from "./taxonomy";
 import { classifyModel, isTransportError, llmJson, openRouterLlm, type LlmEnv, type LlmFn } from "./llm";
-import { CLAUDE_CODE, toolName, type ToolKey } from "../tools/registry";
+import { CLAUDE_CODE, CODING_TOOLS, toolName, type ToolKey } from "../tools/registry";
 
 type Db = ReturnType<typeof drizzle>;
 type Row = typeof ccChangeItem.$inferSelect;
@@ -146,7 +146,8 @@ export async function classifyPending(
     .from(ccChangeItem)
     .where(scope
       ? and(isNull(ccChangeItem.classifiedAt), eq(ccChangeItem.tool, scope.tool), inArray(ccChangeItem.version, scope.versions.slice(0, 90)))
-      : isNull(ccChangeItem.classifiedAt))
+      // Osobní asistenti (Grok Bot) se do taxonomie CC netřídí: topic zůstává NULL.
+      : and(isNull(ccChangeItem.classifiedAt), inArray(ccChangeItem.tool, CODING_TOOLS)))
     .orderBy(asc(ccChangeItem.tool), asc(ccChangeItem.publishedAt), asc(ccChangeItem.ord))
     .limit(limit);
   let done = 0;
@@ -300,6 +301,7 @@ export async function assertWeekClassified(db: Db, tool: ToolKey, versions: stri
 
 /** Počet dosud nezatříděných položek (pro cron: má smysl řadit další dávku?). */
 export async function countUnclassified(db: Db): Promise<number> {
-  const [r] = await db.select({ n: sql<number>`count(*)` }).from(ccChangeItem).where(isNull(ccChangeItem.classifiedAt));
+  const [r] = await db.select({ n: sql<number>`count(*)` }).from(ccChangeItem)
+    .where(and(isNull(ccChangeItem.classifiedAt), inArray(ccChangeItem.tool, CODING_TOOLS)));
   return Number(r?.n ?? 0);
 }

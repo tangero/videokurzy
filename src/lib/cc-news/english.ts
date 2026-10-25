@@ -268,10 +268,11 @@ export async function openSitePullRequest(
   const current = existing.ok ? (await existing.json() as { sha: string; content?: string }) : undefined;
   const sha = current?.sha;
   if (!existing.ok && existing.status !== 404) await gh.json(existing, "read file");
-  // Soubor na větvi, který jsme nezapsali my (ruční úprava v PR), se bez overwrite nepřepíše.
-  if (sha && sha !== guard.lastWrittenSha && !guard.overwrite) return { edited: true, branch: pr.branch, path: file.path };
   // Stejný obsah se nezapisuje znovu: nový commit by znovu spustil build webu.
   const unchanged = current?.content !== undefined && current.content.replace(/\s/g, "") === toBase64(file.content);
+  // Soubor na větvi, který jsme nezapsali my (ruční úprava v PR), se bez overwrite nepřepíše.
+  // Shodný obsah je náš zápis z pokusu, který spadl před uložením SHA (např. 503 při vytváření PR).
+  if (sha && !unchanged && sha !== guard.lastWrittenSha && !guard.overwrite) return { edited: true, branch: pr.branch, path: file.path };
   const writtenSha = unchanged ? sha : (await gh.json<{ content?: { sha?: string } }>(await gh.call("PUT", `/contents/${encodedPath}`, {
     message: pr.title,
     content: toBase64(file.content),

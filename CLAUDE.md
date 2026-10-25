@@ -128,6 +128,11 @@ návaznosti; stránky `/novinky-cc/temata`).
   Codex a Antigravity se sbírají z GitHub releases (`src/lib/tools/github-releases.ts`), Muse Code
   z `changelog.md` dokumentace s daty z npm a GitHubu (`src/lib/tools/muse-code.ts`); jeho dokumentace
   nemá v sitemap `lastmod`, snímek ji proto stahuje denně a změnu pozná podle hashe obsahu.
+- **Osobní asistenti (Grok Bot, od 25. 10. 2026):** `TOOLS[].kind = "assistant"`, mimo témata, ekosystém
+  a dohánění (`CODING_TOOLS`); řádky v `cc_change_item` mají `topic = NULL`, třídění CC je přeskočí.
+  Changelog `x.ai/changelog/bot` čteme přes Exa contents API (`EXA_API_KEY`), ochranu proti botům
+  neobcházíme. Týdně český zápis do webu `/novinky/<tool>/` (`src/lib/tools/assistant-cs.ts`, fronta
+  `tools.assistant-week`); oblasti v `ASSISTANT_AREAS` musí sedět s `ASSISTANTS` webu. Viz `docs/cc-news.md`.
 - **Mapa ekosystému `/novinky-cc/ekosystem`** (od 24. 10. 2026, rozhodnutí Patricka, zkušebně): všechny nástroje
   vedle sebe, ne už „jen srovnání na stránkách témat“. Karta týdne pro každý nástroj (Claude Code = poslední český
   článek, ostatní = krátký český souhrn 3–5 vět), mapa témat × nástroje za 4 týdny (`ToolFocus.shares`) a dohánění.

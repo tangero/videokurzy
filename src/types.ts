@@ -43,6 +43,8 @@ export interface Env {
   // (Contents + Pull requests: write). Bez něj se PR neotevře, jen zaloguje.
   VIBECODING_SITE_GITHUB_TOKEN?: string;
   VIBECODING_SITE_REPO?: string; // owner/repo, výchozí tangero/vibecoding-site
+  // Exa contents API: changelog Grok Bot (x.ai/changelog/bot je za ochranou proti botům).
+  EXA_API_KEY?: string;
   // ─── Konverzní měření (reklamní platformy) — viz KONVERZE-PLAN.md ──
   // Meta Conversions API. PIXEL_ID je veřejné, CAPI_TOKEN je server-only secret.
   // Když chybí, Meta se nereportuje. TEST_EVENT_CODE jen pro testování (v produkci NESMÍ zůstat).

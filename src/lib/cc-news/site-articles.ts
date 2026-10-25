@@ -2,7 +2,7 @@
 // odkaz /articles/<složka>/…, složka a stránka rubriky v registru nástrojů). Zdroj je veřejný RSS feed webu, takže web nic
 // nového vystavovat nemusí. Selhání feedu stránku nerozbije: box se nezobrazí.
 
-import { TOOLS, type ToolKey } from "../tools/registry";
+import { CODING_TOOLS, TOOLS, type ToolKey } from "../tools/registry";
 
 export const SITE_FEED_URL = "https://www.vibecoding.cz/vibecoding-feed.xml";
 
@@ -55,7 +55,7 @@ export async function getLatestSiteArticles(env: { KV: KVNamespace }, tools: Too
   try {
     const res = await fetcher(SITE_FEED_URL, { headers: { accept: "application/rss+xml" } });
     if (!res.ok) throw new Error(`feed ${res.status}`);
-    const all = latestByTool(await res.text(), Object.keys(TOOLS) as ToolKey[]);
+    const all = latestByTool(await res.text(), CODING_TOOLS);
     await env.KV.put(KV_KEY, JSON.stringify(all), { expirationTtl: 6 * 3600 });
     return all.filter((a) => tools.includes(a.tool));
   } catch (err) {

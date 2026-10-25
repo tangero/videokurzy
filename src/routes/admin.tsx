@@ -2745,14 +2745,14 @@ admin.get("/admin/api/tools/week-cs", async (c) => {
   return c.json({ tool, week, hasSelection: !!sel, summary: cs });
 });
 admin.post("/admin/api/tools/week-cs", async (c) => {
-  const { TOOLS, CLAUDE_CODE, isToolKey } = await import("../lib/tools/registry");
+  const { CODING_TOOLS, CLAUDE_CODE, isToolKey } = await import("../lib/tools/registry");
   const { isoWeek, isoWeekBounds, lastClosedWeek } = await import("../lib/cc-news/changelog-source");
   const { enqueueToolWeekCs } = await import("../queue");
   const body = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
   const pick = (k: string) => String(c.req.query(k) ?? body[k] ?? "");
   const tool = pick("tool");
-  if (tool && (!isToolKey(tool) || tool === CLAUDE_CODE)) return c.json({ error: "neznámý nástroj" }, 400);
-  const tools = tool ? [tool] : Object.keys(TOOLS).filter((k) => k !== CLAUDE_CODE);
+  if (tool && (!isToolKey(tool) || tool === CLAUDE_CODE || !CODING_TOOLS.includes(tool))) return c.json({ error: "neznámý nástroj" }, 400);
+  const tools = tool ? [tool] : CODING_TOOLS.filter((k) => k !== CLAUDE_CODE);
   const weeks = Math.min(Math.max(Number(pick("weeks")) || 1, 1), 12);
   const queued: string[] = [];
   let w = lastClosedWeek(new Date());
@@ -2795,15 +2795,34 @@ admin.get("/admin/tools/:tool", async (c) => {
   const nextW = new Date(end.getTime() + 86_400_000);
   const { isoWeek } = await import("../lib/cc-news/changelog-source");
   const link = (d: Date) => { const w = isoWeek(d); return `?week=${w.year}-w${String(w.week).padStart(2, "0")}`; };
+  // Osobní asistent (Grok Bot): místo výběru Novinek v CC český zápis do webu /novinky/<tool>/.
+  const { isAssistantTool } = await import("../lib/tools/registry");
+  const assistant = isAssistantTool(tool);
+  let assistantHtml = "";
+  if (assistant) {
+    const { assistantDoneKvKey, assistantMdKvKey, assistantNoteUrl, assistantNotePath } = await import("../lib/tools/assistant-cs");
+    const [done, md] = await Promise.all([
+      c.env.KV.get(assistantDoneKvKey(tool, week)),
+      c.env.KV.get<{ markdown: string; review: { uncovered: string[]; dropped: { text: string; problem: string }[] } }>(assistantMdKvKey(tool, week), "json"),
+    ]);
+    assistantHtml = `<h2>Český zápis (vibecoding.cz/novinky)</h2>
+<p>Soubor <code>${e(assistantNotePath(tool, week))}</code> · <a href="${e(assistantNoteUrl(tool, week))}">zápis na webu</a> · stav týdne: ${e(done ?? "nezpracováno")}</p>
+<p class=muted>Cron ho zařadí sám od úterka po uzavřeném týdnu; při automatickém vydávání se PR sám sloučí po buildu webu.</p>
+<p><a href="/admin/api/tools/assistant-week?tool=${e(tool)}&week=${wk}">Náhled nanečisto</a> (napíše zápis, PR neotevře; trvá cca minutu)</p>
+<form method="post" action="/admin/api/tools/assistant-week"><input type="hidden" name="tool" value="${e(tool)}"><input type="hidden" name="week" value="${wk}"><button>Otevřít PR do webu</button> <label><input type="checkbox" name="force" value="1"> napsat znovu a přepsat i vydaný zápis</label></form>
+<form method="post" action="/admin/api/tools/assistant-week/backfill"><input type="hidden" name="tool" value="${e(tool)}"><button>Zpětně doplnit týdny</button> od verze <input name="from" size="8" placeholder="výchozí"> <span class=muted>(každý týden zvlášť do fronty; až po nasazení sekce /novinky na webu)</span></form>
+${md ? `<h3>Uložený text</h3>${md.review.uncovered.length ? `<p>⚠️ bez bodu: ${md.review.uncovered.map(e).join(", ")}</p>` : ""}${md.review.dropped.length ? `<p>⚠️ vyřazeno kontrolou faktů: ${md.review.dropped.map((d) => `${e(d.text)} (${e(d.problem)})`).join(" / ")}</p>` : ""}<pre style="white-space:pre-wrap">${e(md.markdown)}</pre>` : ""}`;
+  }
   const html = `<!doctype html><meta charset="utf-8"><title>${e(toolName(tool))} ${wk}</title>
 <style>body{font:15px/1.5 system-ui;max-width:960px;margin:2rem auto;padding:0 1rem}td,th{text-align:left;padding:2px 8px;vertical-align:top}.sig3{font-weight:600}.muted{color:#777}</style>
 <h1>${e(toolName(tool))}: týden ${wk}</h1>
 <p><a href="${link(prevW)}">← předchozí</a> · <a href="${link(nextW)}">další →</a> · celkem uloženo ${e(total?.n)} položek</p>
 <form method="post" action="/admin/tools/${e(tool)}/sync" style="display:inline"><button>Synchronizovat changelog</button></form>
-<form method="post" action="/admin/tools/${e(tool)}/week" style="display:inline"><input type="hidden" name="week" value="${wk}"><button>${saved ? "Postavit výběr znovu" : "Postavit výběr"}</button></form>
+${assistant ? "" : `<form method="post" action="/admin/tools/${e(tool)}/week" style="display:inline"><input type="hidden" name="week" value="${wk}"><button>${saved ? "Postavit výběr znovu" : "Postavit výběr"}</button></form>`}
 <h2>Verze (${versions.length})</h2><p>${versions.map(e).join(", ") || "<span class=muted>žádné</span>"}</p>
 <p>Položek ${rows.length}, zatříděno ${rows.filter((r) => r.classifiedAt).length}, nezatříděno ${rows.filter((r) => !r.classifiedAt).length}.</p>
-${saved ? `<h2>Výběr (postaven ${e(saved.builtAt.slice(0, 16).replace("T", " "))} UTC)</h2>
+${assistantHtml}
+${assistant ? "" : saved ? `<h2>Výběr (postaven ${e(saved.builtAt.slice(0, 16).replace("T", " "))} UTC)</h2>
 <p class=muted>Sebráno ${saved.counts.collected}, zatříděno ${saved.counts.classified}, změn v dokumentaci ${saved.counts.docsChanges}${saved.docsFrozen ? "" : " (dokumentace týdne nezmrazena)"}.${saved.counts.collected !== rows.length ? ` ⚠️ Od postavení přibyly položky (${rows.length}).` : ""}</p>
 <ol>${saved.features.map((f) => `<li><b>${e(f.title)}</b>${f.docLink ? ` <a href="${e(f.docLink)}">dokumentace</a>` : ""}<br>${e(f.lede)}<br><small class=muted>${f.sources.map(e).join("<br>")}</small></li>`).join("")}</ol>
 <h3>Drobnosti</h3><ul>${saved.minorWins.map((w) => `<li>${e(w.text)}</li>`).join("")}</ul>
@@ -2826,6 +2845,13 @@ admin.post("/admin/tools/:tool/sync", async (c) => {
     const { syncGrokBuild } = await import("../lib/tools/grok-build");
     const r = await syncGrokBuild(drizzle(c.env.DB));
     msg = `stable ${escapeHtml(r.stable)}, uloženo do ${escapeHtml(r.latest ?? "–")}, nových položek ${r.added}${r.backfilled ? " (historie z GitHubu)" : ""}${r.gap ? ", ⚠️ mezera v řadě verzí" : ""}`;
+  } else if (tool === "grok-bot") {
+    const { syncGrokBot } = await import("../lib/tools/grok-bot");
+    const r = await syncGrokBot(drizzle(c.env.DB), c.env.KV, { apiKey: c.env.EXA_API_KEY });
+    msg = `Latest ${escapeHtml(r.latest ?? "–")}, uloženo do ${escapeHtml(r.stored ?? "–")}, nových položek ${r.added}, vydání ${r.releases}, text ${r.textLength} znaků (Exa ${escapeHtml(r.exaSource ?? "?")})` +
+      (r.truncatedTail ? `, nejstarší blok v textu ${escapeHtml(r.truncatedTail.version)} (${escapeHtml(r.truncatedTail.date)}) se neukládá` : "") +
+      (r.unparsed.length ? `, ⚠️ nerozpoznané řádky (${r.unparsed.length}): ${escapeHtml(r.unparsed.slice(0, 5).join(" | "))}` : "");
+    return c.html(`<!doctype html><meta charset="utf-8"><p>${msg}.</p><p><a href="/admin/tools/${escapeHtml(tool)}">zpět</a></p>`);
   } else if (tool === "codex" || tool === "antigravity") {
     const { syncGithubReleases } = await import("../lib/tools/github-releases");
     const src = tool === "codex" ? (await import("../lib/tools/codex")).CODEX_SOURCE : (await import("../lib/tools/antigravity")).ANTIGRAVITY_SOURCE;
@@ -2850,9 +2876,61 @@ admin.post("/admin/tools/:tool/week", async (c) => {
   const body = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
   const m = String(body.week ?? "").match(/^(\d{4})-w(\d{1,2})$/i);
   if (!m) return c.text("Zadej týden jako 2026-w42", 400);
+  const { isAssistantTool } = await import("../lib/tools/registry");
+  if (isAssistantTool(tool)) return c.text("Osobní asistent nemá výběr Novinek v CC; zápis píše /admin/api/tools/assistant-week", 400);
   const { enqueueToolWeek } = await import("../queue");
   await enqueueToolWeek(c.env, tool, { year: Number(m[1]), week: Number(m[2]) });
   return c.html(`<!doctype html><meta charset="utf-8"><p>Výběr se staví na pozadí (několik minut).</p><p><a href="/admin/tools/${tool}?week=${m[1]}-w${m[2]!.padStart(2, "0")}">zpět</a></p>`);
+});
+
+// Český týdenní zápis osobního asistenta (/novinky/<tool>/ na webu). GET = náhled
+// nanečisto (napíše text, PR neotevře, uloží ho pro ostrý běh), POST = PR do fronty.
+const assistantWeekParams = async (c: { req: { query: (k: string) => string | undefined; parseBody: () => Promise<Record<string, unknown>> } }) => {
+  const body = await c.req.parseBody().catch(() => ({} as Record<string, unknown>));
+  const pick = (k: string) => String(c.req.query(k) ?? body[k] ?? "");
+  const { isAssistantTool } = await import("../lib/tools/registry");
+  const tool = pick("tool");
+  const m = pick("week").match(/^(\d{4})-w(\d{1,2})$/i);
+  return {
+    tool: isAssistantTool(tool) ? (tool as import("../lib/tools/registry").ToolKey) : null,
+    week: m ? { year: Number(m[1]), week: Number(m[2]) } : null,
+    force: pick("force") === "1",
+    from: pick("from"),
+  };
+};
+admin.get("/admin/api/tools/assistant-week", async (c) => {
+  const { tool, week } = await assistantWeekParams(c);
+  if (!tool || !week) return c.json({ error: "tool (asistent) a week (2026-w43) jsou povinné" }, 400);
+  const { publishAssistantWeek } = await import("../lib/tools/assistant-cs");
+  const out = await publishAssistantWeek(drizzle(c.env.DB), c.env, tool, week, { dryRun: true });
+  if (out.kind === "empty") return c.text("Týden nemá žádné položky changelogu, zápis nevznikne.", 200);
+  if (out.kind !== "no-token") return c.json({ error: "unexpected", kind: out.kind }, 500);
+  return c.text(`<!-- ${out.path} -->\n${out.markdown}`, 200, { "content-type": "text/markdown; charset=utf-8" });
+});
+admin.post("/admin/api/tools/assistant-week", async (c) => {
+  const { tool, week, force } = await assistantWeekParams(c);
+  if (!tool || !week) return c.json({ error: "tool (asistent) a week (2026-w43) jsou povinné" }, 400);
+  const { enqueueAssistantWeek } = await import("../queue");
+  await enqueueAssistantWeek(c.env, tool, week, { force });
+  const { escapeHtml } = await import("../lib/markdown");
+  const wk = `${week.year}-w${String(week.week).padStart(2, "0")}`;
+  return c.html(`<!doctype html><meta charset="utf-8"><p>Zařazeno (${escapeHtml(tool)} ${wk}). PR na webu vznikne během několika minut.</p><p><a href="/admin/tools/${escapeHtml(tool)}?week=${wk}">zpět</a></p>`);
+});
+// Zpětné doplnění (první naplnění webu): zařadí každý uzavřený týden s položkami
+// od verze `from` (výchozí GROK_BOT_MIN_VERSION) zvlášť, rozložené po 3 minutách.
+// Spouštět až po nasazení sekce /novinky na webu, jinak PR spadnou na buildu.
+admin.post("/admin/api/tools/assistant-week/backfill", async (c) => {
+  const { tool, from } = await assistantWeekParams(c);
+  if (!tool) return c.json({ error: "tool (asistent) je povinný" }, 400);
+  const { GROK_BOT_MIN_VERSION } = await import("../lib/tools/grok-bot");
+  const { assistantBackfillWeeks } = await import("../lib/tools/assistant-cs");
+  const { lastClosedWeek } = await import("../lib/cc-news/changelog-source");
+  const { enqueueAssistantWeek } = await import("../queue");
+  const weeks = await assistantBackfillWeeks(drizzle(c.env.DB), tool, /^\d+\.\d+\.\d+$/.test(from) ? from : GROK_BOT_MIN_VERSION, lastClosedWeek(new Date()));
+  for (const [i, w] of weeks.entries()) await enqueueAssistantWeek(c.env, tool, w, { delaySeconds: i * 180 });
+  const { escapeHtml } = await import("../lib/markdown");
+  const list = weeks.map((w) => `${w.year}-w${String(w.week).padStart(2, "0")}`).join(", ");
+  return c.html(`<!doctype html><meta charset="utf-8"><p>Zařazeno ${weeks.length} týdnů: ${escapeHtml(list || "žádný (nejdřív synchronizuj changelog)")}.</p><p><a href="/admin/tools/${escapeHtml(tool)}">zpět</a></p>`);
 });
 
 // Formulář pro ruční spuštění (JSON i form-data). `rebuildSelection` doplní výběr

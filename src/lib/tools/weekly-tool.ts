@@ -13,7 +13,7 @@ import { selectAndVerify, selectionKvKey, type WeekSelection, type WeeklyLlms } 
 import { englishMdKvKey } from "../cc-news/english";
 import { GROK_BUILD_DOCS } from "./grok-build";
 import { MUSE_CODE_DOCS } from "./muse-code";
-import { CLAUDE_CODE, isToolKey, type ToolKey } from "./registry";
+import { CLAUDE_CODE, isAssistantTool, isToolKey, type ToolKey } from "./registry";
 
 type Db = ReturnType<typeof drizzle>;
 type Week = { year: number; week: number };
@@ -66,6 +66,8 @@ export async function buildToolWeek(
   db: Db, env: LlmEnv & { KV: KVNamespace }, tool: ToolKey, week: Week, now: Date,
   llms: WeeklyLlms = { classify: openRouterLlm(env, classifyModel(env)), write: openRouterLlm(env, writeModel(env)) },
 ): Promise<ToolWeek> {
+  // Asistenti nemají taxonomii CC: třídění níže by jim přiřadilo témata coding agentů.
+  if (isAssistantTool(tool)) throw new Error(`tools.week: ${tool} je osobní asistent, týden píše assistant-cs.ts`);
   const { start, end } = isoWeekBounds(week.year, week.week);
   const inWeek = and(eq(ccChangeItem.tool, tool), gte(ccChangeItem.publishedAt, start), lte(ccChangeItem.publishedAt, end));
   const versions = [...new Set((await db.selectDistinct({ v: ccChangeItem.version }).from(ccChangeItem).where(inWeek)).map((r) => r.v))]

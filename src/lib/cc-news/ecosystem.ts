@@ -7,7 +7,7 @@ import { isoWeek, isoWeekBounds, lastClosedWeek } from "./changelog-source";
 import { englishWeeklyUrls } from "./english";
 import { TOPICS } from "./taxonomy";
 import type { TopicsOverview } from "./topics-overview";
-import { CLAUDE_CODE, TOOLS, toolDatesKvKey, type ToolDates, type ToolKey } from "../tools/registry";
+import { CLAUDE_CODE, CODING_TOOLS, TOOLS, toolDatesKvKey, type ToolDates, type ToolKey } from "../tools/registry";
 import type { ToolWeekCs } from "../tools/week-cs";
 import { toolWeekCsKvKey, toolWeekKvKey, type ToolWeek } from "../tools/weekly-tool";
 
@@ -83,7 +83,7 @@ export function datesNote(d: ToolDates | null, from: number, to: number, withMis
 
 /** Poznámky k datům všech nástrojů (zapisují je synchronizace, zatím jen Muse Code). */
 export async function loadToolDates(kv: KVNamespace): Promise<Partial<Record<ToolKey, ToolDates>>> {
-  const keys = Object.keys(TOOLS) as ToolKey[];
+  const keys = CODING_TOOLS;
   const out: Partial<Record<ToolKey, ToolDates>> = {};
   await Promise.all(
     keys.map(async (tool) => {
@@ -117,7 +117,7 @@ const prevWeek = (w: Week): Week => isoWeek(new Date(isoWeekBounds(w.year, w.wee
  * Chyba čtení KV u jednoho nástroje nesmí shodit stránku: nástroj pak týden nemá.
  */
 export async function loadToolWeekCards(kv: KVNamespace, now: Date): Promise<ToolWeekCard[]> {
-  const others = (Object.keys(TOOLS) as ToolKey[]).filter((t) => t !== CLAUDE_CODE);
+  const others = CODING_TOOLS.filter((t) => t !== CLAUDE_CODE);
   return Promise.all(
     others.map(async (tool): Promise<ToolWeekCard> => {
       const card: ToolWeekCard = { tool, name: TOOLS[tool].name, week: null, points: [], pending: false, englishUrl: null };

@@ -6,7 +6,7 @@
 import { and, gte, isNotNull, lt, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/d1";
 import { ccChangeItem } from "../../db/schema";
-import { TOOLS, type ToolKey } from "../tools/registry";
+import { CODING_TOOLS, TOOLS, type ToolKey } from "../tools/registry";
 import { TOPICS, TOPIC_ABOUT } from "./taxonomy";
 import { computeTopicTrends, isoWeekStart, PREVIOUS_WEEKS, RECENT_WEEKS, type TopicTrend, type TopicTrends } from "./trends";
 
@@ -78,7 +78,7 @@ export function buildTopicsOverview(trends: TopicTrends, rows: OverviewRow[], re
   const ccShare = new Map(trends.topics.map((t) => [t.key, t.share]));
   const label = new Map(TOPICS.map((t) => [t.key, t.label]));
   const recentFrom = PREVIOUS_WEEKS;
-  const tools: ToolFocus[] = (Object.keys(TOOLS) as ToolKey[])
+  const tools: ToolFocus[] = CODING_TOOLS
     .filter((k) => k !== "claude-code")
     .map((tool) => {
       const own = rows.filter((r) => r.tool === tool && r.week >= recentFrom && r.topic !== "other");

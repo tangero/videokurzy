@@ -194,6 +194,34 @@ async function toolsMaintenance(db: ReturnType<typeof drizzle>, env: Env, now: D
     }
   }
 
+  // Grok Bot (osobní asistent): changelog přes Exa (stránka je za ochranou proti botům),
+  // snímek docs.x.ai/grok-bot (jen sběr), český zápis za uzavřený týden od úterka
+  // 03:00 UTC (pokryje i nedělní vydání v americkém čase) do webu /novinky/grok-bot/.
+  try {
+    const { syncGrokBot, GROK_BOT, GROK_BOT_DOCS } = await import("./lib/tools/grok-bot");
+    if (!env.EXA_API_KEY) {
+      console.error("[cron] grok-bot: chybí EXA_API_KEY, changelog nesynchronizuji");
+    } else {
+      const r = await syncGrokBot(db, env.KV, { apiKey: env.EXA_API_KEY });
+      console.log(`[cron] grok-bot: Latest ${r.latest}, uloženo do ${r.stored}, nových položek ${r.added}, vydání ${r.releases}, text ${r.textLength} znaků (Exa ${r.exaSource ?? "?"})`);
+      if (r.unparsed.length) console.error(`[cron] grok-bot: ${r.unparsed.length} nerozpoznaných řádků, např. ${r.unparsed.slice(0, 3).join(" | ")}`);
+      try {
+        const snap = await snapshotDocs(env.KV, now, GROK_BOT_DOCS, 30);
+        if (snap.fetched) console.log(`[cron] grok-bot docs: staženo ${snap.fetched}, změněno ${snap.changed}, odloženo ${snap.pending}`);
+        if (snap.pending === 0 && !(await env.KV.get(docsWeekKey(week, GROK_BOT_DOCS)))) await freezeWeek(env.KV, week, 0, GROK_BOT_DOCS);
+      } catch (err) {
+        console.error("[cron] grok-bot docs failed:", err);
+      }
+      const { assistantDoneKvKey } = await import("./lib/tools/assistant-cs");
+      if (r.caughtUp && daysAfter >= 1 && !(await env.KV.get(assistantDoneKvKey(GROK_BOT, week)))) {
+        const { enqueueAssistantWeek } = await import("./queue");
+        await enqueueAssistantWeek(env, GROK_BOT, week);
+      }
+    }
+  } catch (err) {
+    console.error("[cron] grok-bot changelog failed:", err);
+  }
+
   // Muse Code: text z changelogu v dokumentaci, data z npm a GitHubu. Changelog se
   // za vydáním zpožďuje, týden se proto zařadí, až obsahuje všechny verze do jeho konce.
   try {
