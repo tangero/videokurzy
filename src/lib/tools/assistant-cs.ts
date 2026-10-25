@@ -167,6 +167,8 @@ const FIX_SYSTEM_CS = [
   'Vrať JSON pole: {"n": <číslo bodu>, "text": "<opravený text>"} nebo {"n": <číslo>, "drop": true}, když nic nezbude.',
 ].join("\n");
 
+const MISSING_BATCH = 30;
+
 const MISSING_SYSTEM_CS = (areas: AssistantArea[]) => [
   "Tyto položky changelogu chybí v českém týdenním zápisu. Ke každé napiš bod (jedna až dvě věty česky,",
   "jen fakta z položky) se section new|improved|fixed podle typu a area z povolených klíčů:",
@@ -246,7 +248,9 @@ export async function writeAssistantNote(
   let problem = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     raw = await llmJson<RawNote>(llms.write, WRITER_SYSTEM_CS(toolName(tool), areas),
-      problem ? `${user}\n\nPŘEDCHOZÍ ODPOVĚĎ BYLA NEÚPLNÁ: ${problem}. Vrať celý JSON znovu.` : user, 12000, attempt);
+      problem ? `${user}\n\nPŘEDCHOZÍ ODPOVĚĎ BYLA NEÚPLNÁ: ${problem}. Vrať celý JSON znovu.` : user, 12000, attempt,
+      // Týden se stovkou položek přeteče limit tokenů v items; useknuté body doplní krok 2.
+      { salvageTruncated: true });
     const hl = Array.isArray(raw.highlights) ? raw.highlights as RawClaim[] : [];
     const main = (raw.main ?? {}) as RawClaim;
     const missing = [
@@ -268,13 +272,15 @@ export async function writeAssistantNote(
   let main = { text: tidy(str((raw.main as RawClaim).text)), sources: cite((raw.main as RawClaim).sources) };
   let summary = { text: tidy(str(raw.summary)), sources: [...new Set([...main.sources, ...highlights.flatMap((h) => h.sources)])] };
 
-  // 2) Pokrytí: každá položka changelogu v některém bodu. Chybějící jedním doplňujícím voláním.
+  // 2) Pokrytí: každá položka changelogu v některém bodu. Chybějící doplňujícími voláními
+  // po dávkách (useknutý zápis jich může vynechat desítky; jedna odpověď by přetekla).
   const covered = () => new Set(items.flatMap((i) => i.sources));
-  let missingIds = rows.map((r) => r.id).filter((id) => !covered().has(id));
-  if (missingIds.length > 0) {
-    const extra = await llmJson<{ items?: RawItem[] }>(llms.write, MISSING_SYSTEM_CS(areas), missingIds.map((id) => line(byId.get(id)!)).join("\n"), 6000);
+  const missingIds = rows.map((r) => r.id).filter((id) => !covered().has(id));
+  for (let i = 0; i < missingIds.length; i += MISSING_BATCH) {
+    const batch = missingIds.slice(i, i + MISSING_BATCH);
+    const extra = await llmJson<{ items?: RawItem[] }>(llms.write, MISSING_SYSTEM_CS(areas), batch.map((id) => line(byId.get(id)!)).join("\n"), 6000, 0,
+      { salvageTruncated: true });
     items.push(...(extra.items ?? []).map(toItem).filter((x): x is NonNullable<typeof x> => !!x));
-    missingIds = rows.map((r) => r.id).filter((id) => !covered().has(id));
   }
 
   // 3) Kontrola faktů všech bodů (chybějící verdikt = neověřeno), jedna opravná iterace.

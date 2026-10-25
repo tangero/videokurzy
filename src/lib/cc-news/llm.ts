@@ -67,7 +67,7 @@ export function isTransportError(err: unknown): boolean {
 }
 
 /** Vytáhne JSON z odpovědi modelu (toleruje ```json ohraničení a text okolo). */
-export function parseJsonLoose<T>(text: string): T {
+export function parseJsonLoose<T>(text: string, opts: { salvageTruncated?: boolean } = {}): T {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const raw = (fenced ? fenced[1]! : text).trim();
   const start = raw.search(/[[{]/);
@@ -84,12 +84,49 @@ export function parseJsonLoose<T>(text: string): T {
     try {
       return JSON.parse(repaired) as T;
     } catch {
+      // Odpověď useknutá limitem tokenů: ponech celé prvky a uzavři závorky.
+      // Jen kde volající chybějící části doplní sám (zápis asistenta).
+      const salvaged = opts.salvageTruncated ? closeTruncatedJson(escapeInnerQuotes(raw.slice(start))) : null;
+      if (salvaged) {
+        try {
+          return JSON.parse(salvaged) as T;
+        } catch { /* hlásí se původní chyba níž */ }
+      }
       // Výřez kolem chyby do logu, ať je vidět, co model vrátil.
       const pos = Number((err as Error).message.match(/position (\d+)/)?.[1] ?? -1);
       const around = pos >= 0 ? ` …${json.slice(Math.max(0, pos - 150), pos + 50)}…` : "";
       throw new SyntaxError(`${(err as Error).message}${around}`);
     }
   }
+}
+
+/**
+ * Useknutý JSON zkrátí za poslední úplně uzavřený objekt nebo pole a doplní
+ * chybějící uzavírací závorky. Null, když není co uzavírat.
+ */
+export function closeTruncatedJson(json: string): string | null {
+  const stack: string[] = [];
+  let inString = false;
+  let lastEnd = -1;
+  let lastStack: string[] = [];
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i]!;
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") stack.push(ch === "{" ? "}" : "]");
+    else if (ch === "}" || ch === "]") {
+      stack.pop();
+      if (stack.length === 0) return null; // JSON je celý, chyba je jinde
+      lastEnd = i + 1;
+      lastStack = [...stack];
+    }
+  }
+  if (lastEnd < 0) return null;
+  return json.slice(0, lastEnd) + lastStack.reverse().join("");
 }
 
 /**
@@ -130,11 +167,13 @@ export function escapeInnerQuotes(json: string): string {
  * Volání, které má vrátit JSON. Neplatnou odpověď (neukončený řetězec, uvozovky
  * v textu, useknutí) zkusí až 2× znovu s mírně vyšší teplotou.
  */
-export async function llmJson<T>(llm: LlmFn, system: string, user: string, maxTokens = 8000, firstAttempt = 0): Promise<T> {
+export async function llmJson<T>(
+  llm: LlmFn, system: string, user: string, maxTokens = 8000, firstAttempt = 0, opts: { salvageTruncated?: boolean } = {},
+): Promise<T> {
   let lastErr: unknown;
   for (let attempt = firstAttempt; attempt < firstAttempt + 3; attempt++) {
     try {
-      return parseJsonLoose<T>(await llm(system, user, { maxTokens, attempt }));
+      return parseJsonLoose<T>(await llm(system, user, { maxTokens, attempt }), opts);
     } catch (err) {
       lastErr = err;
       // Síťová/HTTP chyba ani timeout se neopakují tady — o retry rozhodne fronta.

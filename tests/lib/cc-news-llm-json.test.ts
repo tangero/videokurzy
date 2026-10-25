@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escapeInnerQuotes, parseJsonLoose } from "../../src/lib/cc-news/llm";
+import { closeTruncatedJson, escapeInnerQuotes, parseJsonLoose } from "../../src/lib/cc-news/llm";
 
 describe("parseJsonLoose — dvojité uvozovky v textu od modelu", () => {
   it("načte JSON, ve kterém model opsal příkaz s uvozovkami", () => {
@@ -23,5 +23,23 @@ describe("parseJsonLoose — dvojité uvozovky v textu od modelu", () => {
 
   it("neopravitelný JSON hodí SyntaxError s výřezem kolem chyby", () => {
     expect(() => parseJsonLoose('{"a": 1 "b": 2}')).toThrow(/position \d+.*…\{"a": 1/s);
+  });
+});
+
+describe("parseJsonLoose — odpověď useknutá limitem tokenů", () => {
+  const cut = '{"headline": "H", "items": [\n  {"text": "a", "sources": ["x"], "area": "p"},\n  {"text": "b", "sources": ["y"], "area": "p"},\n  {"text": "c \\"q\\" d", "sour';
+
+  it("bez salvageTruncated hodí chybu", () => {
+    expect(() => parseJsonLoose(cut)).toThrow(SyntaxError);
+  });
+
+  it("se salvageTruncated ponechá celé prvky a uzavře závorky", () => {
+    const out = parseJsonLoose<{ headline: string; items: { text: string }[] }>(cut, { salvageTruncated: true });
+    expect(out.headline).toBe("H");
+    expect(out.items.map((i) => i.text)).toEqual(["a", "b"]);
+  });
+
+  it("úplný JSON nezkracuje", () => {
+    expect(closeTruncatedJson('{"a": [1, 2]}')).toBeNull();
   });
 });
