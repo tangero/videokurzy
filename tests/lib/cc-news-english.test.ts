@@ -186,6 +186,16 @@ describe("publishEnglishWeekly", () => {
     expect(gh.calls.some((c) => c.method === "PUT")).toBe(false);
   });
 
+  it("retry po chybě za zápisem souboru: náš obsah na větvi bez uloženého SHA vytvoří PR, ne edited", async () => {
+    // Předchozí pokus zapsal soubor, ale PR se nevytvořil (např. 503) a SHA se neuložilo.
+    const same = btoa(String.fromCharCode(...new TextEncoder().encode("č")));
+    const gh = fakeGithub({ branchExists: true, fileSha: "written0", fileContent: same });
+    const pr = await openSitePullRequest("t", "tangero/vibecoding-site", { path: "src/content/novinky/grok-bot/2026-w43.md", content: "č" }, { branch: "b", title: "T", body: "B" }, gh.f, { lastWrittenSha: null });
+    expect(pr).toMatchObject({ created: true, sha: "written0" });
+    expect(gh.calls.some((c) => c.method === "PUT")).toBe(false);
+    expect(gh.calls.some((c) => c.method === "POST" && c.path === "/pulls")).toBe(true);
+  });
+
   it("ručně upravený soubor na větvi PR bez force nepřepíše, vlastní zápis ano", async () => {
     await env.KV.put(selectionKvKey("w43"), JSON.stringify(SEL));
     const tokenEnv = { ...env, VIBECODING_SITE_GITHUB_TOKEN: "t" } as never;
