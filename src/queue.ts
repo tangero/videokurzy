@@ -321,7 +321,7 @@ export async function handleDlq(
     try {
       await sendEmail(env, {
         to: [...ADMIN_EMAILS],
-        subject: `⚠️ Webhook selhal natrvalo: ${msg?.type ?? "unknown"}`,
+        subject: `⚠️ ${stripeId === "?" ? "Úloha ve frontě" : "Webhook"} selhal${stripeId === "?" ? "a" : ""} natrvalo: ${msg?.type ?? "unknown"}`,
         html: dlqAlertHtml(msg?.type ?? "unknown", stripeId, maskedEmail),
       });
     } catch (err) {
@@ -334,6 +334,18 @@ export async function handleDlq(
 }
 
 function dlqAlertHtml(type: string, stripeId: string, maskedEmail: string): string {
+  // Interní úlohy (Novinky v CC, nástroje, fakturace bez Stripe) nesou jen typ:
+  // text o zaplacené objednávce by tu jen vyděsil.
+  if (stripeId === "?") {
+    return `
+    <h2>Úloha ve frontě selhala natrvalo</h2>
+    <p>Zpráva 3× selhala ve zpracování a skončila v dead-letter queue. Nejde
+    o platbu ze Stripe; příčinu najdete v logu workeru podle typu úlohy.</p>
+    <ul>
+      <li><strong>Typ:</strong> ${escapeHtml(type)}</li>
+    </ul>
+  `;
+  }
   return `
     <h2>Webhook selhal natrvalo</h2>
     <p>Zpráva 3× selhala ve zpracování a skončila v dead-letter queue. Pokud jde
