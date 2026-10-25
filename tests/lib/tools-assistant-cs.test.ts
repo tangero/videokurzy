@@ -31,12 +31,12 @@ const RELEASES: AssistantRelease[] = [
 const [P, V, T, F, O] = ROWS.map((r) => r.id) as [string, string, string, string, string];
 
 /** Podvržený autor: Teams položku dá do špatného oddílu, Other vynechá, jednu oblast vymyslí. */
-function fakeLlms(opts: { failClaim?: string; fixText?: string | null } = {}) {
+function fakeLlms(opts: { failClaim?: string; fixText?: string | null; truncateWrite?: boolean } = {}) {
   const calls: { kind: string; user: string }[] = [];
   const write: LlmFn = async (system, user) => {
     if (system.startsWith("Píšeš český týdenní zápis")) {
       calls.push({ kind: "write", user });
-      return JSON.stringify({
+      const out = JSON.stringify({
         headline: "Grok Bot: Vault a Pages.",
         summary: "Boti umí ukládat přihlášení do Vaultu a stavět stránky Pages.",
         highlights: [{ text: "Boti ukládají přihlášení do Vaultu.", sources: [V] }, { text: "Boti staví stránky Pages.", sources: [P, "neexistuje"] }],
@@ -48,6 +48,13 @@ function fakeLlms(opts: { failClaim?: string; fixText?: string | null } = {}) {
           { section: "fixed", text: "Po resetu chatu přicházejí odpovědi.", sources: [F], area: "neznama" },
         ],
       });
+      // Limit tokenů utne odpověď uprostřed třetí položky items.
+      return opts.truncateWrite ? out.slice(0, out.indexOf("V týmech mohou") + 5) : out;
+    }
+    if (system.startsWith("Tyto položky changelogu chybí") && opts.truncateWrite) {
+      calls.push({ kind: "missing", user });
+      const ids = [...user.matchAll(/^(grok-bot:\S+)/gm)].map((m) => m[1]!);
+      return JSON.stringify({ items: ids.map((id) => ({ section: "improved", text: `Doplněno ${id.slice(-4)}.`, sources: [id], area: "tymy" })) });
     }
     if (system.startsWith("Tyto položky changelogu chybí")) {
       calls.push({ kind: "missing", user });
@@ -97,6 +104,17 @@ describe("writeAssistantNote", () => {
     // Vstup modelu nese štítek Teams a názvy vydání.
     expect(calls[0]!.user).toContain(`${T} | Improved [Teams] |`);
     expect(calls[0]!.user).toContain("VYDÁNÍ 0.75.5, 2026-10-23: Vault (zahrnuje i 0.75.3, 0.75.4)");
+  });
+
+  it("useknutou odpověď zachrání po poslední celé položce a zbytek doplní", async () => {
+    const { llms, calls } = fakeLlms({ truncateWrite: true });
+    const n = (await writeAssistantNote("grok-bot", W43, ROWS, RELEASES, llms, at("2026-10-27")))!;
+    expect(n.headline).toBe("Vault a Pages");
+    expect(n.review.uncovered).toEqual([]);
+    expect(calls.filter((c) => c.kind === "write")).toHaveLength(1);
+    const missing = calls.find((c) => c.kind === "missing")!.user;
+    for (const id of [T, F, O]) expect(missing).toContain(id);
+    expect(missing).not.toContain(P);
   });
 
   it("bod, který neprojde ani po opravě, se vyřadí a jeho položka je v revizi jako nepokrytá", async () => {
