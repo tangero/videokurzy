@@ -26,7 +26,9 @@ export type PaymentSource =
   | "manual"
   | "backfill";
 
-export type JobKind = "initial_purchase" | "stripe_renewal";
+// 'lesson_purchase' = nákup jednoho videu; purchaseId je pak lesson_purchase.id
+// (vlastní řada id, proto ji partial unique index 'initial_purchase' nehlídá).
+export type JobKind = "initial_purchase" | "stripe_renewal" | "lesson_purchase";
 
 export type PaidAtSource =
   | "stripe_api"
@@ -141,6 +143,7 @@ export function customIdFor(pc: Pick<PaymentConfirmed, "jobKind" | "purchaseId" 
     }
     return `vk-stripe-invoice-${pc.stripeInvoiceId}`;
   }
+  if (pc.jobKind === "lesson_purchase") return `vk-lesson-${pc.purchaseId}`;
   return `vk-purchase-${pc.purchaseId}`;
 }
 

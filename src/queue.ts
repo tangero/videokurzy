@@ -1,17 +1,18 @@
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { purchase, organization, user } from "./db/schema";
+import { purchase, organization, user, lesson, lessonPurchase } from "./db/schema";
 import { sendResendEvent } from "./lib/resend";
 import { getPrices } from "./lib/prices";
 import { consumeInviteToken } from "./lib/discount";
-import { reportPurchase } from "./lib/conversions";
+import { reportPurchase, reportLessonPurchase } from "./lib/conversions";
 import { invalidateAccessCache } from "./lib/access";
 import { maskEmail } from "./lib/errors";
 import { escapeHtml } from "./lib/markdown";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
 import { purchaseToBillingSnapshot } from "./lib/invoicing/jobs";
-import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase } from "./lib/email";
+import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase, lessonPurchaseConfirmedHtml } from "./lib/email";
+import { formatAccessDate, generateLessonVariableSymbol, lessonAccessExpiry } from "./lib/lesson-access";
 import { ADMIN_EMAILS } from "./config/admin";
 import type { Env } from "./types";
 
@@ -542,6 +543,13 @@ async function handleCheckoutCompleted(
 
   if (!metadata?.type || !customerEmail) return;
 
+  // Nákup jednoho videa má vlastní tabulku a nesmí projít větvemi níž
+  // (purchase řádek by otevřel celou platformu).
+  if (metadata.type === "lesson") {
+    await handleLessonCheckoutCompleted(db, env, data, metadata, customerEmail.toLowerCase(), eventCreated);
+    return;
+  }
+
   const discountPercent = Math.max(0, Math.min(100, parseInt(metadata.discountPercent ?? "0", 10) || 0));
   const discountCode = metadata.discountCode || null;
   const billing = extractBilling(metadata);
@@ -721,6 +729,110 @@ async function handleCheckoutCompleted(
     type: metadata.type === "organization" ? "organization" : "individual",
     isConsumer: isConsumerPurchase(billing),
   });
+}
+
+/**
+ * Stripe checkout jednoho videa (mode=payment). Založí lesson_purchase, fakturu
+ * (jobKind 'lesson_purchase'), konverzi a potvrzení s datem konce přístupu.
+ * Onboarding ani newsletter se nespouští (rozhodnutí 25. 10. 2026).
+ *
+ * Idempotence: UNIQUE stripePaymentId. VS z checkoutu se jen zkusí: kdyby se
+ * náhodou srazil s jiným nákupem, vygeneruje se nový (faktura a e-mail berou VS
+ * z řádku, ne z metadat).
+ */
+async function handleLessonCheckoutCompleted(
+  db: ReturnType<typeof drizzle>,
+  env: Env,
+  data: Record<string, unknown>,
+  metadata: Record<string, string>,
+  email: string,
+  eventCreated?: number,
+) {
+  const sessionId = (data.id as string) ?? "";
+  const lessonId = parseInt(metadata.lessonId ?? "", 10);
+  if (!sessionId || !Number.isFinite(lessonId)) {
+    console.error(`[queue] lesson checkout ${sessionId}: chybí lessonId v metadatech`);
+    return;
+  }
+  // Karta je okamžitá; jiný stav (async metoda) by znamenal nezaplacený nákup.
+  if (data.payment_status && data.payment_status !== "paid") {
+    console.error(`[queue] lesson checkout ${sessionId}: payment_status=${String(data.payment_status)}, přeskočeno`);
+    return;
+  }
+
+  const [l] = await db
+    .select({ id: lesson.id, title: lesson.title, accessDays: lesson.accessDays })
+    .from(lesson)
+    .where(eq(lesson.id, lessonId))
+    .limit(1);
+  if (!l) throw new Error(`lesson checkout ${sessionId}: lekce ${lessonId} neexistuje`);
+
+  const paidAt = typeof eventCreated === "number" ? new Date(eventCreated * 1000) : new Date();
+  // Doba přístupu z checkoutu (co zákazník viděl), jinak z lekce.
+  const accessDays = parseInt(metadata.accessDays ?? "", 10) > 0 ? parseInt(metadata.accessDays, 10) : l.accessDays;
+  const amountTotalCents = Number(data.amount_total ?? 0);
+  const paidAmountCzk = amountTotalCents > 0 ? Math.round(amountTotalCents / 100) : 0;
+  const billing = extractBilling(metadata);
+  const existingUser = await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1);
+
+  const findRow = () =>
+    db.select().from(lessonPurchase).where(eq(lessonPurchase.stripePaymentId, sessionId)).limit(1);
+  let [row] = await findRow();
+  for (let attempt = 0; !row && attempt < 3; attempt++) {
+    const vs = attempt === 0 && /^35\d{6}$/.test(metadata.vs ?? "") ? metadata.vs : generateLessonVariableSymbol();
+    await db
+      .insert(lessonPurchase)
+      .values({
+        lessonId,
+        email,
+        userId: existingUser[0]?.id ?? null,
+        variableSymbol: vs,
+        stripePaymentId: sessionId,
+        status: "active",
+        amountPaid: paidAmountCzk,
+        expiresAt: lessonAccessExpiry(paidAt, accessDays),
+        createdAt: paidAt,
+        conversionOccurredAt: paidAt,
+        ...billing,
+        ...extractSignals(metadata),
+        ...extractImmediateAccessConsent(metadata),
+      })
+      .onConflictDoNothing();
+    [row] = await findRow();
+  }
+  if (!row) throw new Error(`lesson checkout ${sessionId}: nepodařilo se uložit nákup`);
+
+  if (paidAmountCzk > 0) {
+    await createAndEnqueueInvoiceJob(db, env, {
+      purchaseId: row.id,
+      jobKind: "lesson_purchase",
+      paymentSource: "stripe_checkout",
+      sourceEventId: sessionId,
+      amount: paidAmountCzk,
+      paidAt,
+      paidAtSource: "stripe_api",
+      paidAtConfidence: typeof eventCreated === "number" ? "exact" : "estimated",
+      billing: { email, ...billing },
+    });
+  }
+
+  await reportLessonPurchase(db, env, row.id);
+
+  // Potvrzení s poučením jako poslední krok, selhání → retry (viz sendPurchaseConfirmationOrThrow).
+  const ok = await sendEmail(env, {
+    to: email,
+    subject: `Video odemčeno: ${l.title}`,
+    html: await lessonPurchaseConfirmedHtml({
+      loginUrl: `${env.BETTER_AUTH_URL}/login?email=${encodeURIComponent(email)}`,
+      lessonTitle: l.title,
+      accessDays,
+      expiresOn: formatAccessDate(row.expiresAt),
+      variableSymbol: row.variableSymbol,
+      isConsumer: isConsumerPurchase(billing),
+      prices: await getPrices(db),
+    }),
+  });
+  if (!ok) throw new Error(`lesson purchase confirmation email failed for ${maskEmail(email)}`);
 }
 
 async function handleSubscriptionDeleted(

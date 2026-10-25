@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import Stripe from "stripe";
 import type { Env, Variables } from "../types";
+import { drizzle } from "drizzle-orm/d1";
+import { eq } from "drizzle-orm";
 import { sklikConversionSnippetFor } from "../lib/analytics-snippet";
+import { lesson, lessonPurchase } from "../db/schema";
+import { LESSON_ACCESS_DAYS } from "../config/payment";
+import { formatAccessDate, lessonAccessExpiry } from "../lib/lesson-access";
 
 const stripeRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -21,6 +26,8 @@ stripeRoutes.get("/checkout/success", async (c) => {
   // Sklik conversionHit: hodnotu bereme z ověřené Stripe session (autoritativní,
   // řeší race i fingování). conversionHit jen když je session reálně zaplacená.
   let sklik = "";
+  // Nákup jednoho videa: jiný text (název, konec přístupu, odkaz na video).
+  let lessonInfo: { slug: string; title: string; expiresOn: string; email: string | null } | null = null;
   const sessionId = c.req.query("session_id");
   if (sessionId) {
     try {
@@ -30,6 +37,28 @@ stripeRoutes.get("/checkout/success", async (c) => {
         const valueCzk = Math.round((session.amount_total ?? 0) / 100);
         const email = session.customer_details?.email ?? session.customer_email ?? null;
         sklik = await sklikConversionSnippetFor(c.env, { value: valueCzk, orderId: sessionId, email });
+        if (session.metadata?.type === "lesson" && session.metadata.lessonSlug) {
+          const days = parseInt(session.metadata.accessDays ?? "", 10) || LESSON_ACCESS_DAYS;
+          const db = drizzle(c.env.DB);
+          const [l] = await db
+            .select({ title: lesson.title })
+            .from(lesson)
+            .where(eq(lesson.slug, session.metadata.lessonSlug))
+            .limit(1);
+          // Datum z uloženého nákupu (stejné jako v e-mailu). Než webhook doběhne,
+          // odhad od teď: webhook počítá od dokončení platby, ne od založení session.
+          const [lp] = await db
+            .select({ expiresAt: lessonPurchase.expiresAt })
+            .from(lessonPurchase)
+            .where(eq(lessonPurchase.stripePaymentId, sessionId))
+            .limit(1);
+          lessonInfo = {
+            slug: session.metadata.lessonSlug,
+            title: l?.title ?? "video",
+            expiresOn: formatAccessDate(lp?.expiresAt ?? lessonAccessExpiry(new Date(), days)),
+            email,
+          };
+        }
       }
     } catch (err) {
       console.error("[sklik] success page session retrieve failed:", err);
@@ -48,12 +77,32 @@ stripeRoutes.get("/checkout/success", async (c) => {
         <div class="text-center max-w-md px-4">
           <div class="text-4xl mb-4">&#10003;</div>
           <h1 class="text-2xl font-bold mb-2">Platba proběhla!</h1>
-          <p class="text-gray-600 mb-6">
-            Zkontrolujte svůj email — posíláme vám přihlašovací odkaz k videokurzu.
-          </p>
-          <a href="/login" class="text-blue-600 hover:underline">
-            Přihlásit se
-          </a>
+          {lessonInfo ? (
+            <>
+              <p class="text-gray-600 mb-2">
+                Video <strong>{lessonInfo.title}</strong> máte odemčené do <strong>{lessonInfo.expiresOn}</strong>.
+              </p>
+              <p class="text-gray-600 mb-6">
+                Přihlaste se e-mailem{lessonInfo.email ? <> <strong>{lessonInfo.email}</strong></> : null}, potvrzení
+                a fakturu jsme poslali na stejnou adresu.
+              </p>
+              <a
+                href={lessonInfo.email ? `/login?email=${encodeURIComponent(lessonInfo.email)}` : "/login"}
+                class="text-blue-600 hover:underline"
+              >
+                Přihlásit se a přehrát video
+              </a>
+            </>
+          ) : (
+            <>
+              <p class="text-gray-600 mb-6">
+                Zkontrolujte svůj email — posíláme vám přihlašovací odkaz k videokurzu.
+              </p>
+              <a href="/login" class="text-blue-600 hover:underline">
+                Přihlásit se
+              </a>
+            </>
+          )}
         </div>
         {sklik && <div dangerouslySetInnerHTML={{ __html: sklik }} />}
       </body>

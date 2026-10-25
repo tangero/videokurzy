@@ -54,6 +54,10 @@ export const lesson = sqliteTable("lesson", {
   transcribedAt: integer("transcribedAt", { mode: "timestamp" }),
   transcript: text("transcript"),
   transcribeError: text("transcribeError"),
+  // Prodej přístupu k tomuto videu bez předplatného (lesson_purchase). NULL = neprodává se.
+  priceCzk: integer("priceCzk"),
+  // Délka přístupu k zakoupenému videu ve dnech od zaplacení.
+  accessDays: integer("accessDays").notNull().default(120),
 });
 
 export const progress = sqliteTable(
@@ -191,6 +195,54 @@ export const purchase = sqliteTable("purchase", {
     .where(sql`${table.accessToken} IS NOT NULL`),
 ]);
 
+// Nákup přístupu k jednomu videu (lekci), migrace 0039. ZÁMĚRNĚ mimo `purchase`:
+// hasAccess() pouští na celou platformu za jakýkoli aktivní řádek purchase a čtou
+// z ní i newsletter, připomínky obnovy, partnerské API a tržby předplatného.
+// Platí se jen kartou (Stripe mode=payment), řádek vzniká až ve webhooku.
+export const lessonPurchase = sqliteTable("lesson_purchase", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  lessonId: integer("lessonId").notNull(),
+  email: text("email").notNull(),
+  userId: text("userId"),
+  // Prefix LESSON_VS_PREFIX (35): tržba z videa je poznat na faktuře i ve Stripe.
+  variableSymbol: text("variableSymbol").notNull(),
+  stripePaymentId: text("stripePaymentId").notNull(),
+  status: text("status", { enum: ["active", "refunded"] }).notNull().default("active"),
+  amountPaid: integer("amountPaid").notNull().default(0),
+  expiresAt: integer("expiresAt", { mode: "timestamp" }).notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  companyName: text("companyName"),
+  companyIco: text("companyIco"),
+  companyDic: text("companyDic"),
+  companyAddress: text("companyAddress"),
+  companyCity: text("companyCity"),
+  companyZip: text("companyZip"),
+  contactName: text("contactName"),
+  invoiceEmail: text("invoiceEmail"),
+  // § 1837 písm. l) — důkazní záznam jako u purchase, nepřepisovat.
+  immediateAccessConsent: integer("immediateAccessConsent", { mode: "boolean" }).notNull().default(false),
+  immediateAccessConsentAt: integer("immediateAccessConsentAt", { mode: "timestamp" }),
+  marketingConsent: integer("marketingConsent", { mode: "boolean" }).notNull().default(false),
+  conversionOccurredAt: integer("conversionOccurredAt", { mode: "timestamp" }),
+  fbc: text("fbc"),
+  fbp: text("fbp"),
+  gclid: text("gclid"),
+  gbraid: text("gbraid"),
+  wbraid: text("wbraid"),
+  clientIp: text("clientIp"),
+  userAgent: text("userAgent"),
+  fakturoidInvoiceId: integer("fakturoidInvoiceId"),
+  fakturoidSubjectId: integer("fakturoidSubjectId"),
+  // Připomínka před koncem přístupu (claim, odešle se nejvýš jednou).
+  expiryReminderSentAt: integer("expiryReminderSentAt", { mode: "timestamp" }),
+}, (table) => [
+  uniqueIndex("lesson_purchase_vs_unique").on(table.variableSymbol),
+  uniqueIndex("lesson_purchase_stripe_unique").on(table.stripePaymentId),
+  index("idx_lesson_purchase_email").on(table.email),
+  index("idx_lesson_purchase_user").on(table.userId),
+  index("idx_lesson_purchase_status_expires").on(table.status, table.expiresAt),
+]);
+
 export const discountInvite = sqliteTable("discount_invite", {
   // Náhodný nanoid() token, nese se v URL jako ?invite=TOKEN.
   token: text("token").primaryKey(),
@@ -216,6 +268,8 @@ export const discountInvite = sqliteTable("discount_invite", {
 export const conversionLog = sqliteTable("conversion_log", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   purchaseId: integer("purchaseId").notNull(),
+  // 'purchase' = purchaseId je purchase.id, 'lesson' = lesson_purchase.id (migrace 0039).
+  source: text("source", { enum: ["purchase", "lesson"] }).notNull().default("purchase"),
   provider: text("provider", { enum: ["meta", "google", "sklik"] }).notNull(),
   status: text("status", { enum: ["pending", "sent", "failed"] }).notNull().default("pending"),
   // Lease (skutečný lock proti souběhu): claim drží jen jeden běh do leaseUntil.
@@ -234,7 +288,7 @@ export const conversionLog = sqliteTable("conversion_log", {
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
 }, (table) => [
   // Jeden řádek na (purchase, provider) — bez toho duplicity a nejasný zdroj pravdy.
-  uniqueIndex("conversion_log_purchase_provider_unique").on(table.purchaseId, table.provider),
+  uniqueIndex("conversion_log_source_purchase_provider_unique").on(table.source, table.purchaseId, table.provider),
   // Re-run hledá failed / expired-pending k doposlání.
   index("idx_conversion_log_status").on(table.status),
 ]);
@@ -248,8 +302,9 @@ export const invoiceJob = sqliteTable("invoice_job", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   // FK na purchase.id BEZ DB constraintu (jako discount_invite) — outbox musí přežít
   // anonymizaci/výmaz purchase a nesmí kaskádně mazat účetní záznam.
+  // U jobKind='lesson_purchase' je to lesson_purchase.id (vlastní řada id).
   purchaseId: integer("purchaseId").notNull(),
-  jobKind: text("jobKind", { enum: ["initial_purchase", "stripe_renewal"] }).notNull(),
+  jobKind: text("jobKind", { enum: ["initial_purchase", "stripe_renewal", "lesson_purchase"] }).notNull(),
   // Idempotency klíč: 'vk-purchase-<id>' | 'vk-stripe-invoice-<stripeInvoiceId>'.
   customId: text("customId").notNull(),
   paymentSource: text("paymentSource", {

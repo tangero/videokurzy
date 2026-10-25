@@ -57,6 +57,11 @@ export function invoiceLineName(input: { jobKind: JobKind; isOrganization: boole
   return "Roční přístup ke kurzům — osobní předplatné";
 }
 
+/** Položka faktury za přístup k jednomu videu: název, doba a konec přístupu. */
+export function lessonInvoiceLineName(input: { lessonTitle: string; accessDays: number; expiresOn: string }): string {
+  return `Přístup k videozáznamu „${input.lessonTitle}“ na ${input.accessDays} dní (do ${input.expiresOn})`;
+}
+
 /** Vstup pro vyřešení/založení Fakturoid subjektu (z billing snapshotu jobu). */
 export interface SubjectInput {
   email: string;

@@ -27,6 +27,8 @@ interface DashboardProps {
   priceIndividual: number;
   /** Aktivní vyhledávání (/dashboard?q=...) — místo osnovy se vykreslí výsledky. */
   search?: LessonSearchState;
+  /** Jednotlivě zakoupená videa (bez předplatného) s datem konce přístupu. */
+  purchasedLessons?: { lessonId: number; slug: string; title: string; expiresOn: string }[];
 }
 
 function formatDuration(seconds: number): string {
@@ -85,16 +87,18 @@ export const DashboardPage: FC<DashboardProps> = ({
   hasPaidAccess,
   priceIndividual,
   search,
+  purchasedLessons = [],
 }) => {
+  const purchasedIds = new Set(purchasedLessons.map((p) => p.lessonId));
   const allLessons = modules.flatMap((m) => m.lessons);
-  const accessibleLessons = allLessons.filter((l) => hasPaidAccess || l.isFree);
+  const accessibleLessons = allLessons.filter((l) => hasPaidAccess || l.isFree || purchasedIds.has(l.id));
   const lockedCount = allLessons.length - accessibleLessons.length;
   const freeLessonCount = allLessons.filter((l) => l.isFree).length;
   const completedAccessibleCount = accessibleLessons.filter((l) => l.completed).length;
   const nextLesson = accessibleLessons.find((l) => !l.completed) ?? accessibleLessons[0] ?? allLessons[0];
   const nextModule = modules.find((m) => m.lessons.some((l) => l.id === nextLesson?.id));
   const remainingInModule = nextModule?.lessons
-    .filter((l) => (hasPaidAccess || l.isFree) && !l.completed)
+    .filter((l) => (hasPaidAccess || l.isFree || purchasedIds.has(l.id)) && !l.completed)
     .reduce((a, l) => a + l.durationSeconds, 0) ?? 0;
   const accessibleCount = accessibleLessons.length;
   const pct = accessibleCount > 0 ? Math.round((completedAccessibleCount / accessibleCount) * 100) : 0;
@@ -167,6 +171,23 @@ export const DashboardPage: FC<DashboardProps> = ({
           </div>
         </section>
 
+        {!hasPaidAccess && purchasedLessons.length > 0 && (
+          <section style="margin-bottom:28px">
+            <div class="kicker">zakoupená videa</div>
+            <div style="display:grid;gap:10px;margin-top:8px">
+              {purchasedLessons.map((p) => (
+                <div class="hstack" style="gap:12px;flex-wrap:wrap;justify-content:space-between;padding:14px 16px;border:1px solid var(--border);border-radius:10px">
+                  <div>
+                    <a href={`/watch/${p.slug}`} style="font-weight:600">{p.title}</a>
+                    <div class="mono muted" style="font-size:0.8rem">přístup do {p.expiresOn}</div>
+                  </div>
+                  <a class="btn btn-sm" href={`/watch/${p.slug}`}>přehrát</a>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Upgrade banner */}
         {!hasPaidAccess && lockedCount > 0 && (
           <div class="banner-upgrade" style="margin-bottom:36px">
@@ -220,7 +241,7 @@ export const DashboardPage: FC<DashboardProps> = ({
                     </div>
                   </div>
                   {m.lessons.map((l) => {
-                    const locked = !hasPaidAccess && !l.isFree;
+                    const locked = !hasPaidAccess && !l.isFree && !purchasedIds.has(l.id);
                     return (
                       <div class={`lesson ${locked ? "locked" : ""}`}>
                         <span class="lesson-num">

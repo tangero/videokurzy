@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { nanoid } from "nanoid";
 import type { Env, Variables } from "../types";
 import { requireAdmin } from "../middleware/auth";
-import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch, invoiceJob } from "../db/schema";
+import { course, module, lesson, organization, purchase, user, siteConfig, lessonWatch, invoiceJob, lessonPurchase } from "../db/schema";
 import { reportPurchase } from "../lib/conversions";
 import { Layout } from "../views/layout";
 import {
@@ -313,6 +313,22 @@ admin.get("/admin", async (c) => {
     .select({ sum: sql<number>`coalesce(sum(${purchase.amountPaid}), 0)` })
     .from(purchase)
     .where(and(inArray(purchase.kind, ["paid", "manual"]), eq(purchase.status, "active")));
+  // Prodej jednotlivých videí (lesson_purchase, VS 35…) — zvlášť od předplatného.
+  const lessonSales = await db
+    .select({
+      lessonId: lessonPurchase.lessonId,
+      title: lesson.title,
+      slug: lesson.slug,
+      count: sql<number>`count(*)`,
+      revenue: sql<number>`coalesce(sum(${lessonPurchase.amountPaid}), 0)`,
+      active: sql<number>`sum(case when ${lessonPurchase.expiresAt} > ${Math.floor(Date.now() / 1000)} then 1 else 0 end)`,
+    })
+    .from(lessonPurchase)
+    .leftJoin(lesson, eq(lesson.id, lessonPurchase.lessonId))
+    .where(eq(lessonPurchase.status, "active"))
+    .groupBy(lessonPurchase.lessonId)
+    .orderBy(desc(sql`sum(${lessonPurchase.amountPaid})`));
+  const lessonRevenueCzk = lessonSales.reduce((sum, r) => sum + Number(r.revenue), 0);
   const totalRevenueCzk = Number(revenueTotalRow?.sum ?? 0);
   const revenueActiveCzk = Number(revenueActiveRow?.sum ?? 0);
   const formatCzk = (v: number) => `${v.toLocaleString("cs-CZ")} Kč`;
@@ -551,6 +567,40 @@ admin.get("/admin", async (c) => {
             </div>
           )}
         </div>
+
+        {lessonSales.length > 0 && (
+          <div
+            class="mb-6 bg-white border rounded-lg p-4"
+            title="Součet lesson_purchase.amountPaid (platba kartou, VS s prefixem 35). Do „Zaplaceno celkem“ se nepočítá."
+          >
+            <div class="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+              <h3 class="text-sm font-semibold text-gray-900">Prodej jednotlivých videí</h3>
+              <p class="text-sm text-gray-600">
+                celkem <strong class="text-emerald-700">{formatCzk(lessonRevenueCzk)}</strong> · VS 35…
+              </p>
+            </div>
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs text-gray-500">
+                  <th class="py-1 font-medium">Video</th>
+                  <th class="py-1 font-medium text-right">Nákupy</th>
+                  <th class="py-1 font-medium text-right">Aktivní přístupy</th>
+                  <th class="py-1 font-medium text-right">Tržby</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lessonSales.map((r) => (
+                  <tr class="border-t">
+                    <td class="py-1">{r.slug ? <a href={`/watch/${r.slug}`} class="text-indigo-600 hover:underline">{r.title}</a> : `lekce ${r.lessonId}`}</td>
+                    <td class="py-1 text-right">{Number(r.count)}</td>
+                    <td class="py-1 text-right">{Number(r.active)}</td>
+                    <td class="py-1 text-right">{formatCzk(Number(r.revenue))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* FIO manual scan — hx-boost="false" obchází htmx interceptor, jinak
            form submit projde jako AJAX a 303 redirect neproběhne čistě. */}
@@ -3364,6 +3414,29 @@ admin.get("/admin/lessons/:id/edit", async (c) => {
   );
 });
 
+/**
+ * Cena a doba přístupu z formuláře lekce. Vrací text chyby, nebo hodnoty.
+ * Prodávat jde jen placené video z library s ochranou tokenem (ne hlavní).
+ */
+function parseLessonSale(
+  priceRaw: unknown,
+  daysRaw: unknown,
+  bunnyLibraryId: string | null,
+  isFree: boolean,
+): { priceCzk: number | null; accessDays: number } | string {
+  const priceStr = String(priceRaw ?? "").trim();
+  const accessDays = parseInt(String(daysRaw ?? "120"), 10);
+  if (!Number.isInteger(accessDays) || accessDays < 1 || accessDays > 730) return "Přístup musí být 1 až 730 dní.";
+  if (!priceStr) return { priceCzk: null, accessDays };
+  const priceCzk = Number(priceStr);
+  if (!Number.isInteger(priceCzk) || priceCzk < 10 || priceCzk > 100000) return "Cena musí být celé číslo od 10 do 100 000 Kč.";
+  if (isFree) return "Video zdarma nejde prodávat.";
+  if (bunnyLibraryId === null) {
+    return "Video z hlavní Bunny library nejde prodávat samostatně: nemá ochranu tokenem. Přesuňte ho do jiné library.";
+  }
+  return { priceCzk, accessDays };
+}
+
 admin.post("/admin/lessons/:id/edit", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const db = drizzle(c.env.DB);
@@ -3391,6 +3464,9 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
   const chapters = String(body.chaptersJson ?? "[]").trim() || "[]";
   const moments = String(body.momentsJson ?? "[]").trim() || "[]";
   const bodyMarkdown = String(body.bodyMarkdown ?? "").trim();
+  // Prodej videa bez předplatného (lesson_purchase). Pole jsou jen v úpravě lekce.
+  const sale = body.priceCzk === undefined ? undefined : parseLessonSale(body.priceCzk, body.accessDays, bunnyLibraryId, isFree);
+  if (typeof sale === "string") return c.text(sale, 400);
 
   // Přesun mezi moduly: přijmi jen modul ze stejného kurzu, jinak nech beze změny.
   let moduleId: number | undefined;
@@ -3420,6 +3496,7 @@ admin.post("/admin/lessons/:id/edit", async (c) => {
       chapters,
       moments,
       bodyMarkdown,
+      ...(sale ?? {}),
       ...(moduleId !== undefined ? { moduleId } : {}),
     })
     .where(eq(lesson.id, id));

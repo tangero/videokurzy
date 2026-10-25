@@ -10,7 +10,7 @@
 
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, or, isNull, lt, lte, inArray, sql } from "drizzle-orm";
-import { invoiceJob, purchase } from "../../db/schema";
+import { invoiceJob, lesson, lessonPurchase, purchase } from "../../db/schema";
 import type { Env } from "../../types";
 import { sendEmail } from "../email";
 import { escapeHtml } from "../markdown";
@@ -21,10 +21,64 @@ import {
   ensurePaymentRecorded,
   ensureInvoiceSent,
   invoiceLineName,
+  lessonInvoiceLineName,
   type FakturoidApi,
 } from "./fakturoid-gateway";
 
 type Db = ReturnType<typeof drizzle>;
+
+const PRAGUE_DATE = new Intl.DateTimeFormat("cs-CZ", {
+  timeZone: "Europe/Prague", day: "numeric", month: "numeric", year: "numeric",
+});
+
+/**
+ * Text položky a poznámka faktury. Předplatné: osobní / firemní licence, VS jen
+ * u bankovních plateb (párování s výpisem). Video: název, doba a konec přístupu,
+ * VS vždy — prefix 35 odliší tržbu z videa i při platbě kartou.
+ */
+async function invoiceLine(
+  db: Db,
+  job: typeof invoiceJob.$inferSelect,
+): Promise<{ lineName: string; noteSuffix: string | undefined }> {
+  if (job.jobKind === "lesson_purchase") {
+    const [lp] = await db
+      .select({
+        variableSymbol: lessonPurchase.variableSymbol,
+        createdAt: lessonPurchase.createdAt,
+        expiresAt: lessonPurchase.expiresAt,
+        title: lesson.title,
+      })
+      .from(lessonPurchase)
+      .leftJoin(lesson, eq(lesson.id, lessonPurchase.lessonId))
+      .where(eq(lessonPurchase.id, job.purchaseId))
+      .limit(1);
+    if (!lp) throw new Error(`lesson_purchase ${job.purchaseId} nenalezen`);
+    const accessDays = Math.round((lp.expiresAt.getTime() - lp.createdAt.getTime()) / 86_400_000);
+    return {
+      lineName: lessonInvoiceLineName({
+        lessonTitle: lp.title ?? "videozáznam",
+        accessDays,
+        expiresOn: PRAGUE_DATE.format(lp.expiresAt).replace(/\s/g, " "),
+      }),
+      noteSuffix: `VS: ${lp.variableSymbol}`,
+    };
+  }
+
+  // Položka faktury dle typu purchase (osobní / firemní).
+  const [p] = await db
+    .select({ type: purchase.type, variableSymbol: purchase.variableSymbol })
+    .from(purchase)
+    .where(eq(purchase.id, job.purchaseId))
+    .limit(1);
+  const isOrg = p?.type === "organization";
+  const domain = isOrg ? job.email.split("@")[1] ?? null : null;
+  const lineName = invoiceLineName({ jobKind: job.jobKind, isOrganization: isOrg, domain });
+  // U bankovních plateb doplň VS do poznámky faktury — účetní párování faktury
+  // proti bankovnímu výpisu (stará inline cesta to dělala, outbox to obnovuje).
+  const isBank = job.paymentSource === "fio" || job.paymentSource === "creditas";
+  const noteSuffix = isBank && p?.variableSymbol ? `VS: ${p.variableSymbol}` : undefined;
+  return { lineName, noteSuffix };
+}
 
 export const MAX_ATTEMPTS = 6;
 export const CLAIM_TIMEOUT_MS = 10 * 60 * 1000;
@@ -99,19 +153,7 @@ export async function processInvoiceJob(
   try {
     const api = apiOverride ?? makeFakturoidApi(env);
 
-    // Položka faktury dle typu purchase (osobní / firemní).
-    const [p] = await db
-      .select({ type: purchase.type, variableSymbol: purchase.variableSymbol })
-      .from(purchase)
-      .where(eq(purchase.id, job.purchaseId))
-      .limit(1);
-    const isOrg = p?.type === "organization";
-    const domain = isOrg ? job.email.split("@")[1] ?? null : null;
-    const lineName = invoiceLineName({ jobKind: job.jobKind, isOrganization: isOrg, domain });
-    // U bankovních plateb doplň VS do poznámky faktury — účetní párování faktury
-    // proti bankovnímu výpisu (stará inline cesta to dělala, outbox to obnovuje).
-    const isBank = job.paymentSource === "fio" || job.paymentSource === "creditas";
-    const noteSuffix = isBank && p?.variableSymbol ? `VS: ${p.variableSymbol}` : undefined;
+    const { lineName, noteSuffix } = await invoiceLine(db, job);
 
     // Estimated účetní datum se NEFAKTURUJE automaticky. Gate musí být PŘED
     // vytvořením faktury — issued_on/taxable_fulfillment_due/paid_on se zapisují
@@ -162,6 +204,11 @@ export async function processInvoiceJob(
           .update(purchase)
           .set({ fakturoidInvoiceId: invoiceId, fakturoidSubjectId: created.subjectId })
           .where(eq(purchase.id, job.purchaseId));
+      } else if (job.jobKind === "lesson_purchase") {
+        await db
+          .update(lessonPurchase)
+          .set({ fakturoidInvoiceId: invoiceId, fakturoidSubjectId: created.subjectId })
+          .where(eq(lessonPurchase.id, job.purchaseId));
       }
     }
 
