@@ -100,6 +100,14 @@ const LockIcon = () => (
   </svg>
 );
 
+// Video na prodej samostatně: cenovka místo zámku.
+const TagIcon = () => (
+  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z" />
+    <circle cx="8" cy="8" r="1.5" />
+  </svg>
+);
+
 const PlaySmIcon = () => (
   <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
     <polygon points="6 4 20 12 6 20 6 4" />
@@ -146,6 +154,7 @@ export const LandingPage: FC<LandingProps> = ({
   const totalSeconds = allLessons.reduce((s, l) => s + l.durationSeconds, 0);
   const lessonCount = allLessons.length;
   const freeCount = allLessons.filter((l) => l.isFree).length;
+  const saleBySlug = new Map(lessonsForSale.map((l) => [l.slug, l]));
   const canAccessAll = userHasAccess;
   const showAutoDiscount = discount.kind === "auto";
   const showCodeHint = discount.kind === "code-only";
@@ -257,16 +266,22 @@ export const LandingPage: FC<LandingProps> = ({
                 </div>
               </div>
               {m.lessons.map((l, li) => {
-                const accessible = l.isFree || canAccessAll;
-                const href = accessible ? `/watch/${l.slug}` : "/#cenik";
+                const sale = canAccessAll || l.isFree ? undefined : saleBySlug.get(l.slug);
+                const accessible = l.isFree || canAccessAll || !!sale?.ownedUntil;
+                // Video ke koupi vede na svou stránku s nabídkou koupě, ne na ceník.
+                const href = accessible || sale ? `/watch/${l.slug}` : "/#cenik";
                 return (
-                  <a href={href} class={`lesson no-underline ${l.isFree || canAccessAll ? "" : "locked"}`}
+                  <a href={href} class={`lesson no-underline ${accessible || sale ? "" : "locked"}`}
                     style="display:flex;align-items:center;gap:inherit;color:inherit">
                     <span class="lesson-num">{String(li + 1).padStart(2, "0")}</span>
                     <span class="lesson-icon">
                       {accessible ? (
                         <span style="color:var(--accent)">
                           <PlaySmIcon />
+                        </span>
+                      ) : sale ? (
+                        <span style="color:var(--accent)">
+                          <TagIcon />
                         </span>
                       ) : (
                         <span style="color:var(--muted)">
@@ -276,6 +291,13 @@ export const LandingPage: FC<LandingProps> = ({
                     </span>
                     <div class="lesson-title">
                       {l.title}
+                      {sale && (
+                        <span class="lesson-sub">
+                          {sale.ownedUntil
+                            ? `koupeno samostatně, přístup do ${sale.ownedUntil}`
+                            : `koupíte i samostatně · ${sale.priceCzk.toLocaleString("cs-CZ")} Kč na ${sale.accessDays} dní`}
+                        </span>
+                      )}
                     </div>
                     <span class="lesson-duration">{fmtDuration(l.durationSeconds)}</span>
                   </a>

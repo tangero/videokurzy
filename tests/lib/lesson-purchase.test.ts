@@ -395,4 +395,12 @@ describe("titulní stránka — videa ke koupi", () => {
     // Neprodávané placené video v sekci není.
     expect(html).not.toContain("/checkout/lesson/jina-placena");
   });
+
+  it("v seznamu modulů vede prodávané video na jeho stránku, ne na ceník", async () => {
+    const html = await (await SELF.fetch("https://test.local/")).text();
+    const row = html.match(new RegExp(`<a href="([^"]*)" class="lesson[^"]*"[^>]*>(?:(?!</a>).)*?AI First Company webinář(?:(?!</a>).)*?</a>`, "s"));
+    expect(row?.[1]).toBe(`/watch/${SLUG}`);
+    expect(row?.[0]).toContain("koupíte i samostatně");
+    expect(row?.[0]).not.toContain("locked");
+  });
 });
