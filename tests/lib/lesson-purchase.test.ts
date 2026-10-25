@@ -381,3 +381,18 @@ describe("/watch a /checkout/lesson", () => {
     expect(await res.text()).toContain("potvrďte souhlas");
   });
 });
+
+describe("titulní stránka — videa ke koupi", () => {
+  it("ukáže prodávané video s cenou pro předplatitele i ostatní", async () => {
+    const res = await SELF.fetch("https://test.local/");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(html).toContain('id="videa"');
+    expect(html).toContain("AI First Company webinář");
+    expect(html).toContain("v ceně předplatného");
+    expect(html).toMatch(/490(&nbsp;| | )Kč/);
+    expect(html).toContain(`/checkout/lesson/${SLUG}`);
+    // Neprodávané placené video v sekci není.
+    expect(html).not.toContain("/checkout/lesson/jina-placena");
+  });
+});
