@@ -377,7 +377,6 @@ export function assistantNoteMarkdown(note: AssistantNote, date: Date = publicat
       ? [`## ${SECTION_HEADINGS[s]}`, "", ...note.sections[s].map((b) => `- ${tidy(b.text)}`), ""]
       : [])),
   ];
-  const counts = SECTIONS.filter((s) => note.counts[s] > 0);
   return [
     "---",
     `title: ${yamlQuote(`${toolName(note.tool)} v týdnu ${w.week}: ${note.headline}`)}`,
@@ -389,7 +388,8 @@ export function assistantNoteMarkdown(note: AssistantNote, date: Date = publicat
     "highlights:",
     ...note.highlights.map((h) => `  - ${yamlQuote(h)}`),
     ...yamlList("areas", note.areas),
-    ...(counts.length ? ["counts:", ...counts.map((s) => `  ${s}: ${note.counts[s]}`)] : []),
+    // Vždy všechny tři klíče (0 je platná hodnota): schéma webu je může vyžadovat.
+    "counts:", ...SECTIONS.map((s) => `  ${s}: ${note.counts[s]}`),
     `source_url: ${ASSISTANT_SOURCE_URL[note.tool]}`,
     "---",
     "",

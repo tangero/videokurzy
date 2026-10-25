@@ -138,6 +138,7 @@ describe("assistantNoteMarkdown (kontrakt docs/novinky-asistentu.md webu)", () =
       "  - ucet",
       "counts:",
       "  new: 1",
+      "  improved: 0",
       "  fixed: 1",
       "source_url: https://x.ai/changelog/bot",
       "---",
