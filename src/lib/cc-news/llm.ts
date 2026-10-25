@@ -73,7 +73,57 @@ export function parseJsonLoose<T>(text: string): T {
   const start = raw.search(/[[{]/);
   const end = Math.max(raw.lastIndexOf("]"), raw.lastIndexOf("}"));
   if (start < 0 || end < start) throw new Error("cc-news LLM: odpověď neobsahuje JSON");
-  return JSON.parse(raw.slice(start, end + 1)) as T;
+  const json = raw.slice(start, end + 1);
+  try {
+    return JSON.parse(json) as T;
+  } catch (err) {
+    // Model občas opíše ukázku příkazu s dvojitými uvozovkami do textu
+    // („spusť "grok --x"“) a celý JSON je neplatný i po opakování.
+    // Jindy chybí čárka mezi prvky na samostatných řádcích.
+    const repaired = escapeInnerQuotes(json).replace(/([}\]"])(\s*\n\s*)(?=[{"])/g, "$1,$2");
+    try {
+      return JSON.parse(repaired) as T;
+    } catch {
+      // Výřez kolem chyby do logu, ať je vidět, co model vrátil.
+      const pos = Number((err as Error).message.match(/position (\d+)/)?.[1] ?? -1);
+      const around = pos >= 0 ? ` …${json.slice(Math.max(0, pos - 150), pos + 50)}…` : "";
+      throw new SyntaxError(`${(err as Error).message}${around}`);
+    }
+  }
+}
+
+/**
+ * Escapuje dvojité uvozovky uvnitř řetězců. Uvozovka řetězec ukončuje, jen když
+ * za ní (po mezerách) následuje `,` `:` `}` `]` nebo konec; jinak je součástí textu.
+ */
+export function escapeInnerQuotes(json: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i]!;
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch + (json[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      const next = json.slice(i + 1).match(/^\s*(.)/)?.[1];
+      if (next === undefined || ",:}]".includes(next)) {
+        inString = false;
+        out += ch;
+      } else {
+        out += '\\"';
+      }
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
 /**
