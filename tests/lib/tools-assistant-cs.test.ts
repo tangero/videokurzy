@@ -18,7 +18,7 @@ const row = (id: string, version: string, date: string, ord: number, type: strin
   topic: null, significance: null, reason: null, followsId: null, relation: null, followReason: null, classifiedAt: null, promptVersion: null,
 });
 const ROWS: Row[] = [
-  row("grok-bot:0.75.2#aaaa0001", "0.75.2", "2026-10-22", 1, "Added", "Bots can build Pages you can share."),
+  row("grok-bot:0.75.2#aaaa0001", "0.75.2", "2026-10-22", 1, "Added", "Bots can build Pages you can share. Requires Grok Bot 0.64.0 or later."),
   row("grok-bot:0.75.5#bbbb0001", "0.75.5", "2026-10-23", 1, "Added", "Bots can save your logins to a Vault in Settings."),
   row("grok-bot:0.75.5#bbbb0002", "0.75.5", "2026-10-23", 2, "Improved", "Teammates in their own DM with a Team Bot can react to messages.", "Teams"),
   row("grok-bot:0.75.5#bbbb0003", "0.75.5", "2026-10-23", 3, "Fixed", "After you reset a chat, new messages get replies."),
@@ -37,7 +37,7 @@ const ARTICLE_BODY = [
   "",
   PEREX,
   "",
-  "Týden přinesl verze 0.75.2 a 0.75.5 — a jednu, která neexistuje: 9.9.9.",
+  "Týden přinesl verze 0.75.2 a 0.75.5 — a jednu, která neexistuje: 9.9.9. Stránky chtějí aspoň 0.64.0.",
   "",
   "---",
   "",

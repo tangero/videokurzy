@@ -281,10 +281,15 @@ export function versionRange(rows: Pick<Row, "version">[], releases: AssistantRe
   return sorted.length === 1 ? sorted[0]! : `${sorted[0]}–${sorted[sorted.length - 1]}`;
 }
 
-/** Verze týdne, které smí článek zmínit (skutečné verze a jejich „Also includes“). */
-function weekVersions(rows: Pick<Row, "version">[], releases: AssistantRelease[]): Set<string> {
+/**
+ * Verze, které smí článek zmínit: skutečné verze týdne, jejich „Also includes“
+ * a verze z textu položek (např. „Requires Grok Bot 0.64.0 or later“).
+ */
+function weekVersions(rows: Pick<Row, "version" | "text">[], releases: AssistantRelease[]): Set<string> {
   const meta = new Map(releases.map((r) => [r.version, r]));
-  return new Set([...new Set(rows.map((r) => r.version))].flatMap((v) => [v, ...(meta.get(v)?.alsoIncludes ?? [])]));
+  const released = [...new Set(rows.map((r) => r.version))].flatMap((v) => [v, ...(meta.get(v)?.alsoIncludes ?? [])]);
+  const mentioned = rows.flatMap((r) => [...r.text.matchAll(/\bv?(\d+\.\d+\.\d+)\b/g)].map((m) => m[1]!));
+  return new Set([...released, ...mentioned]);
 }
 
 /** Markdownové odkazy mimo povolené adresy převede na prostý text. */
