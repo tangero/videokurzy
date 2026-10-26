@@ -6,6 +6,9 @@
 // (areas) přiřadí model z pevného seznamu nástroje a kód je ověří. Každý bod cituje
 // ID položek changelogu; kód kontroluje citace, pokrytí všech položek a model
 // (classifyModel) ověří fakta proti citovaným položkám (vzor selectAndVerify ve weekly.ts).
+// Z ověřených bodů pak vzniká redakční článek ve stylu Novinek v CC (od 26. 10. 2026,
+// rozhodnutí Patricka; vzor writeWeeklyArticle). Obecný popis asistenta do článku
+// nepatří, je v pevné hlavičce stránky (ASSISTANTS[tool].about na webu).
 // Výsledek je PR do repa webu se souborem podle kontraktu docs/novinky-asistentu.md
 // (vibecoding-site); při automatickém vydávání se sám sloučí po úspěšném buildu
 // (fronta cc-news.en-merge s itemId `assistant-<tool>-<rok>-w<NN>`).
@@ -18,7 +21,7 @@ import {
   DEFAULT_REPO, fileOnDefaultBranch, openSitePullRequest, publicationDate, type GhFetch, type SitePr,
 } from "../cc-news/english";
 import { classifyModel, llmJson, openRouterLlm, writeModel, type LlmEnv, type LlmFn } from "../cc-news/llm";
-import { yamlQuote } from "../cc-news/weekly";
+import { czechDateRange, extractEditorNotes, inputMentions, versionViolations, yamlQuote } from "../cc-news/weekly";
 import { GROK_BOT_CHANGELOG_URL, toolReleasesKvKey, type AssistantRelease } from "./grok-bot";
 import { isAssistantTool, toolName, type ToolKey } from "./registry";
 
@@ -57,7 +60,7 @@ export const MAX_HIGHLIGHTS = 5;
 
 export type Section = "new" | "improved" | "fixed";
 const SECTIONS: Section[] = ["new", "improved", "fixed"];
-const SECTION_HEADINGS: Record<Section, string> = { new: "Nové", improved: "Vylepšené", fixed: "Opravené" };
+const SECTION_LABELS: Record<Section, string> = { new: "nové", improved: "vylepšené", fixed: "opravené" };
 /** Typ položky changelogu → oddíl zápisu; Other (oddíl na stránce nešel určit) rozhodne model. */
 const SECTION_OF_TYPE: Record<string, Section | undefined> = { Added: "new", Improved: "improved", Fixed: "fixed" };
 
@@ -77,6 +80,8 @@ export interface AssistantNote {
   counts: Record<Section, number>;
   /** Rozsah skutečných verzí týdne (bez syntetických verzí bloků bez čísla), např. 0.75.0–0.75.5. */
   versions: string | null;
+  /** Redakční článek z ověřených bodů: nadpis za dvojtečkou a markdown bez h1, začíná perexem. */
+  article: { title: string; body: string };
   review: {
     /** Body vyřazené kontrolou faktů. */
     dropped: { text: string; problem: string }[];
@@ -86,6 +91,12 @@ export interface AssistantNote {
     uncovered: string[];
     /** Neznámé oblasti od modelu (zahozené). */
     badAreas: string[];
+    /** Verze v článku, které v týdnu nejsou. */
+    versionIssues: string[];
+    /** Poznámky editoru a zmínky o vstupu modelu vyňaté z článku. */
+    editorNotes: string[];
+    /** Odstraněné odkazy (článek smí odkazovat jen na changelog). */
+    strippedLinks: string[];
   };
 }
 
@@ -118,6 +129,8 @@ export const assistantShaKvKey = (tool: ToolKey, w: Week) => `tools:assistant-sh
 /** Týden je vyřízený (PR otevřen, prázdný týden, už vydaný): cron ho znovu nezařadí. */
 export const assistantDoneKvKey = (tool: ToolKey, w: Week) => `tools:assistant-week:${tool}:${assistantWeekLabel(w)}`;
 const MD_TTL_SEC = 60 * 24 * 60 * 60;
+/** Verze formátu uloženého markdownu: starší (seznam bodů místo článku) se napíše znovu. */
+const MD_FORMAT = 2;
 
 // ─── Psaní ────────────────────────────────────────────────────────
 
@@ -176,6 +189,59 @@ const MISSING_SYSTEM_CS = (areas: AssistantArea[]) => [
   'Vrať JSON {"items": [{"section", "text", "sources": ["<ID>"], "area"}]}. Uvnitř textů žádné dvojité uvozovky.',
 ].join("\n");
 
+/**
+ * Redakční pravidla ze skillu „Technický článek“ jako WRITER_SYSTEM Novinek v CC
+ * (weekly.ts), upravená pro asistenta podle schváleného prototypu (Grok Bot, týden 42).
+ */
+export const ARTICLE_SYSTEM_CS = (name: string) => [
+  `Jsi Patrick Zandl a píšeš pro vibecoding.cz týdenní článek o změnách osobního AI asistenta ${name}.`,
+  `Čtenář ${name} používá nebo zvažuje. Text má dočíst do konce, protože mu odpovídá na otázku, kterou má,`,
+  "a protože za ním slyší člověka s názorem.",
+  "",
+  "VSTUP: ověřené české body týdne po oddílech (nové, vylepšené, opravené) a oblastech, u každého",
+  "anglická položka changelogu, ze které vychází. Fakta ber VÝHRADNĚ z bodů a jejich položek.",
+  "Nic nedomýšlej: žádná čísla, ceny, limity, tarify, data, verze ani názvy funkcí, které tam nejsou.",
+  "",
+  "STRUKTURA (v tomto pořadí):",
+  "- PEREX: jeden odstavec kurzívou. Otevírá problémem nebo napětím, které týden řeší, a shrnuje",
+  "  nejdůležitější témata. Zpravodajské zdůvodnění (období, verze, počet položek) patří do druhého odstavce.",
+  `- NEPIŠ obecné představení nástroje (co je ${name}, kdo ho vyvíjí, co umí obecně). To má stránka v pevné`,
+  "  hlavičce. Článek začíná rovnou tím, co přinesl týden.",
+  "- Sekce oddělené řádkem `---`, nadpisy `## ` mířené na čtenáře (ne absolutní tvrzení). Sekce skládej",
+  "  podle témat týdne, ne podle oddílů changelogu. Nejdůležitější téma první a nejobšírněji.",
+  "- Každý odstavec s jednou tezí začíná tučným lead-inem (**Takto.**). Odrážky jen pro výčet podmínek.",
+  "- U nové funkce napiš, co to je a k čemu se hodí. Štítek [Teams] nebo [Enterprise] znamená, že změna",
+  "  platí jen pro týmy nebo firemní tarif: v textu to řekni (klidně vlastní sekce pro správce).",
+  "- Drobné opravy nevypisuj jednotlivě: shrň je do jednoho odstavce v sekci s drobnostmi.",
+  "- Poslední sekce „Co si z toho odnést“: co má běžný uživatel vyzkoušet a na co si dát pozor,",
+  "  případně co má zkontrolovat správce týmu.",
+  "- Poznámku o zdrojích NEPIŠ, doplní ji redakce.",
+  "- Délka podle týdne: zhruba 400 slov u malého týdne, nejvýš 1500 slov u velkého.",
+  "",
+  "HLAS:",
+  "- Vykej čtenáři. Názor v první osobě je vítaný tam, kde ho nesou fakta z bodů (praktický dopad,",
+  "  riziko, co bych zkusil nejdřív). Žádné spekulace o motivech firmy.",
+  "- NIKDY si nevymýšlej osobní zkušenosti, zážitky ani zvyky autora („včera jsem zkoušel…“, „mně Bot…“).",
+  "- Přiznej nejistotu („zjednodušeně řečeno“, „možná“), skepsi dej do závorky, suchý humor ano,",
+  "  ironie na účet čtenáře nikdy. Marketingové superlativy (revoluční, průlomový, game changer) zakázané.",
+  "- Věty začínej podmětem a přísudkem; střídej krátké a dlouhé, nikdy tři dlouhé za sebou.",
+  "",
+  "JAZYK:",
+  "- Spisovná, ale konverzační čeština. Anglicismy nahraď českými ekvivalenty, kde existují; zavedené IT",
+  "  termíny ponech. Názvy funkcí, nastavení a tlačítek (Vault, Auto-review, Team Bot, Secure Form) ponech",
+  "  v původním znění a při prvním použití je vysvětli.",
+  "- Pomlčka uvnitř věty je krátká s mezerami ( - ). NIKDY em dash (—).",
+  "- Zakázaný negativní paralelismus („není to A, je to B“, „nejde o A, jde o B“, „ne A, ale B“): řekni rovnou B.",
+  "- Bez klišé: „V dnešní době“, „Je důležité zdůraznit“, „Klíčovou roli hraje“, „Závěrem lze konstatovat“,",
+  "  řetězení „Nicméně / Kromě toho / V neposlední řadě“, pravidlo tří, „představuje“ místo „je“.",
+  "- Verze uváděj jen ty, které jsou ve vstupu. Žádné odkazy, odkaz na changelog doplní redakce.",
+  "- Čtenář vstup nevidí: nikdy nepiš o „vstupu“, „bodech“, „podkladech“ ani o tom, co v nich chybí.",
+  "",
+  'VÝSTUP: JSON {"title": "<nadpis za dvojtečkou: výstižný, 3–9 slov, bez názvu nástroje a čísla týdne>",',
+  ' "body": "<markdown článku BEZ nadpisu, začíná perexem kurzívou>"}.',
+  "Uvnitř textových hodnot nepoužívej dvojité uvozovky; v češtině piš „ “.",
+].join("\n");
+
 interface RawClaim { text?: unknown; sources?: unknown }
 interface RawItem extends RawClaim { section?: unknown; area?: unknown }
 interface RawNote { headline?: unknown; summary?: unknown; highlights?: unknown; main?: unknown; items?: unknown }
@@ -213,6 +279,94 @@ export function versionRange(rows: Pick<Row, "version">[], releases: AssistantRe
   const sorted = [...vs].sort(compareVersions);
   if (sorted.length === 0) return null;
   return sorted.length === 1 ? sorted[0]! : `${sorted[0]}–${sorted[sorted.length - 1]}`;
+}
+
+/** Verze týdne, které smí článek zmínit (skutečné verze a jejich „Also includes“). */
+function weekVersions(rows: Pick<Row, "version">[], releases: AssistantRelease[]): Set<string> {
+  const meta = new Map(releases.map((r) => [r.version, r]));
+  return new Set([...new Set(rows.map((r) => r.version))].flatMap((v) => [v, ...(meta.get(v)?.alsoIncludes ?? [])]));
+}
+
+/** Markdownové odkazy mimo povolené adresy převede na prostý text. */
+export function keepOnlyLinks(md: string, allowed: Set<string>): { markdown: string; stripped: string[] } {
+  const stripped: string[] = [];
+  const markdown = md.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (m, text: string, url: string) => {
+    if (allowed.has(url.replace(/\/$/, ""))) return m;
+    stripped.push(url);
+    return text;
+  });
+  return { markdown, stripped };
+}
+
+type Fact = NoteBullet & { section: Section };
+
+/** Vstup pro článek: týden, ověřené body po oddílech a oblastech s anglickou položkou. */
+export function articleUserMessage(
+  tool: ToolKey, week: Week, rows: Row[], releases: AssistantRelease[],
+  facts: { summary: string; main: string; highlights: string[]; items: Fact[]; counts: Record<Section, number> },
+): string {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const areaLabel = new Map((ASSISTANT_AREAS[tool] ?? []).map((a) => [a.key, a.label]));
+  const { start, end } = isoWeekBounds(week.year, week.week);
+  const versions = versionRange(rows, releases);
+  return [
+    `NÁSTROJ: ${toolName(tool)}, týden ${week.week}/${week.year} (${czechDateRange(start, end)})` +
+      `${versions ? `, verze ${versions}` : ""}; položek changelogu ${rows.length}` +
+      ` (nové ${facts.counts.new}, vylepšené ${facts.counts.improved}, opravené ${facts.counts.fixed}).`,
+    "",
+    `SHRNUTÍ: ${facts.summary}`,
+    `HLAVNÍ ZMĚNA: ${facts.main}`,
+    "NEJDŮLEŽITĚJŠÍ:",
+    ...facts.highlights.map((h) => `- ${h}`),
+    "",
+    ...SECTIONS.flatMap((sec) => {
+      const its = facts.items.filter((i) => i.section === sec);
+      return its.length ? [
+        `BODY – ${SECTION_LABELS[sec]}:`,
+        ...its.flatMap((i) => [
+          `- [${i.area ? areaLabel.get(i.area) ?? i.area : "bez oblasti"}] ${i.text}`,
+          ...i.sources.map((id) => `    EN: ${line(byId.get(id)!)}`),
+        ]),
+        "",
+      ] : [];
+    }),
+  ].join("\n").trim();
+}
+
+/**
+ * Napíše redakční článek z ověřených bodů (jeden opakovaný pokus) a projde ho
+ * kontrolami v kódu jako writeWeeklyArticle: poznámky editoru a zmínky o vstupu
+ * do revize, em dash pryč, odkazy jen na changelog, verze jen z týdne.
+ */
+export async function writeAssistantArticle(
+  llm: LlmFn, tool: ToolKey, week: Week, rows: Row[], releases: AssistantRelease[],
+  facts: Parameters<typeof articleUserMessage>[4],
+): Promise<{ title: string; body: string; versionIssues: string[]; editorNotes: string[]; strippedLinks: string[] }> {
+  type Written = { title?: unknown; body?: unknown };
+  const valid = (w: Written) => tidy(str(w.title)).length > 0 && str(w.body).trim().length > 200;
+  const user = articleUserMessage(tool, week, rows, releases, facts);
+  // Bez záchrany useknutého JSON: neúplný článek se má napsat znovu.
+  let written = await llmJson<Written>(llm, ARTICLE_SYSTEM_CS(toolName(tool)), user, 12000);
+  if (!valid(written)) {
+    written = await llmJson<Written>(llm, ARTICLE_SYSTEM_CS(toolName(tool)),
+      `${user}\n\nPŘEDCHOZÍ ODPOVĚĎ BYLA NEÚPLNÁ. Vrať JSON se všemi poli: title, body (celý článek).`, 12000, 1);
+  }
+  if (!valid(written)) throw new Error(`assistant-cs ${tool} ${assistantWeekLabel(week)}: model nevrátil úplný článek`);
+
+  const name = toolName(tool);
+  const title = tidy(str(written.title)).replace(new RegExp(`^${name}[,:]?\\s*`, "i"), "").replace(/[.\s]+$/, "");
+  // Na tělo ne tidy(): sloučilo by řádky markdownu. Nadpis h1 má stránka sama.
+  const extracted = extractEditorNotes(str(written.body).trim());
+  const noH1 = extracted.markdown.replace(/^#\s+[^\n]*\n+/, "").replace(/[ \t]*—[ \t]*/g, " - ").trim();
+  const links = keepOnlyLinks(noH1, new Set([ASSISTANT_SOURCE_URL[tool] ?? ""].filter(Boolean)));
+  const allowed = weekVersions(rows, releases);
+  return {
+    title,
+    body: links.markdown,
+    versionIssues: versionViolations(`${title}\n${links.markdown}`, allowed),
+    editorNotes: [...extracted.notes, ...inputMentions(links.markdown).map((x) => `⚠️ zmínka o vstupu modelu: ${x.slice(0, 200)}`)],
+    strippedLinks: links.stripped,
+  };
 }
 
 /**
@@ -351,11 +505,19 @@ export async function writeAssistantNote(
 
   const name = toolName(tool);
   const headline = tidy(str(raw.headline)).replace(new RegExp(`^${name}[,:]?\\s*`, "i"), "").replace(/[.\s]+$/, "");
+
+  // 5) Redakční článek z ověřených bodů.
+  const article = await writeAssistantArticle(llms.write, tool, week, rows, releases,
+    { summary: summary.text, main: main.text, highlights: highlights.map((h) => h.text), items, counts });
   return {
     v: 1, tool, week, builtAt: now.toISOString(),
     headline, summary: summary.text, highlights: highlights.map((h) => h.text), main: main.text,
     sections, areas: usedAreas, counts, versions: versionRange(rows, releases),
-    review: { dropped, fixed: fixedCount, uncovered, badAreas: [...new Set(badAreas)] },
+    article: { title: article.title, body: article.body },
+    review: {
+      dropped, fixed: fixedCount, uncovered, badAreas: [...new Set(badAreas)],
+      versionIssues: article.versionIssues, editorNotes: article.editorNotes, strippedLinks: article.strippedLinks,
+    },
   };
 }
 
@@ -368,24 +530,31 @@ export function validateAssistantNote(note: AssistantNote): void {
   if (bad.length) throw new Error(`assistant-cs: neznámé oblasti ${bad.join(", ")}`);
   if (note.highlights.length < 1 || note.highlights.length > MAX_HIGHLIGHTS) throw new Error(`assistant-cs: highlights musí mít 1–${MAX_HIGHLIGHTS} bodů`);
   if (!note.headline || !note.summary || !note.main) throw new Error("assistant-cs: chybí headline, summary nebo hlavní změna");
+  if (!note.article.title || note.article.body.trim().length <= 200) throw new Error("assistant-cs: chybí článek (title, body)");
+  if (/^#\s/m.test(note.article.body)) throw new Error("assistant-cs: článek nesmí mít nadpis h1, ten dává stránka");
   if (!ASSISTANT_SOURCE_URL[note.tool]) throw new Error(`assistant-cs: nástroj ${note.tool} nemá source_url`);
 }
 
-/** Markdown souboru s frontmatterem podle kontraktu. Prázdný oddíl se vynechá. */
+/** Poznámka o zdrojích na konec článku (verze a období z dat, ne od modelu). */
+export function articleSourceNote(note: Pick<AssistantNote, "tool" | "week" | "versions">): string {
+  const { start, end } = isoWeekBounds(note.week.year, note.week.week);
+  const v = note.versions ? `, verze ${note.versions}` : "";
+  return `*Zdroj: [changelog ${toolName(note.tool)}](${ASSISTANT_SOURCE_URL[note.tool]})${v} (týden ${czechDateRange(start, end)}). ` +
+    "Funkce a limity platí k tomuto vydání a mohou se měnit z týdne na týden.*";
+}
+
+/**
+ * Markdown souboru s frontmatterem podle kontraktu, tělo = redakční článek.
+ * summary a highlights (rubrika, popis stránky) zůstávají z ověřených bodů.
+ */
 export function assistantNoteMarkdown(note: AssistantNote, date: Date = publicationDate(note)): string {
   validateAssistantNote(note);
   const w = note.week;
   const yamlList = (key: string, xs: string[]) => (xs.length ? [`${key}:`, ...xs.map((x) => `  - ${x}`)] : []);
-  // Texty jsou na jeden řádek a bez em dashe i v těle (yamlQuote to řeší jen ve frontmatteru).
-  const body = [
-    "## Hlavní změna týdne", "", tidy(note.main), "",
-    ...SECTIONS.flatMap((s) => (note.sections[s].length
-      ? [`## ${SECTION_HEADINGS[s]}`, "", ...note.sections[s].map((b) => `- ${tidy(b.text)}`), ""]
-      : [])),
-  ];
+  const body = [note.article.body.trim(), "", articleSourceNote(note), ""];
   return [
     "---",
-    `title: ${yamlQuote(`${toolName(note.tool)} v týdnu ${w.week}: ${note.headline}`)}`,
+    `title: ${yamlQuote(`${toolName(note.tool)} v týdnu ${w.week}: ${note.article.title || note.headline}`)}`,
     `date: ${date.toISOString().slice(0, 10)}`,
     `tool: ${note.tool}`,
     `week: ${w.year}-W${pad(w.week)}`,
@@ -460,8 +629,9 @@ export async function publishAssistantWeek(
   const repo = env.VIBECODING_SITE_REPO || DEFAULT_REPO;
   if (token && !opts.force && (await fileOnDefaultBranch(token, repo, path, opts.fetch))) return { kind: "already-published", path };
 
-  type Cached = { markdown: string; review: AssistantNote["review"] };
+  type Cached = { format?: number; markdown: string; review: AssistantNote["review"] };
   let cached = opts.force ? null : await env.KV.get<Cached>(assistantMdKvKey(tool, week), "json");
+  if (cached?.format !== MD_FORMAT) cached = null;
   if (!cached) {
     const rows = await assistantWeekRows(db, tool, week);
     if (rows.length === 0) return { kind: "empty" };
@@ -469,7 +639,7 @@ export async function publishAssistantWeek(
     const llms = opts.llms ?? { write: openRouterLlm(env, writeModel(env)), verify: openRouterLlm(env, classifyModel(env)) };
     const note = await writeAssistantNote(tool, week, rows, releases, llms, opts.now ?? new Date());
     if (!note) return { kind: "empty" };
-    cached = { markdown: assistantNoteMarkdown(note), review: note.review };
+    cached = { format: MD_FORMAT, markdown: assistantNoteMarkdown(note), review: note.review };
     await env.KV.put(assistantMdKvKey(tool, week), JSON.stringify(cached), { expirationTtl: MD_TTL_SEC });
   }
   if (!token) return { kind: "no-token", markdown: cached.markdown, path, review: cached.review };
@@ -483,14 +653,18 @@ export async function publishAssistantWeek(
       branch: `novinky/${tool}-${assistantWeekLabel(week)}`,
       title: `Novinky ${name} ${label}`,
       body: [
-        `Český týdenní zápis změn ${name} za ${label} (\`${path}\`), napsaný z oficiálního changelogu (${ASSISTANT_SOURCE_URL[tool]}).`,
+        `Český týdenní článek o změnách ${name} za ${label} (\`${path}\`), napsaný z oficiálního changelogu (${ASSISTANT_SOURCE_URL[tool]}).`,
         "",
         "Kontroly v kódu:",
-        ...(r.uncovered.length ? [`- ⚠️ položky changelogu bez bodu v zápisu: ${r.uncovered.join(", ")}`] : []),
+        ...(r.uncovered.length ? [`- ⚠️ položky changelogu bez ověřeného bodu (článek o nich neví): ${r.uncovered.join(", ")}`] : []),
         ...(r.dropped.length ? [`- ⚠️ vyřazeno kontrolou faktů: ${r.dropped.map((d) => `${d.text} (${d.problem})`).join(" / ")}`] : []),
         ...(r.fixed ? [`- opraveno po kontrole faktů: ${r.fixed}`] : []),
         ...(r.badAreas.length ? [`- zahozené neznámé oblasti: ${r.badAreas.join(", ")}`] : []),
-        ...(!r.uncovered.length && !r.dropped.length && !r.fixed && !r.badAreas.length ? ["- bez nálezů (pokrytí, fakta, oblasti)"] : []),
+        ...(r.versionIssues.length ? [`- ⚠️ verze v článku, které v týdnu nejsou: ${r.versionIssues.join(", ")}`] : []),
+        ...(r.editorNotes.length ? [`- ⚠️ poznámky vyňaté z článku: ${r.editorNotes.join(" / ")}`] : []),
+        ...(r.strippedLinks.length ? [`- odstraněné odkazy: ${r.strippedLinks.join(", ")}`] : []),
+        ...(!r.uncovered.length && !r.dropped.length && !r.fixed && !r.badAreas.length && !r.versionIssues.length && !r.editorNotes.length
+          ? ["- bez nálezů (pokrytí, fakta, oblasti, verze)"] : []),
         "",
         "Vydání = sloučení tohoto PR.",
         "",

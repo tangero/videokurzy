@@ -5,7 +5,7 @@ import { ccChangeItem } from "../../src/db/schema";
 import type { LlmFn } from "../../src/lib/cc-news/llm";
 import {
   ASSISTANT_AREAS, assistantBackfillWeeks, assistantMdKvKey, assistantMergeId, assistantNoteMarkdown, assistantNotePath,
-  assistantNoteUrl, parseAssistantMergeId, publishAssistantWeek, versionRange, writeAssistantNote, type AssistantNote,
+  assistantNoteUrl, keepOnlyLinks, parseAssistantMergeId, publishAssistantWeek, versionRange, writeAssistantNote, type AssistantNote,
 } from "../../src/lib/tools/assistant-cs";
 import { toolReleasesKvKey, type AssistantRelease } from "../../src/lib/tools/grok-bot";
 
@@ -30,10 +30,34 @@ const RELEASES: AssistantRelease[] = [
 ];
 const [P, V, T, F, O] = ROWS.map((r) => r.id) as [string, string, string, string, string];
 
+const PEREX = "*Kam si má asistent schovat hesla, když je potřebuje každý den? Tento týden přinesl Vault a sdílené stránky.*";
+/** Článek od modelu se vším, co mají kontroly v kódu uklidit. */
+const ARTICLE_BODY = [
+  "# Grok Bot v týdnu 43: Vault",
+  "",
+  PEREX,
+  "",
+  "Týden přinesl verze 0.75.2 a 0.75.5 — a jednu, která neexistuje: 9.9.9.",
+  "",
+  "---",
+  "",
+  "## Hesla na jednom místě",
+  "",
+  "**Vault ukládá přihlášení.** Podrobnosti v [changelogu](https://x.ai/changelog/bot) a na [blogu](https://example.com/blog).",
+  "<!-- ověřit tarif -->",
+].join("\n");
+
 /** Podvržený autor: Teams položku dá do špatného oddílu, Other vynechá, jednu oblast vymyslí. */
-function fakeLlms(opts: { failClaim?: string; fixText?: string | null; truncateWrite?: boolean } = {}) {
+function fakeLlms(opts: { failClaim?: string; fixText?: string | null; truncateWrite?: boolean; articleShort?: number } = {}) {
   const calls: { kind: string; user: string }[] = [];
+  let articles = 0;
   const write: LlmFn = async (system, user) => {
+    if (system.startsWith("Jsi Patrick Zandl a píšeš pro vibecoding.cz")) {
+      calls.push({ kind: "article", user });
+      // Prvních `articleShort` odpovědí je neúplných (bez těla).
+      if (articles++ < (opts.articleShort ?? 0)) return JSON.stringify({ title: "Vault" });
+      return JSON.stringify({ title: "Grok Bot: Hesla konečně v trezoru.", body: ARTICLE_BODY });
+    }
     if (system.startsWith("Píšeš český týdenní zápis")) {
       calls.push({ kind: "write", user });
       const out = JSON.stringify({
@@ -80,7 +104,8 @@ function note(over: Partial<AssistantNote> = {}): AssistantNote {
     headline: "Vault a Pages", summary: "Shrnutí týdne.", highlights: ["Vault."], main: "Hlavní změna — Vault.",
     sections: { new: [{ text: "Vault.", sources: [V], area: "ucet" }], improved: [], fixed: [{ text: "Oprava.", sources: [F], area: null }] },
     areas: ["ucet"], counts: { new: 1, improved: 0, fixed: 1 }, versions: "0.75.0–0.75.5",
-    review: { dropped: [], fixed: 0, uncovered: [], badAreas: [] },
+    article: { title: "Hesla v trezoru", body: `${PEREX}\n\n---\n\n## Hesla na jednom místě\n\n**Vault ukládá přihlášení.** ${"Text. ".repeat(40).trim()}` },
+    review: { dropped: [], fixed: 0, uncovered: [], badAreas: [], versionIssues: [], editorNotes: [], strippedLinks: [] },
     ...over,
   };
 }
@@ -99,8 +124,8 @@ describe("writeAssistantNote", () => {
     expect(n.counts).toEqual({ new: 2, improved: 2, fixed: 1 });
     expect(n.areas.every((a) => ASSISTANT_AREAS["grok-bot"]!.some((x) => x.key === a))).toBe(true);
     expect(n.versions).toBe("0.75.0–0.75.5");
-    expect(n.review).toEqual({ dropped: [], fixed: 1, uncovered: [], badAreas: ["neznama"] });
-    expect(calls.map((c) => c.kind)).toEqual(["write", "missing", "verify", "fix", "verify"]);
+    expect(n.review).toMatchObject({ dropped: [], fixed: 1, uncovered: [], badAreas: ["neznama"] });
+    expect(calls.map((c) => c.kind)).toEqual(["write", "missing", "verify", "fix", "verify", "article"]);
     // Vstup modelu nese štítek Teams a názvy vydání.
     expect(calls[0]!.user).toContain(`${T} | Improved [Teams] |`);
     expect(calls[0]!.user).toContain("VYDÁNÍ 0.75.5, 2026-10-23: Vault (zahrnuje i 0.75.3, 0.75.4)");
@@ -131,6 +156,38 @@ describe("writeAssistantNote", () => {
     expect(await writeAssistantNote("grok-bot", W43, [], RELEASES, fakeLlms().llms, at("2026-10-27"))).toBeNull();
   });
 
+  it("článek píše z ověřených bodů a kontroly v kódu ho uklidí", async () => {
+    const { llms, calls } = fakeLlms({ failClaim: "Po resetu", fixText: "Po resetu chatu vše funguje." });
+    const n = (await writeAssistantNote("grok-bot", W43, ROWS, RELEASES, llms, at("2026-10-27")))!;
+    const input = calls.find((c) => c.kind === "article")!.user;
+    // Vyřazený bod se do článku nedostane; ostatní jdou s oblastí a anglickou položkou.
+    expect(input).not.toContain("Po resetu chatu přicházejí");
+    expect(input).toContain("- [Účet, nastavení a Vault] Vault v nastavení ukládá přihlášení.");
+    expect(input).toContain(`    EN: ${V} | Added | Bots can save your logins to a Vault in Settings.`);
+    expect(input).toContain("verze 0.75.0–0.75.5; položek changelogu 5");
+    expect(n.article.title).toBe("Hesla konečně v trezoru");
+    expect(n.article.body.startsWith(PEREX)).toBe(true);
+    expect(n.article.body).not.toMatch(/^# /m);
+    expect(n.article.body).not.toContain("—");
+    expect(n.article.body).toContain("[changelogu](https://x.ai/changelog/bot)");
+    expect(n.article.body).toContain("na blogu.");
+    expect(n.article.body).not.toContain("<!--");
+    expect(n.review).toMatchObject({ versionIssues: ["9.9.9"], editorNotes: ["ověřit tarif"], strippedLinks: ["https://example.com/blog"] });
+  });
+
+  it("neúplný článek zkusí napsat znovu, napodruhé neúplný je chyba", async () => {
+    const once = fakeLlms({ articleShort: 1 });
+    expect((await writeAssistantNote("grok-bot", W43, ROWS, RELEASES, once.llms, at("2026-10-27")))!.article.title).toBe("Hesla konečně v trezoru");
+    expect(once.calls.filter((c) => c.kind === "article")).toHaveLength(2);
+    await expect(writeAssistantNote("grok-bot", W43, ROWS, RELEASES, fakeLlms({ articleShort: 2 }).llms, at("2026-10-27")))
+      .rejects.toThrow(/nevrátil úplný článek/);
+  });
+
+  it("odkazy: povolená adresa zůstane i s lomítkem na konci, ostatní jen jako text", () => {
+    expect(keepOnlyLinks("[a](https://x.ai/changelog/bot/) [b](https://x.ai/other)", new Set(["https://x.ai/changelog/bot"])))
+      .toEqual({ markdown: "[a](https://x.ai/changelog/bot/) b", stripped: ["https://x.ai/other"] });
+  });
+
   it("rozsah verzí: Also includes ano, syntetické verze bloků bez čísla ne", () => {
     expect(versionRange(ROWS, RELEASES)).toBe("0.75.0–0.75.5");
     expect(versionRange([{ version: "0.55.0.3" }], [{ version: "0.55.0.3", synthetic: true, date: "", title: null, alsoIncludes: [], items: 1 }])).toBeNull();
@@ -139,12 +196,13 @@ describe("writeAssistantNote", () => {
 });
 
 describe("assistantNoteMarkdown (kontrakt docs/novinky-asistentu.md webu)", () => {
-  it("frontmatter, týden velkým W v souboru malým w, datum = pondělí po týdnu, prázdný oddíl vynechán", () => {
-    const md = assistantNoteMarkdown(note());
+  it("frontmatter z ověřených bodů, tělo = článek s poznámkou o zdrojích, týden velkým W v souboru malým w", () => {
+    const n = note();
+    const md = assistantNoteMarkdown(n);
     expect(assistantNotePath("grok-bot", W43)).toBe("src/content/novinky/grok-bot/2026-w43.md");
     expect(md).toBe([
       "---",
-      'title: "Grok Bot v týdnu 43: Vault a Pages"',
+      'title: "Grok Bot v týdnu 43: Hesla v trezoru"',
       "date: 2026-10-26",
       "tool: grok-bot",
       "week: 2026-W43",
@@ -161,19 +219,17 @@ describe("assistantNoteMarkdown (kontrakt docs/novinky-asistentu.md webu)", () =
       "source_url: https://x.ai/changelog/bot",
       "---",
       "",
-      "## Hlavní změna týdne",
+      n.article.body,
       "",
-      "Hlavní změna - Vault.",
-      "",
-      "## Nové",
-      "",
-      "- Vault.",
-      "",
-      "## Opravené",
-      "",
-      "- Oprava.",
+      "*Zdroj: [changelog Grok Bot](https://x.ai/changelog/bot), verze 0.75.0–0.75.5 (týden 19.–25. října 2026). " +
+        "Funkce a limity platí k tomuto vydání a mohou se měnit z týdne na týden.*",
       "",
     ].join("\n"));
+  });
+
+  it("bez článku nebo s nadpisem h1 v článku se soubor nezapíše", () => {
+    expect(() => assistantNoteMarkdown(note({ article: { title: "X", body: "krátké" } }))).toThrow(/chybí článek/);
+    expect(() => assistantNoteMarkdown(note({ article: { title: "X", body: `# Nadpis\n\n${"Text. ".repeat(50)}` } }))).toThrow(/h1/);
   });
 
   it("neplatné oblasti nebo počet highlights se do souboru nedostanou", () => {
@@ -249,6 +305,15 @@ describe("publishAssistantWeek", () => {
     const pr = gh.calls.find((c) => c.method === "POST" && c.path === "/pulls")!;
     expect(pr.body.title).toBe("Novinky Grok Bot 2026-W43");
     expect(pr.body.body).toContain("🤖 Generated by videokurzy");
+  });
+
+  it("uložený zápis starého formátu (seznam bodů) se napíše znovu jako článek", async () => {
+    await seed();
+    await env.KV.put(assistantMdKvKey("grok-bot", W43), JSON.stringify({ markdown: "## Hlavní změna týdne", review: {} }));
+    const { llms, calls } = fakeLlms();
+    const dry = await publishAssistantWeek(db(), { KV: env.KV }, "grok-bot", W43, { llms, dryRun: true });
+    expect(dry.kind === "no-token" && dry.markdown).toContain(PEREX);
+    expect(calls.some((c) => c.kind === "article")).toBe(true);
   });
 
   it("zápis, který už je na webu, se bez force nepřepisuje", async () => {

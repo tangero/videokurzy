@@ -21,7 +21,12 @@ uživatelům.
 > `tools.assistant-week`). Model píše body s citacemi ID položek; kód hlídá citace, oddíl podle typu
 > položky, pokrytí všech položek a povolené oblasti (`ASSISTANT_AREAS`, musí sedět s
 > `ASSISTANTS[<tool>].areas` webu), model ověří fakta (jedna opravná iterace, neověřený bod vypadne a je
-> vidět v PR). Cron zařadí uzavřený týden od úterka 03:00 UTC (pokryje nedělní vydání v americkém čase),
+> vidět v PR). Z ověřených bodů pak model napíše redakční článek ve stylu Novinek v CC (`ARTICLE_SYSTEM_CS`,
+> od 26. 10. 2026 tělo souboru místo seznamu bodů); kód z něj odstraní h1, em dash, poznámky editoru a odkazy
+> mimo changelog, chybné verze hlásí v PR a poznámku o zdrojích doplní sám. Obecný popis asistenta do článku
+> nepatří, je v pevné hlavičce stránky (`ASSISTANTS[<tool>].about` webu). `summary` a `highlights`
+> ve frontmatteru zůstávají z ověřených bodů. Starý formát uložený v KV se napíše znovu (`MD_FORMAT`);
+> vydaný zápis přepíše jen PR s `force` (zaškrtávátko v adminu). Cron zařadí uzavřený týden od úterka 03:00 UTC (pokryje nedělní vydání v americkém čase),
 > týden bez položek nic nezapisuje. PR se při automatickém vydávání sloučí po buildu webu
 > (`cc-news.en-merge`, itemId `assistant-<tool>-<rok>-wNN`). Ručně: `/admin/tools/grok-bot` (synchronizace,
 > náhled nanečisto, PR, zpětné doplnění týdnů od verze 0.68.0).
