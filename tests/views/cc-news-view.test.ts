@@ -56,8 +56,8 @@ describe("CcNewsListPage — design serveru", () => {
   it("prázdný seznam ukáže hlášku, ne kartu", () => {
     const html = render(CcNewsListPage({ user: USER, items: [] }));
     expect(html).toContain("Zatím žádný publikovaný článek");
-    // Žádná karta článku; odkaz na vývoj témat (/novinky-cc/temata) je v hlavičce vždy.
-    expect(html).not.toMatch(/href="\/novinky-cc\/(?!temata|ekosystem")/);
+    // Žádná karta článku; odkazy lišty podsekcí jsou v hlavičce vždy.
+    expect(html).not.toMatch(/href="\/novinky-cc\/(?!temata"|ekosystem"|dohanani")/);
   });
 });
 
@@ -102,26 +102,27 @@ describe("CcNewsListPage — trendy, aktuální vydání a archiv", () => {
     { slug: "2026-w40-novinky", title: "Týden 40", excerpt: "Starší perex.", versionRange: null, publishedAt: Date.UTC(2026, 9, 5), topics: [], points: [] },
   ];
 
-  it("pořadí aktuální vydání → trendy → archiv → materiály", () => {
+  it("pořadí lišta podsekcí → dlaždice → aktuální vydání → archiv → materiály", () => {
     const html = render(CcNewsListPage({ user: USER, items, trends }));
     const at = (s: string) => html.indexOf(s);
-    expect(at("Kam teď míří vývoj")).toBeGreaterThan(-1);
-    expect(at("Aktuální vydání")).toBeLessThan(at("Kam teď míří vývoj"));
-    expect(at("Kam teď míří vývoj")).toBeLessThan(at("Starší vydání"));
+    expect(at('class="cc-subnav"')).toBeGreaterThan(-1);
+    expect(at('class="cc-subnav"')).toBeLessThan(at('class="cc-tiles"'));
+    expect(at('class="cc-tiles"')).toBeLessThan(at("Aktuální vydání"));
+    expect(at("Aktuální vydání")).toBeLessThan(at("Starší vydání"));
     expect(at("Starší vydání")).toBeLessThan(at("Materiály ke stažení"));
+    expect(html).toContain('<a href="/novinky-cc" aria-current="page">Vydání</a>');
   });
 
-  it("panel ukazuje rostoucí téma s podílem, větou a pruhy nové/opravy", () => {
+  it("dlaždice: rostoucí témata s posunem a mapa vývojářských nástrojů", () => {
     const html = render(CcNewsListPage({ user: USER, items, trends }));
-    expect(html).toContain("Rutiny v cloudu dostaly plánovač.");
-    expect(html).toContain("60,0 %");
-    expect(html).toContain("+50,0 b.");
-    expect(html).toContain('href="/novinky-cc/temata/cloud"');
-    expect(html).toContain("cc-bar-new");
-    expect(html).toContain("2 nových, 4 oprav");
-    // Téma bez změn v okně se v pruzích nezobrazí.
-    expect(html).not.toContain(">MCP<");
-    expect(html).toContain("jazykový model");
+    expect(html).toContain("Kam teď míří vývoj Claude Code");
+    expect(html).toContain("Roste: Cloud a vzdálené relace");
+    expect(html).toContain("+50,0 p. b.");
+    expect(html).toContain('href="/novinky-cc/temata"');
+    expect(html).toContain("Mapa vývojářských nástrojů");
+    expect(html).toContain('href="/novinky-cc/ekosystem"');
+    // Plný přehled témat je na stránce témat, ne tady.
+    expect(html).not.toContain("cc-bar");
   });
 
   it("aktuální vydání nese hlavní novinky a štítky témat; starší jsou v kompaktním archivu", () => {
@@ -132,9 +133,10 @@ describe("CcNewsListPage — trendy, aktuální vydání a archiv", () => {
     expect(html).toContain("cc-archive");
   });
 
-  it("bez trendů se panel nevykreslí", () => {
+  it("bez trendů zůstanou dlaždice s obecným textem", () => {
     const html = render(CcNewsListPage({ user: USER, items, trends: null }));
-    expect(html).not.toContain("Kam teď míří vývoj");
+    expect(html).toContain("Témata změn v changelogu za poslední 4 týdny");
+    expect(html).not.toContain("Roste:");
     expect(html).toContain("Aktuální vydání");
   });
 });

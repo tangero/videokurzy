@@ -100,11 +100,11 @@ const LockIcon = () => (
   </svg>
 );
 
-// Video na prodej samostatně: cenovka místo zámku.
-const TagIcon = () => (
+// Video na prodej samostatně: mince místo zámku nebo přehrávání.
+const CoinIcon = () => (
   <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z" />
-    <circle cx="8" cy="8" r="1.5" />
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="5" />
   </svg>
 );
 
@@ -231,6 +231,57 @@ export const LandingPage: FC<LandingProps> = ({
         </div>
       </section>
 
+      {/* Videa ke koupi samostatně */}
+      {lessonsForSale.length > 0 && (
+        <section class="section" id="videa">
+          <div class="section-header">
+            <div>
+              <div class="kicker">jednotlivá videa</div>
+              <h2>Záznamy, které si koupíte i&nbsp;bez předplatného.</h2>
+            </div>
+          </div>
+          <div class="sale-grid">
+            {lessonsForSale.map((l) => (
+              <article class="card sale-card">
+                <a href={`/watch/${l.slug}`} class="sale-thumb" aria-hidden="true" tabindex={-1}>
+                  {l.image && <img src={l.image} alt="" loading="lazy" />}
+                  {l.durationSeconds > 0 && <span class="sale-duration mono">{fmtTotalDuration(l.durationSeconds)}</span>}
+                </a>
+                <div class="sale-body">
+                  <h3><a href={`/watch/${l.slug}`}>{l.title}</a></h3>
+                  {l.description && <p class="sale-desc">{l.description}</p>}
+                  <dl class="sale-prices">
+                    <div class={canAccessAll ? "" : "is-current"}>
+                      <dt>bez předplatného</dt>
+                      <dd>
+                        <strong>{l.priceCzk.toLocaleString("cs-CZ")}&nbsp;Kč</strong>
+                        <span class="muted"> · přístup na {l.accessDays}&nbsp;dní</span>
+                      </dd>
+                    </div>
+                    <div class={canAccessAll ? "is-current" : ""}>
+                      <dt>předplatitelé</dt>
+                      <dd>v ceně předplatného</dd>
+                    </div>
+                  </dl>
+                  {canAccessAll ? (
+                    <a class="btn btn-block" href={`/watch/${l.slug}`}>přehrát (máte v předplatném)</a>
+                  ) : l.ownedUntil ? (
+                    <a class="btn btn-block" href={`/watch/${l.slug}`}>přehrát (koupeno, do {l.ownedUntil})</a>
+                  ) : (
+                    <div class="sale-actions">
+                      <a class="btn" href={`/checkout/lesson/${l.slug}`}>
+                        koupit za {l.priceCzk.toLocaleString("cs-CZ")}&nbsp;Kč
+                      </a>
+                      <a class="btn btn-ghost" href="#cenik">nebo předplatné</a>
+                    </div>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Obsah kurzu */}
       <section class="section" id="obsah">
         <div class="section-header">
@@ -266,7 +317,8 @@ export const LandingPage: FC<LandingProps> = ({
                 </div>
               </div>
               {m.lessons.map((l, li) => {
-                const sale = canAccessAll || l.isFree ? undefined : saleBySlug.get(l.slug);
+                // Prodávané video je označené pro všechny, předplatitelé ho mají v ceně.
+                const sale = l.isFree ? undefined : saleBySlug.get(l.slug);
                 const accessible = l.isFree || canAccessAll || !!sale?.ownedUntil;
                 // Video ke koupi vede na svou stránku s nabídkou koupě, ne na ceník.
                 const href = accessible || sale ? `/watch/${l.slug}` : "/#cenik";
@@ -275,13 +327,13 @@ export const LandingPage: FC<LandingProps> = ({
                     style="display:flex;align-items:center;gap:inherit;color:inherit">
                     <span class="lesson-num">{String(li + 1).padStart(2, "0")}</span>
                     <span class="lesson-icon">
-                      {accessible ? (
+                      {sale ? (
+                        <span style="color:var(--accent)">
+                          <CoinIcon />
+                        </span>
+                      ) : accessible ? (
                         <span style="color:var(--accent)">
                           <PlaySmIcon />
-                        </span>
-                      ) : sale ? (
-                        <span style="color:var(--accent)">
-                          <TagIcon />
                         </span>
                       ) : (
                         <span style="color:var(--muted)">
@@ -295,7 +347,7 @@ export const LandingPage: FC<LandingProps> = ({
                         <span class="lesson-sub">
                           {sale.ownedUntil
                             ? `koupeno samostatně, přístup do ${sale.ownedUntil}`
-                            : `koupíte i samostatně · ${sale.priceCzk.toLocaleString("cs-CZ")} Kč na ${sale.accessDays} dní`}
+                            : `${sale.priceCzk.toLocaleString("cs-CZ")} Kč (předplatitelé zdarma)`}
                         </span>
                       )}
                     </div>
@@ -439,57 +491,6 @@ export const LandingPage: FC<LandingProps> = ({
           </p>
         )}
       </section>
-
-      {/* Videa ke koupi samostatně */}
-      {lessonsForSale.length > 0 && (
-        <section class="section" id="videa">
-          <div class="section-header">
-            <div>
-              <div class="kicker">jednotlivá videa</div>
-              <h2>Záznamy, které si koupíte i&nbsp;bez předplatného.</h2>
-            </div>
-          </div>
-          <div class="sale-grid">
-            {lessonsForSale.map((l) => (
-              <article class="card sale-card">
-                <a href={`/watch/${l.slug}`} class="sale-thumb" aria-hidden="true" tabindex={-1}>
-                  {l.image && <img src={l.image} alt="" loading="lazy" />}
-                  {l.durationSeconds > 0 && <span class="sale-duration mono">{fmtTotalDuration(l.durationSeconds)}</span>}
-                </a>
-                <div class="sale-body">
-                  <h3><a href={`/watch/${l.slug}`}>{l.title}</a></h3>
-                  {l.description && <p class="sale-desc">{l.description}</p>}
-                  <dl class="sale-prices">
-                    <div class={canAccessAll ? "is-current" : ""}>
-                      <dt>předplatitelé</dt>
-                      <dd>v ceně předplatného</dd>
-                    </div>
-                    <div class={canAccessAll ? "" : "is-current"}>
-                      <dt>bez předplatného</dt>
-                      <dd>
-                        <strong>{l.priceCzk.toLocaleString("cs-CZ")}&nbsp;Kč</strong>
-                        <span class="muted"> · přístup na {l.accessDays}&nbsp;dní</span>
-                      </dd>
-                    </div>
-                  </dl>
-                  {canAccessAll ? (
-                    <a class="btn btn-block" href={`/watch/${l.slug}`}>přehrát (máte v předplatném)</a>
-                  ) : l.ownedUntil ? (
-                    <a class="btn btn-block" href={`/watch/${l.slug}`}>přehrát (koupeno, do {l.ownedUntil})</a>
-                  ) : (
-                    <div class="sale-actions">
-                      <a class="btn" href={`/checkout/lesson/${l.slug}`}>
-                        koupit za {l.priceCzk.toLocaleString("cs-CZ")}&nbsp;Kč
-                      </a>
-                      <a class="btn btn-ghost" href="#cenik">nebo předplatné</a>
-                    </div>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* Testimonials */}
       <section class="section" id="reference">

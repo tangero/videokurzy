@@ -8,6 +8,7 @@ import { joinCs } from "./cc-catchup";
 import type { ToolDates, ToolKey } from "../lib/tools/registry";
 import type { TopicsOverview } from "../lib/cc-news/topics-overview";
 import type { CcNewsListItem } from "./cc-news";
+import { CcSectionNav } from "./cc-section-nav";
 
 type LayoutUser = { name: string | null; email: string } | null;
 
@@ -212,7 +213,7 @@ const Matrix: FC<{ matrix: EcosystemMatrix; overview: TopicsOverview; uncertain:
   </section>
 );
 
-/** Mapa ekosystému: týden u všech sledovaných nástrojů, témata a dohánění. Gated (řeší routa). */
+/** Mapa vývojářských nástrojů: týden u všech sledovaných nástrojů, témata a dohánění. Gated (řeší routa). */
 export const CcEcosystemPage: FC<{
   user: LayoutUser;
   latest: CcNewsListItem | null;
@@ -230,10 +231,10 @@ export const CcEcosystemPage: FC<{
     }),
   );
   return (
-  <Layout title="Mapa ekosystému" user={user} noindex>
+  <Layout title="Mapa vývojářských nástrojů — Novinky v Claude Code" user={user} noindex>
     <section class="container-narrow tp eco" style="padding: 8px 0 40px">
-      <p class="eco-crumbs"><a href="/novinky-cc">Novinky v Claude Code</a> · Mapa ekosystému</p>
-      <h1>Mapa ekosystému</h1>
+      <CcSectionNav current="ekosystem" />
+      <h1>Mapa vývojářských nástrojů</h1>
       <p class="tp-note eco-lede">
         Co se za poslední týden změnilo v Claude Code a v dalších {cards.length} agentech pro programování,
         čemu se věnují a které funkce Claude Code přebírají. U ostatních nástrojů jde o krátký souhrn

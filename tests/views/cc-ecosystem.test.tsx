@@ -28,7 +28,8 @@ describe("CcEcosystemPage", () => {
         catchup: null,
       }),
     );
-    expect(html).toContain("Mapa ekosystému");
+    expect(html).toContain("<h1>Mapa vývojářských nástrojů</h1>");
+    expect(html).toContain('<a href="/novinky-cc/ekosystem" aria-current="page">');
     expect(html).toContain('href="/novinky-cc/2026-w42"');
     expect(html).toContain("<code>codex resume</code>");
     expect(html).toContain('id="grok-build"');

@@ -8,6 +8,7 @@ import { zmen } from "./cc-topic";
 const polozek = (n: number) => (n === 1 ? "položka" : n >= 2 && n <= 4 ? "položky" : "položek");
 import { CatchupBlock, joinCs } from "./cc-catchup";
 import type { Catchup } from "../lib/cc-news/catchup";
+import { CcSectionNav } from "./cc-section-nav";
 
 type LayoutUser = { name: string | null; email: string } | null;
 
@@ -165,9 +166,9 @@ export const CcTopicsPage: FC<{ user: LayoutUser; overview: TopicsOverview | nul
   const toIncl = o ? o.to - 86_400_000 : 0;
   const pp = TREND_THRESHOLD_PP.toLocaleString("cs-CZ");
   return (
-    <Layout title="Témata vývoje — Novinky v Claude Code" user={user} noindex>
+    <Layout title="Kam teď míří vývoj Claude Code — Novinky v Claude Code" user={user} noindex>
       <section class="container-narrow tp" style="padding: 8px 0 40px">
-        <p><a href="/novinky-cc">← Novinky v Claude Code</a></p>
+        <CcSectionNav current="temata" />
         <h1 class="tp-h1">Kam teď míří vývoj Claude Code</h1>
         {o ? (
           <>
