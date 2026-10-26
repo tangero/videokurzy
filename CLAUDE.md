@@ -133,6 +133,9 @@ návaznosti; stránky `/novinky-cc/temata`).
   Changelog `x.ai/changelog/bot` čteme přes Exa contents API (`EXA_API_KEY`), ochranu proti botům
   neobcházíme. Týdně český zápis do webu `/novinky/<tool>/` (`src/lib/tools/assistant-cs.ts`, fronta
   `tools.assistant-week`); oblasti v `ASSISTANT_AREAS` musí sedět s `ASSISTANTS` webu. Viz `docs/cc-news.md`.
+  Od 26. 10. 2026 (rozhodnutí Patricka) je zápis **redakční článek** ze skillu „Technický článek“ psaný z ověřených
+  bodů (`ARTICLE_SYSTEM_CS`), ne seznam bodů; takto vznikají všechny další. Popis nástroje do článku nepatří, je
+  v pevné hlavičce webu `ASSISTANTS[tool].about` s odkazem do rubriky.
 - **Mapa ekosystému `/novinky-cc/ekosystem`** (od 24. 10. 2026, rozhodnutí Patricka, zkušebně): všechny nástroje
   vedle sebe, ne už „jen srovnání na stránkách témat“. Karta týdne pro každý nástroj (Claude Code = poslední český
   článek, ostatní = krátký český souhrn 3–5 vět), mapa témat × nástroje za 4 týdny (`ToolFocus.shares`) a dohánění.
