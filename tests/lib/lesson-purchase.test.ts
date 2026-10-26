@@ -396,11 +396,17 @@ describe("titulní stránka — videa ke koupi", () => {
     expect(html).not.toContain("/checkout/lesson/jina-placena");
   });
 
+  it("sekce videí ke koupi je nad obsahem kurzu, rámeček bez předplatného první", async () => {
+    const html = await (await SELF.fetch("https://test.local/")).text();
+    expect(html.indexOf('id="videa"')).toBeLessThan(html.indexOf('id="obsah"'));
+    expect(html.indexOf("<dt>bez předplatného</dt>")).toBeLessThan(html.indexOf("<dt>předplatitelé</dt>"));
+  });
+
   it("v seznamu modulů vede prodávané video na jeho stránku, ne na ceník", async () => {
     const html = await (await SELF.fetch("https://test.local/")).text();
     const row = html.match(new RegExp(`<a href="([^"]*)" class="lesson[^"]*"[^>]*>(?:(?!</a>).)*?AI First Company webinář(?:(?!</a>).)*?</a>`, "s"));
     expect(row?.[1]).toBe(`/watch/${SLUG}`);
-    expect(row?.[0]).toContain("koupíte i samostatně");
+    expect(row?.[0]).toMatch(/490(&nbsp;| | )Kč \(předplatitelé zdarma\)/);
     expect(row?.[0]).not.toContain("locked");
   });
 });

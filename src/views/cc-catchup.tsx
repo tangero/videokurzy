@@ -1,6 +1,7 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { MONTH_DAYS, type Catchup, type CatchupPair, type ToolCatchup } from "../lib/cc-news/catchup";
+import { CcSectionNav } from "./cc-section-nav";
 
 type LayoutUser = { name: string | null; email: string } | null;
 
@@ -155,7 +156,7 @@ export const CcCatchupPage: FC<{ user: LayoutUser; catchup: Catchup | null }> = 
   return (
     <Layout title="Kdo koho dohání — Novinky v Claude Code" user={user} noindex>
       <section class="container-narrow tp" style="padding: 8px 0 40px">
-        <p><a href="/novinky-cc/temata">← Témata vývoje</a></p>
+        <CcSectionNav current="dohanani" />
         <h1 class="tp-h1">Kdo koho dohání</h1>
         <p class="tp-lede">
           Když se v jiném nástroji objeví jako nová funkce pojem, který Claude Code má už dřív, je to doložené

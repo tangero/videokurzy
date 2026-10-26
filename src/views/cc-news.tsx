@@ -1,7 +1,8 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { fmtDate } from "../lib/dates";
-import { TREND_THRESHOLD_PP, type TopicTrend, type TopicTrends } from "../lib/cc-news/trends";
+import type { TopicTrends } from "../lib/cc-news/trends";
+import { CcSectionNav } from "./cc-section-nav";
 import type { ToolWeekCard } from "../lib/cc-news/ecosystem";
 
 type LayoutUser = { name: string | null; email: string } | null;
@@ -45,9 +46,7 @@ const RESOURCES: Array<{ href: string; title: string; kind: string }> = [
 ];
 
 const fmtPct = (x: number) => `${x.toLocaleString("cs-CZ", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} %`;
-const fmtPp = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : "±"}${Math.abs(x).toLocaleString("cs-CZ", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} b.`;
-const ARROW: Record<TopicTrend["direction"], string> = { up: "↑", down: "↓", flat: "→" };
-const ARROW_LABEL: Record<TopicTrend["direction"], string> = { up: "roste", down: "klesá", flat: "beze změny" };
+const fmtPp = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : "±"}${Math.abs(x).toLocaleString("cs-CZ", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} p. b.`;
 
 /** Text s `inline kódem` z markdownu: liché úseky mezi backticky jako <code>, zbytek jako text. */
 const InlineCode: FC<{ text: string }> = ({ text }) => (
@@ -65,75 +64,35 @@ const TopicChips: FC<{ topics: { key: string; label: string }[] }> = ({ topics }
     </ul>
   ) : null;
 
-/** Kam teď míří vývoj: rostoucí témata a podíl všech témat za poslední 4 týdny. */
-const TrendsPanel: FC<{ trends: TopicTrends }> = ({ trends }) => {
-  const max = Math.max(...trends.topics.map((t) => t.share), 1);
-  const toIncl = trends.to - 86_400_000;
+/** Dvě dlaždice pod nadpisem: kam míří vývoj Claude Code a co dělají ostatní nástroje. */
+const HubTiles: FC<{ trends?: TopicTrends | null; ecosystem?: ToolWeekCard[] }> = ({ trends, ecosystem }) => {
+  const t = trends && trends.total > 0 ? trends : null;
+  const rising = t?.rising.slice(0, 3) ?? [];
+  const top = t ? [...t.topics].sort((x, y) => y.share - x.share).filter((x) => x.share > 0).slice(0, 3) : [];
+  const names = (ecosystem ?? []).map((c) => c.name);
   return (
-    <section class="cc-trends" aria-labelledby="cc-trends-h">
-      <h2 id="cc-trends-h">Kam teď míří vývoj</h2>
-      <p class="cc-trends-note">
-        Podíl témat na {trends.total} změnách v changelogu za poslední 4 týdny
-        ({fmtDate(trends.from, { month: "long", fallback: "" })} až {fmtDate(toIncl, { month: "long", fallback: "" })})
-        proti předchozím 13 týdnům.
-      </p>
-
-      {trends.rising.length > 0 && (
-        <ol class="cc-rising">
-          {trends.rising.map((t) => (
-            <li>
-              <a href={`/novinky-cc/temata/${encodeURIComponent(t.key)}`} class="cc-rising-title">{t.label}</a>
-              <span class="cc-num">{fmtPct(t.share)} <span class="cc-up">{fmtPp(t.delta)}</span></span>
-              {(t.highlight || t.major > 0) && (
-                <p>
-                  {t.highlight && (
-                    <>
-                      <span class="cc-muted">Naposledy: </span>
-                      {t.highlight}
-                    </>
-                  )}
-                  {t.major > 0 && (
-                    <span class="cc-muted">{t.highlight ? " · " : ""}Zásadních změn za 4 týdny: {t.major}</span>
-                  )}
-                </p>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-
-      <div class="cc-bars" role="table" aria-label="Podíl témat za poslední 4 týdny">
-        <div class="cc-bars-legend" aria-hidden="true">
-          <span><i class="cc-key cc-key-new" /> nové funkce a změny</span>
-          <span><i class="cc-key cc-key-fix" /> opravy</span>
-        </div>
-        {trends.topics.filter((t) => t.added + t.fixed > 0).map((t) => {
-          const n = t.added + t.fixed;
-          const w = (100 * t.share) / max;
-          return (
-            <div class="cc-bar-row" role="row">
-              <a role="rowheader" class="cc-bar-label" href={`/novinky-cc/temata/${encodeURIComponent(t.key)}`}>{t.label}</a>
-              <div class="cc-bar-track" role="cell" aria-label={`${t.added} nových, ${t.fixed} oprav`}>
-                <span class="cc-bar cc-bar-new" style={`width:${((w * t.added) / n).toFixed(2)}%`} />
-                <span class="cc-bar cc-bar-fix" style={`width:${((w * t.fixed) / n).toFixed(2)}%`} />
-              </div>
-              <span role="cell" class="cc-num cc-bar-val">
-                {fmtPct(t.share)}{" "}
-                <span class={`cc-${t.direction}`} title={`${ARROW_LABEL[t.direction]} (${fmtPp(t.delta)})`}>
-                  {ARROW[t.direction]}
-                  <span class="sr-only"> {ARROW_LABEL[t.direction]}</span>
-                </span>
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <p class="cc-trends-note">
-        Témata změnám přiřazuje jazykový model, takže jednotlivé položky mohou být zařazené nepřesně.
-        Šipka ukazuje změnu podílu o víc než {TREND_THRESHOLD_PP.toLocaleString("cs-CZ")} procentního bodu.{" "}
-        <a href="/novinky-cc/temata">Vývoj jednotlivých témat →</a>
-      </p>
-    </section>
+    <div class="cc-tiles">
+      <a class="cc-tile" href="/novinky-cc/temata">
+        <span class="cc-tile-h">Kam teď míří vývoj Claude Code <span aria-hidden="true">→</span></span>
+        <span class="cc-tile-text">
+          {rising.length > 0 ? (
+            <>Roste: {rising.map((r, i) => <>{i > 0 && ", "}{r.label} <span class="cc-num cc-up">{fmtPp(r.delta)}</span></>)}</>
+          ) : top.length > 0 ? (
+            <>Nejvíc změn: {top.map((r, i) => <>{i > 0 && ", "}{r.label} <span class="cc-num">{fmtPct(r.share)}</span></>)}</>
+          ) : (
+            "Témata změn v changelogu za poslední 4 týdny a jak se mění."
+          )}
+        </span>
+      </a>
+      <a class="cc-tile" href="/novinky-cc/ekosystem">
+        <span class="cc-tile-h">Mapa vývojářských nástrojů <span aria-hidden="true">→</span></span>
+        <span class="cc-tile-text">
+          {names.length > 0
+            ? `Co se tento týden změnilo v ${names.join(", ")} a čemu se věnují vedle Claude Code.`
+            : "Claude Code vedle dalších agentů pro programování: týden, témata a dohánění."}
+        </span>
+      </a>
+    </div>
   );
 };
 
@@ -162,7 +121,7 @@ const EcosystemStrip: FC<{ cards: ToolWeekCard[] }> = ({ cards }) => (
       ))}
     </ul>
     <p class="cc-eco-links">
-      <a href="/novinky-cc/ekosystem">Mapa ekosystému →</a>
+      <a href="/novinky-cc/ekosystem">Mapa vývojářských nástrojů →</a>
       <a href="/novinky-cc/dohanani">Kdo koho dohání →</a>
     </p>
   </section>
@@ -171,7 +130,7 @@ const EcosystemStrip: FC<{ cards: ToolWeekCard[] }> = ({ cards }) => (
 /**
  * Seznam publikovaných vydání „Novinky v Claude Code" v designu serveru.
  * Gated (řeší routa), takže Layout vždy dostane přihlášeného uživatele.
- * Pořadí: aktuální vydání → trendy → archiv → materiály.
+ * Pořadí: lišta podsekcí a dlaždice → aktuální vydání → ostatní nástroje → archiv → materiály.
  */
 export const CcNewsListPage: FC<{
   user: LayoutUser;
@@ -184,17 +143,14 @@ export const CcNewsListPage: FC<{
   <Layout title="Novinky v Claude Code" user={user} noindex>
     <section class="container-narrow" style="padding: 8px 0 32px">
       <h1>Novinky v Claude Code</h1>
-      <p style="color: var(--muted); margin-bottom: 28px">
-        Týdenní přehled novinek z Claude Code pro platící uživatele.{" "}
-        <a href="/novinky-cc/temata">Vývoj jednotlivých témat →</a>{" "}
-        <a href="/novinky-cc/ekosystem">Mapa ekosystému →</a>
+      <p style="color: var(--muted); margin-bottom: 20px">
+        Týdenní přehled novinek z Claude Code pro platící uživatele.
       </p>
+      <CcSectionNav current="vydani" />
+      <HubTiles trends={trends} ecosystem={ecosystem} />
 
       {!latest ? (
-        <>
-          <p style="color: var(--muted)">Zatím žádný publikovaný článek.</p>
-          {trends && trends.total > 0 && <TrendsPanel trends={trends} />}
-        </>
+        <p style="color: var(--muted)">Zatím žádný publikovaný článek.</p>
       ) : (
         <>
           <h2 class="cc-section-h">Aktuální vydání</h2>
@@ -234,8 +190,6 @@ export const CcNewsListPage: FC<{
           </ul>
 
           {ecosystem && ecosystem.length > 0 && <EcosystemStrip cards={ecosystem} />}
-
-          {trends && trends.total > 0 && <TrendsPanel trends={trends} />}
 
           {archive.length > 0 && (
             <>
