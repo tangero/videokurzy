@@ -1,0 +1,28 @@
+# Dependabot: jen BEZPEČNOSTNÍ aktualizace.
+# open-pull-requests-limit: 0 vypíná běžné aktualizace verzí; bezpečnostní PR
+# tím nejsou dotčené a seskupí se do jednoho PR za ekosystém.
+# Řízeno z tangero/security-watch (inventory.yml, findings/).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories: ["/"]
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Europe/Prague }
+    open-pull-requests-limit: 0
+    groups:
+      security-npm:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      # better-auth >= 1.6.11 spotřebuje token magic linku při prvním ověření a ignoruje
+      # allowedAttempts -> link scannery by tokeny spálily. Upgrade až s mezistránkou
+      # „Potvrdit přihlášení“ (viz komentář v src/lib/auth.ts a security-watch findings §7).
+      - dependency-name: "better-auth"
+      - dependency-name: "@better-auth/*"
+  - package-ecosystem: github-actions
+    directories: ["/"]
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Europe/Prague }
+    open-pull-requests-limit: 0
+    groups:
+      security-github-actions:
+        applies-to: security-updates
+        patterns: ["*"]

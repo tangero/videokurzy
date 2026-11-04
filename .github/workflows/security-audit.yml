@@ -1,0 +1,56 @@
+name: Security audit
+
+# Blokuje KRITICKÉ zranitelnosti v produkčních závislostech (bez devDependencies).
+# Prověřené nedosažitelné výjimky jsou v .github/security-audit-allowlist.txt.
+# Laťka se zvýší na `high`, až se fronta Dependabot alertů zmenší.
+# Řízeno z tangero/security-watch.
+on:
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "pnpm-lock.yaml"
+      - ".github/security-audit-allowlist.txt"
+      - ".github/workflows/security-audit.yml"
+  schedule:
+    - cron: "17 5 * * 1" # pondělí 6:17 / 7:17 Praha
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Kritické zranitelnosti v produkčních závislostech
+        run: |
+          set -euo pipefail
+          allow=$(grep -oE 'GHSA-[a-z0-9-]+' .github/security-audit-allowlist.txt 2>/dev/null || true)
+          report=$(npm audit --omit=dev --json 2>/dev/null | jq -r '.vulnerabilities // {} | .[] | .via[] | objects | [(.url|split("/")|last), .name, .title, .severity] | @tsv' | sort -u || true)
+          high=$(echo "$report" | awk -F'\t' '$4=="high"' | wc -l | tr -d ' ')
+          crit=$(echo "$report" | awk -F'\t' '$4=="critical"' | sort -u || true)
+          blocking=""
+          while IFS=$'\t' read -r id pkg title sev; do
+            [ -z "${id:-}" ] && continue
+            if echo "$allow" | grep -qx "$id"; then
+              echo "výjimka: $id $pkg ($title)"
+            else
+              blocking+="$id $pkg: $title"$'\n'
+            fi
+          done <<< "$crit"
+          {
+            echo "### Bezpečnostní audit"
+            echo "- high (neblokuje): $high"
+            echo "- critical mimo výjimky: $(printf '%s' "$blocking" | grep -c . || true)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$blocking" ]; then
+            printf '%s' "$blocking" | while read -r line; do echo "::error::$line"; done
+            echo "Oprav závislost, nebo zranitelnost prověř a zapiš do .github/security-audit-allowlist.txt s odůvodněním."
+            exit 1
+          fi
