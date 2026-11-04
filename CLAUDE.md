@@ -37,17 +37,15 @@ npm run db:migrate:prod
 
 Bez toho budou nové sloupce/tabulky chybět na produkční D1 a runtime spadne.
 
-## FIO API z Workers padá na 525 → proxy
-`fioapi.fio.cz` běží na TLSv1.3 a **neumí ALPN**. Cloudflare Workers `fetch()`
-s ním nedokončí TLS handshake → chyba **525**. Z běžného Node.js (mimo Workers)
-spojení projde. Proto FIO voláme přes relay **`fio-proxy/`** (Node+Hono kontejner
-na rock8.cloud): worker volá proxy (moderní TLS), ta přepošle na FIO a vrátí JSON
-1:1. FIO token žije jen na proxy; worker se autentizuje `FIO_PROXY_SECRET`.
+## FIO API z Workers: přímé volání (proxy odstraněna)
+FIO voláme z workeru přímo (`src/lib/fio.ts`). `fioapi.fio.cz` občas vrací
+přechodnou chybu **525** (TLS handshake mezi Cloudflare a FIO). Relay `fio-proxy/`
+nebyl nikdy nasazený a 4. 11. 2026 byl odstraněn (bezpečnostní úklid: neudržovaný
+kontejner s FIO tokenem). Historie je v gitu a v `docs/payment-matching-fix-2026-06.md`.
+Podpora `FIO_PROXY_URL` + `FIO_PROXY_SECRET` v `fioProxyFromEnv()` zůstává, ale bez
+nasazené proxy se nepoužívá. Pokud 525 začne blokovat platby, vzorem je retry
+`fioFetchJson()` ve vibecoding-site (`src/lib/fio-payment.ts`).
 
-- Aktivace: nastav v CF dashboardu `FIO_PROXY_URL` + `FIO_PROXY_SECRET` (obě nutné,
-  viz `fioProxyFromEnv()` v `src/lib/fio.ts`). Bez nich worker volá FIO přímo → 525.
-- Deploy proxy: viz `fio-proxy/README.md`. Ověření: `/admin/api/fio/diagnose`
-  (vrátí `"mode": "proxy"`).
 - Creditas tímhle netrpí (modernější API), volá se napřímo.
 
 ## Párování plateb je cross-bank
