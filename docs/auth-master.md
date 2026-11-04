@@ -149,9 +149,12 @@ IP). Adjust in `auth.ts` `rateLimit` block.
 
 ## OIDC Provider (for external consumers)
 
-Discovery: `https://kurzy.vibecoding.cz/api/auth/.well-known/openid-configuration`
+Status: **removed 2026-11-04.** The plugin had no registered clients and was
+the source of several better-auth 1.6.x advisories (alg=none / plain PKCE,
+refresh-token replay, stored XSS via redirect_uri). The discovery endpoint no
+longer exists. For SSO, build on `@better-auth/oauth-provider` instead.
 
-Status: prototype only. The current `better-auth/plugins/oidc-provider`
+Historical note: The current `better-auth/plugins/oidc-provider`
 plugin is deprecated and expects Better Auth OAuth provider tables such as
 `oauthApplication`, `oauthAccessToken`, and `oauthConsent`. The local
 `oidc_client` table was created during the first auth-master plan, but the

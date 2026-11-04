@@ -1,7 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
-import { oidcProvider } from "better-auth/plugins/oidc-provider";
 import { drizzle } from "drizzle-orm/d1";
 import * as authSchema from "../db/auth-schema";
 import type { Env } from "../types";
@@ -133,16 +132,14 @@ export function createAuth(env: Env, ctx: ExecutionContext) {
         // na /login. Bezpečnostní dopad zvýšení je minimální: token je náhodných
         // 32 znaků s 10min platností, proti brute-force chrání entropie a rate
         // limit, ne tenhle counter.
+        // POZOR při upgradu: od better-auth 1.6.11 (i v 1.7) se token spotřebuje
+        // atomicky při prvním ověření a allowedAttempts se ignoruje. Upgrade proto
+        // vyžaduje mezistránku „Potvrdit přihlášení“ (GET jen zobrazí tlačítko,
+        // token spotřebuje až POST). Hlídá to tests/routes/magic-link-verify.test.ts.
         allowedAttempts: 3,
       }),
-      oidcProvider({
-        // Task 13: minimální nasazení. Žádný registrovaný klient v MVP —
-        // slouží jen k expozici discovery metadata endpointu pro budoucí
-        // cross-domain SSO (např. marigold.cz). Plugin je v Better Auth
-        // 1.6.5 označen jako deprecated (→ @better-auth/oauth-provider),
-        // ale pro MVP stačí. Issuer defaultuje na BETTER_AUTH_URL.
-        loginPage: "/login",
-      }),
+      // oidcProvider odebrán 2026-11-04: nevyužitý prototyp (žádní klienti),
+      // zdroj bezpečnostních advisories v better-auth 1.6.x. Viz docs/auth-master.md.
     ],
 
     rateLimit: {

@@ -84,7 +84,7 @@ keeps production behavior explicit.
 plain identifiers, update the prevalidation helper in `src/routes/internal.tsx`
 to use the same token hashing strategy.
 
-## OIDC provider prototype
+## OIDC provider prototype (removed 2026-11-04)
 
 The current `better-auth/plugins/oidc-provider` plugin is deprecated and
 expects Better Auth OAuth provider tables such as `oauthApplication`,
