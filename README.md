@@ -20,7 +20,7 @@
 - **Fakturace** — IČO → ARES → zálohový doklad → faktura ve Fakturoidu,
   bez ruční práce.
 - **Auth** — [better-auth](https://better-auth.com) s magic-link přihlášením
-  (bez hesel), OIDC provider pro budoucí cross-domain SSO.
+  (bez hesel).
 - **E-mailové automatizace** — onboarding a re-engagement sekvence přes Resend
   Automations (eventy emitované z aplikace).
 - **Admin** — správa kurzů, uživatelů, grantů a statistik.
