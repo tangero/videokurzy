@@ -1,0 +1,5 @@
+# Prověřené KRITICKÉ zranitelnosti, které v naší konfiguraci nejsou dosažitelné.
+# Formát: GHSA-id  balíček  datum  důvod. Každou položku při změně konfigurace přehodnoť.
+# Rozbor: tangero/security-watch, findings/2026-11-04.md
+GHSA-965c-763c-88jm  better-auth  2026-11-04  vyžaduje social/Generic OAuth provider; máme jen magic link.
+GHSA-pw9m-5jxm-xr6h  better-auth  2026-11-04  vyžaduje oidcProvider s confidential klientem; plugin odebrán (PR #64), klienti nikdy nebyli.
