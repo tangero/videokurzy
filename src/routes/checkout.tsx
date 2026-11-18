@@ -56,6 +56,10 @@ import {
 } from "../lib/discount";
 import { generateQRSvg } from "../lib/qr";
 import { getPrices } from "../lib/prices";
+import { bankPaymentConfirmed } from "../lib/invoicing/jobs";
+import { createAndEnqueueInvoiceJob } from "../invoice-queue";
+import { sendResendEvent } from "../lib/resend";
+import { maskEmail } from "../lib/errors";
 import { sendEmail, fioPendingHtml, purchaseConfirmedHtml, isConsumerPurchase, adminNewOrgHtml } from "../lib/email";
 import { Layout } from "../views/layout";
 import {
@@ -1131,6 +1135,24 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
     const token = p.discountCode.slice("invite:".length);
     await consumeInviteToken(db, token, p.id);
   }
+
+  // Faktura přes outbox — stejně jako při spárování cronem. Bez toho objednávka
+  // aktivovaná tímto tlačítkem zůstala bez faktury (incident #146).
+  const invoiceEvent = bankPaymentConfirmed(p, {
+    bank,
+    transactionId: matchedTx.id,
+    amountPaid: matchedTx.amount,
+    paidOnIso: matchedTx.date,
+  });
+  if (invoiceEvent) await createAndEnqueueInvoiceJob(db, c.env, invoiceEvent);
+
+  // Onboarding sekvence v Resendu (cron ji posílá taky).
+  c.executionCtx.waitUntil(
+    sendResendEvent(c.env.RESEND_API_KEY, "purchase.completed", p.email.toLowerCase(), {
+      type: p.type,
+      paymentMethod: bank,
+    }).catch((err) => console.error(`[verify] resend event failed for purchase ${p.id} (${maskEmail(p.email)}):`, err)),
+  );
 
   c.executionCtx.waitUntil(
     sendEmail(c.env, {

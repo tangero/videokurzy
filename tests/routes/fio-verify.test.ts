@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { purchase } from "../../src/db/schema";
+import { bankPaymentConfirmed } from "../../src/lib/invoicing/jobs";
 import {
   activateFioPurchaseIfPendingForTest,
   fioRateLimitTtlSecondsForTest,
@@ -84,5 +85,48 @@ describe("POST /api/fio/verify/:vs", () => {
     expect(row.status).toBe("active");
     expect(row.fioTransactionId).toBe("123456");
     expect(row.amountPaid).toBe(2000);
+  });
+});
+
+describe("bankPaymentConfirmed (sdílí cron i Ověřit platbu)", () => {
+  const p = {
+    id: 146,
+    kind: "paid",
+    email: "milan@example.cz",
+    invoiceEmail: "iva@example.cz",
+    companyName: "Firma s.r.o.",
+    companyIco: "03639614",
+  };
+
+  it("založí vstupní fakturu s datem bankovní transakce", () => {
+    const ev = bankPaymentConfirmed(p, {
+      bank: "fio",
+      transactionId: "27889027014",
+      amountPaid: 3000,
+      paidOnIso: "2026-10-12+0200",
+    });
+    expect(ev).toMatchObject({
+      purchaseId: 146,
+      jobKind: "initial_purchase",
+      paymentSource: "fio",
+      sourceEventId: "27889027014",
+      amount: 3000,
+      paidAtSource: "bank_api",
+      paidAtConfidence: "exact",
+      billing: { email: "milan@example.cz", invoiceEmail: "iva@example.cz", companyIco: "03639614" },
+    });
+    expect(ev!.paidAt.toISOString()).toBe("2026-10-12T12:00:00.000Z");
+  });
+
+  it("bez data z banky označí datum jako odhadnuté", () => {
+    const now = new Date("2026-11-18T10:00:00Z");
+    const ev = bankPaymentConfirmed(p, { bank: "creditas", transactionId: "x", amountPaid: 3000, paidOnIso: null }, now);
+    expect(ev!.paidAtConfidence).toBe("estimated");
+    expect(ev!.paidAt).toBe(now);
+  });
+
+  it("granty a nulové částky nefakturuje", () => {
+    expect(bankPaymentConfirmed({ ...p, kind: "comp" }, { bank: "fio", transactionId: "y", amountPaid: 3000 })).toBeNull();
+    expect(bankPaymentConfirmed(p, { bank: "fio", transactionId: "z", amountPaid: 0 })).toBeNull();
   });
 });
