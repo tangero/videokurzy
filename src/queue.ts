@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, and, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { purchase, organization, user, lesson, lessonPurchase } from "./db/schema";
-import { sendResendEvent } from "./lib/resend";
+import { sendOnboardingEventOnce } from "./lib/onboarding";
 import { getPrices } from "./lib/prices";
 import { consumeInviteToken } from "./lib/discount";
 import { reportPurchase, reportLessonPurchase } from "./lib/conversions";
@@ -406,71 +406,19 @@ function extractImmediateAccessConsent(metadata: Record<string, string>) {
 }
 
 /**
- * Odešle onboardingovou automation událost NEJVÝŠE JEDNOU na nákup.
- *
- * Idempotenci drží sloupec `purchase.onboardingEventSentAt` — `sendResendEvent`
- * žádnou nemá a odvozovat ji z toho, zda insert vrátil řádek, je chyba: to
- * zaměňuje „nákup byl vložen" za „událost byla doručena". Když insert projde
- * a odeslání selže, retry už řádek nevloží a onboarding by se neodeslal nikdy.
- *
- * Idempotenci drží ATOMICKÝ CLAIM před odesláním: `UPDATE … WHERE
- * onboardingEventSentAt IS NULL` uspěje právě jednou, takže ani dvě souběžně
- * doručené kopie téhož webhooku událost nepošlou dvakrát. Pouhé přečtení
- * sloupce před odesláním by nestačilo — obě kopie by viděly NULL a obě
- * odeslaly.
- *
- * Když odeslání selže, claim se VRÁTÍ (čas zpět na NULL) a funkce vyhodí
- * chybu, aby `handleQueue` zprávu retryoval. Bez toho by se selhání jen
- * zalogovalo, zpráva by se ackla a onboarding by zmizel — přesně ta ztráta,
- * kterou má sloupec řešit.
- *
- * Zbytkové riziko: crash mezi odesláním a jeho vyhodnocením nechá claim
- * zapsaný a událost se už nepošle. Opačná volba (claim až po odeslání) by
- * naopak riskovala duplicitní onboarding při každém retry; u marketingové
- * sekvence je jednou neodeslaná událost menší zlo než opakované.
+ * Stripe varianta: onboarding nejvýše jednou (viz src/lib/onboarding.ts). Při
+ * odmítnutí Resendem VYHODÍ chybu, aby handleQueue zprávu retryoval — bez toho
+ * by se selhání jen zalogovalo, zpráva by se ackla a onboarding by zmizel.
  */
-async function sendOnboardingEventOnce(
+async function sendOnboardingEventOrThrow(
   db: ReturnType<typeof drizzle>,
   env: Env,
   opts: { purchaseId: number; email: string; payload: Record<string, unknown> },
 ): Promise<void> {
-  // Claim: uspěje právě jeden běh. Prázdný výsledek = událost už odeslal
-  // (nebo právě odesílá) někdo jiný.
-  const claimed = await db
-    .update(purchase)
-    .set({ onboardingEventSentAt: new Date() })
-    .where(
-      and(eq(purchase.id, opts.purchaseId), isNull(purchase.onboardingEventSentAt)),
-    )
-    .returning({ id: purchase.id });
-  if (claimed.length === 0) return;
-
-  const outcome = await sendResendEvent(
-    env.RESEND_API_KEY,
-    "purchase.completed",
-    opts.email,
-    opts.payload,
-  );
-
+  const outcome = await sendOnboardingEventOnce(db, env, opts);
   if (outcome === "failed") {
-    // Server odmítl → událost prokazatelně nevznikla. Vrať claim, ať ji další
-    // pokus doručí, a eskaluj na retry zprávy; jinak by se selhání jen
-    // zalogovalo a onboarding by se ztratil.
-    await db
-      .update(purchase)
-      .set({ onboardingEventSentAt: null })
-      .where(eq(purchase.id, opts.purchaseId));
     throw new Error(
       `onboarding event failed for purchase ${opts.purchaseId} (${maskEmail(opts.email)})`,
-    );
-  }
-
-  if (outcome === "unknown") {
-    // Timeout / přerušené spojení: událost mohla proběhnout. Claim NEVRACÍME —
-    // opakování by znamenalo druhý onboarding, což je horší než jeden možná
-    // chybějící. Zůstává v logu k dohledání.
-    console.error(
-      `[queue] onboarding event outcome unknown for purchase ${opts.purchaseId} (${maskEmail(opts.email)}) — neopakuje se`,
     );
   }
 }
@@ -633,7 +581,7 @@ async function handleCheckoutCompleted(
           .where(eq(purchase.stripePaymentId, sessionId))
           .limit(1);
     if (b2cRow) {
-      await sendOnboardingEventOnce(db, env, {
+      await sendOnboardingEventOrThrow(db, env, {
         purchaseId: b2cRow.id,
         email: customerEmail.toLowerCase(),
         payload: { type: "individual", paymentMethod: "stripe" },
@@ -700,7 +648,7 @@ async function handleCheckoutCompleted(
           .where(eq(purchase.stripePaymentId, sessionId))
           .limit(1);
     if (b2bRow) {
-      await sendOnboardingEventOnce(db, env, {
+      await sendOnboardingEventOrThrow(db, env, {
         purchaseId: b2bRow.id,
         email: customerEmail.toLowerCase(),
         payload: { type: "organization", domain, paymentMethod: "stripe" },

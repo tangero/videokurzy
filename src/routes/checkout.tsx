@@ -58,7 +58,7 @@ import { generateQRSvg } from "../lib/qr";
 import { getPrices } from "../lib/prices";
 import { bankPaymentConfirmed } from "../lib/invoicing/jobs";
 import { createAndEnqueueInvoiceJob } from "../invoice-queue";
-import { sendResendEvent } from "../lib/resend";
+import { sendOnboardingEventOnce } from "../lib/onboarding";
 import { maskEmail } from "../lib/errors";
 import { sendEmail, fioPendingHtml, purchaseConfirmedHtml, isConsumerPurchase, adminNewOrgHtml } from "../lib/email";
 import { Layout } from "../views/layout";
@@ -1146,12 +1146,14 @@ checkoutRoutes.post("/api/fio/verify/:vs", async (c) => {
   });
   if (invoiceEvent) await createAndEnqueueInvoiceJob(db, c.env, invoiceEvent);
 
-  // Onboarding sekvence v Resendu (cron ji posílá taky).
+  // Onboarding sekvence v Resendu, nejvýše jednou (stejně jako cron). Při
+  // odmítnutí ji dožene sweepPendingOnboardingEvents v 15min cronu.
   c.executionCtx.waitUntil(
-    sendResendEvent(c.env.RESEND_API_KEY, "purchase.completed", p.email.toLowerCase(), {
-      type: p.type,
-      paymentMethod: bank,
-    }).catch((err) => console.error(`[verify] resend event failed for purchase ${p.id} (${maskEmail(p.email)}):`, err)),
+    sendOnboardingEventOnce(db, c.env, {
+      purchaseId: p.id,
+      email: p.email.toLowerCase(),
+      payload: { type: p.type, paymentMethod: bank },
+    }).catch((err) => console.error(`[verify] onboarding event failed for purchase ${p.id} (${maskEmail(p.email)}):`, err)),
   );
 
   c.executionCtx.waitUntil(

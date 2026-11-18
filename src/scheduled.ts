@@ -7,7 +7,7 @@ import { sendPaymentReminders } from "./lib/payment-reminders";
 import { fetchFioTransactions, fioProxyFromEnv, matchPayment } from "./lib/fio";
 import { fetchCreditasTransactions, matchCreditasPayment } from "./lib/creditas";
 import { sendEmail, purchaseConfirmedHtml, isConsumerPurchase, paymentCancelledHtml } from "./lib/email";
-import { sendResendEvent } from "./lib/resend";
+import { sendOnboardingEventOnce, sweepPendingOnboardingEvents } from "./lib/onboarding";
 import { getPrices } from "./lib/prices";
 import { fetchVideoStatistics, syncVideoStats } from "./lib/bunny-stats";
 import { enqueueCcNewsClassify, enqueueCcNewsItem, enqueueToolWeek } from "./queue";
@@ -54,6 +54,12 @@ export async function handleScheduled(
       console.log(`[cron] invoice reconcile: enqueued=${r.enqueued}, scanned=${r.scanned}`);
     } catch (err) {
       console.error("[cron] reconcileInvoiceJobs failed:", err);
+    }
+    try {
+      const o = await sweepPendingOnboardingEvents(db, env, now);
+      if (o.scanned > 0) console.log(`[cron] onboarding sweep: sent=${o.sent}, scanned=${o.scanned}`);
+    } catch (err) {
+      console.error("[cron] sweepPendingOnboardingEvents failed:", err);
     }
     return;
   }
@@ -537,12 +543,13 @@ async function activateMatchedPurchase(
     })
     .where(eq(purchase.id, p.id));
 
-  // Resend automation event — onboarding sekvence. Bez tohohle by převodoví
-  // kupující do automatu vůbec nevstoupili (Stripe ho fíruje v queue.ts).
-  sendResendEvent(env.RESEND_API_KEY, "purchase.completed", p.email.toLowerCase(), {
-    type: p.type,
-    paymentMethod: match.bank,
-  }).catch((err) => console.error(`[cron] resend event failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
+  // Resend automation event — onboarding sekvence, nejvýše jednou na nákup.
+  // Při odmítnutí ho dožene sweepPendingOnboardingEvents v 15min cronu.
+  await sendOnboardingEventOnce(db, env, {
+    purchaseId: p.id,
+    email: p.email.toLowerCase(),
+    payload: { type: p.type, paymentMethod: match.bank },
+  }).catch((err) => console.error(`[cron] onboarding event failed for purchase ${p.id} (${maskEmail(p.email)}):`, err));
 
   // Email s magic linkem ke kurzu — nečekáme na něj, ať jeden výpadek
   // Resendu nezablokuje další pářování.
