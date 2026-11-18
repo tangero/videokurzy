@@ -15,7 +15,7 @@ import { maskEmail } from "./lib/errors";
 import { expectedPaymentAmount } from "./lib/discount";
 import { reportPurchase, bankDateToConversionInstant } from "./lib/conversions";
 import { createAndEnqueueInvoiceJob } from "./invoice-queue";
-import { shouldInvoice, purchaseToBillingSnapshot, paidOnToTimestamp } from "./lib/invoicing/jobs";
+import { bankPaymentConfirmed } from "./lib/invoicing/jobs";
 import { reconcileInvoiceJobs } from "./lib/invoicing/reconcile";
 import {
   ACCESS_DURATION_DAYS,
@@ -559,27 +559,9 @@ async function activateMatchedPurchase(
 
   // Fakturace přes outbox — založ invoice_job + zařaď. I při výpadku enqueue
   // řádek v DB zůstane a reconcile cron ho doručí (žádná osiřelá faktura).
-  // Fakturuj skutečně přijatou bankovní částku (match.amountPaid), ne očekávání.
-  if (shouldInvoice({ kind: p.kind, amountPaid: match.amountPaid })) {
-    // Účetní datum = datum bankovní transakce (připsání), NE čas běhu cronu.
-    // FIO vrací "YYYY-MM-DD+TZ", Creditas ISO — vytáhneme jen datum a kotvíme na
-    // poledne UTC (po převodu do TZ Praha zůstává stejný den). Když datum chybí /
-    // je nečitelné → fallback na teď s confidence='estimated' (job pak nepošle
-    // fakturu automaticky, ale jde do needs_manual_review).
-    const dateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(match.paidOnIso ?? "");
-    const paidAt = dateMatch ? paidOnToTimestamp(dateMatch[1]) : new Date();
-    await createAndEnqueueInvoiceJob(db, env, {
-      purchaseId: p.id,
-      jobKind: "initial_purchase",
-      paymentSource: match.bank, // 'fio' | 'creditas'
-      sourceEventId: match.transactionId,
-      amount: match.amountPaid,
-      paidAt,
-      paidAtSource: "bank_api",
-      paidAtConfidence: dateMatch ? "exact" : "estimated",
-      billing: purchaseToBillingSnapshot(p),
-    });
-  }
+  // Stejná logika jako ruční „Ověřit platbu“ v checkoutu (bankPaymentConfirmed).
+  const invoiceEvent = bankPaymentConfirmed(p, match);
+  if (invoiceEvent) await createAndEnqueueInvoiceJob(db, env, invoiceEvent);
 
   // Report konverze do reklamních platforem. Idempotentní (per-provider claim),
   // best-effort — reportPurchase nikdy nehází, takže aktivaci/fakturaci neohrozí.

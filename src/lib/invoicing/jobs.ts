@@ -216,3 +216,32 @@ export async function createInvoiceJob(db: Db, pc: PaymentConfirmed): Promise<Cr
 export function shouldInvoice(p: { kind: string; amountPaid: number }): boolean {
   return (p.kind === "paid" || p.kind === "manual") && p.amountPaid > 0;
 }
+
+/**
+ * Fakturační událost pro spárovanou bankovní platbu (FIO / Creditas). Sdílí ji
+ * cron (`activateMatchedPurchase`) i ruční „Ověřit platbu“ v checkoutu — dřív
+ * verify endpoint fakturu nezakládal vůbec a objednávky aktivované kupujícím
+ * zůstaly bez faktury (#146, #148, #154, #158). Vrací null, když se nefakturuje.
+ *
+ * Fakturuje skutečně přijatou částku. Účetní datum = datum transakce z banky
+ * (FIO "YYYY-MM-DD+TZ", Creditas ISO); když chybí, je odhadnuté → ruční kontrola.
+ */
+export function bankPaymentConfirmed(
+  p: Parameters<typeof purchaseToBillingSnapshot>[0] & { id: number; kind: string },
+  match: { bank: "fio" | "creditas"; transactionId: string; amountPaid: number; paidOnIso?: string | null },
+  now: Date = new Date(),
+): PaymentConfirmed | null {
+  if (!shouldInvoice({ kind: p.kind, amountPaid: match.amountPaid })) return null;
+  const dateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(match.paidOnIso ?? "");
+  return {
+    purchaseId: p.id,
+    jobKind: "initial_purchase",
+    paymentSource: match.bank,
+    sourceEventId: match.transactionId,
+    amount: match.amountPaid,
+    paidAt: dateMatch ? paidOnToTimestamp(dateMatch[1]) : now,
+    paidAtSource: "bank_api",
+    paidAtConfidence: dateMatch ? "exact" : "estimated",
+    billing: purchaseToBillingSnapshot(p),
+  };
+}
