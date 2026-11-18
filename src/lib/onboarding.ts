@@ -19,6 +19,7 @@
 
 import type { drizzle } from "drizzle-orm/d1";
 import { and, eq, gte, inArray, isNull } from "drizzle-orm";
+import { ACCESS_DURATION_DAYS } from "../config/payment";
 import { purchase } from "../db/schema";
 import { sendResendEvent, type ResendEventOutcome } from "./resend";
 import { maskEmail } from "./errors";
@@ -68,21 +69,27 @@ export async function sendOnboardingEventOnce(
 }
 
 /**
- * Od kdy sweep dohání. Převodové nákupy před touto změnou `onboardingEventSentAt`
- * nikdy nezapisovaly (NULL i když onboarding odešel), takže bez hranice by sweep
- * poslal onboarding znovu všem starším zákazníkům. NIKDY neposouvat do minulosti.
+ * Od kdy sweep dohání (okamžik AKTIVACE nákupu). Převodové nákupy před touto
+ * změnou `onboardingEventSentAt` nikdy nezapisovaly (NULL i když onboarding
+ * odešel), takže bez hranice by sweep poslal onboarding znovu všem starším
+ * zákazníkům. Musí ležet AŽ PO nasazení této změny — aktivace mezi hranicí a
+ * nasazením by starý kód odeslal bez zápisu a sweep by je poslal podruhé.
+ * NIKDY neposouvat do minulosti.
  */
 export const ONBOARDING_SWEEP_FROM = new Date("2026-11-19T00:00:00+01:00");
 
-/** Jak dlouho po založení nákupu se onboarding ještě dohání. Pak už nemá smysl. */
+/** Jak dlouho po aktivaci nákupu se onboarding ještě dohání. Pak už nemá smysl. */
 export const ONBOARDING_SWEEP_WINDOW_MS = 7 * 86400 * 1000;
 
 const SWEEP_LIMIT = 20;
 
 /**
  * Dožene onboarding převodovým nákupům (FIO / Creditas), kterým ho Resend odmítl.
- * Jen aktivní placené nákupy založené po ONBOARDING_SWEEP_FROM a ne starší než
- * 7 dní. Stripe se sem nebere — má retry přes frontu a po vyčerpání DLQ alert.
+ * Jen aktivní placené nákupy AKTIVOVANÉ po ONBOARDING_SWEEP_FROM a nejvýše před
+ * 7 dny. Okamžik aktivace = expiresAt − ACCESS_DURATION_DAYS: cron, „Ověřit
+ * platbu“ i ruční potvrzení nastavují expiresAt = aktivace + 365 dní. Od založení
+ * objednávky počítat nejde — firemní převod se splatností 21 dní by se zaplatil
+ * až mimo okno. Stripe se sem nebere — má retry přes frontu a po vyčerpání DLQ alert.
  * Zahrnuje i ručně potvrzené platby (kind='manual'), které onboarding dosud
  * nedostávaly vůbec.
  */
@@ -92,7 +99,8 @@ export async function sweepPendingOnboardingEvents(
   now: Date = new Date(),
 ): Promise<{ scanned: number; sent: number }> {
   const windowStart = new Date(now.getTime() - ONBOARDING_SWEEP_WINDOW_MS);
-  const since = windowStart > ONBOARDING_SWEEP_FROM ? windowStart : ONBOARDING_SWEEP_FROM;
+  const activatedSince = windowStart > ONBOARDING_SWEEP_FROM ? windowStart : ONBOARDING_SWEEP_FROM;
+  const expiresFrom = new Date(activatedSince.getTime() + ACCESS_DURATION_DAYS * 86400 * 1000);
 
   const due = await db
     .select({ id: purchase.id, email: purchase.email, type: purchase.type, paymentMethod: purchase.paymentMethod })
@@ -103,7 +111,7 @@ export async function sweepPendingOnboardingEvents(
         inArray(purchase.kind, ["paid", "manual"]),
         inArray(purchase.paymentMethod, ["fio", "creditas"]),
         isNull(purchase.onboardingEventSentAt),
-        gte(purchase.createdAt, since),
+        gte(purchase.expiresAt, expiresFrom),
       ),
     )
     .limit(SWEEP_LIMIT);

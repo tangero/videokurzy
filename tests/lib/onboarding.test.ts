@@ -46,8 +46,9 @@ describe("onboarding nejvýše jednou + dohánění převodů", () => {
       status: "active",
       kind: "paid",
       amountPaid: 3000,
-      expiresAt: new Date(now.getTime() + 365 * 86400 * 1000),
-      createdAt: new Date(now.getTime() - 3600 * 1000),
+      // Aktivováno hodinu před `now` (expiresAt = aktivace + 365 dní).
+      expiresAt: new Date(now.getTime() - 3600 * 1000 + 365 * 86400 * 1000),
+      createdAt: new Date(now.getTime() - 10 * 86400 * 1000),
       ...overrides,
     });
   }
@@ -86,17 +87,24 @@ describe("onboarding nejvýše jednou + dohánění převodů", () => {
   });
 
   it("nesahá na starší nákupy, Stripe, pending ani nákupy mimo 7denní okno", async () => {
-    await insert(3, { createdAt: new Date(ONBOARDING_SWEEP_FROM.getTime() - 1000) }); // před hranicí
+    // Aktivováno před hranicí (starý kód sloupec nezapisoval).
+    await insert(3, { expiresAt: new Date(ONBOARDING_SWEEP_FROM.getTime() - 1000 + 365 * 86400 * 1000) });
     await insert(4, { paymentMethod: "stripe", variableSymbol: null, stripePaymentId: "cs_test_4" });
     await insert(5, { status: "pending" });
     await insert(6, { kind: "comp", amountPaid: 0 });
     expect(await sweepPendingOnboardingEvents(db, env, now)).toEqual({ scanned: 0, sent: 0 });
 
-    // Nákup starší než 7 dní už se nedohání.
+    // Nákup aktivovaný před víc než 7 dny už se nedohání.
     await insert(7);
     const later = new Date(now.getTime() + 8 * 86400 * 1000);
     expect(await sweepPendingOnboardingEvents(db, env, later)).toEqual({ scanned: 0, sent: 0 });
     expect(events).toEqual([]);
+  });
+
+  it("firemní převod zaplacený po 10 dnech od objednávky se dohání (okno od aktivace)", async () => {
+    // createdAt v insert() je 10 dní před `now`, aktivace hodinu před `now`.
+    await insert(10);
+    expect(await sweepPendingOnboardingEvents(db, env, now)).toEqual({ scanned: 1, sent: 1 });
   });
 
   it("dožene i ručně potvrzenou platbu a Creditas", async () => {
