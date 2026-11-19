@@ -76,7 +76,7 @@ export async function sendOnboardingEventOnce(
  * nasazením by starý kód odeslal bez zápisu a sweep by je poslal podruhé.
  * NIKDY neposouvat do minulosti.
  */
-export const ONBOARDING_SWEEP_FROM = new Date("2026-11-19T00:00:00+01:00");
+export const ONBOARDING_SWEEP_FROM = new Date("2026-11-20T00:00:00+01:00");
 
 /** Jak dlouho po aktivaci nákupu se onboarding ještě dohání. Pak už nemá smysl. */
 export const ONBOARDING_SWEEP_WINDOW_MS = 7 * 86400 * 1000;
